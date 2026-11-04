@@ -1,0 +1,181 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile document",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "lastLoginAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "email"]
+    },
+    "PatientProfile": {
+      "title": "PatientProfile",
+      "description": "Patient/family member profile managed by the user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "relation": { "type": "string", "maxLength": 64 },
+        "age": { "type": "number" },
+        "gender": { "type": "string", "maxLength": 32 },
+        "bloodGroup": { "type": "string", "maxLength": 16 },
+        "chronicConditions": { "type": "array" },
+        "allergies": { "type": "array" },
+        "emergencyContact": { "type": "string", "maxLength": 64 },
+        "avatarUrl": { "type": "string", "maxLength": 512 }
+      },
+      "required": ["id", "name", "relation", "age"]
+    },
+    "Medicine": {
+      "title": "Medicine",
+      "description": "Prescription and OTC medicines",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "brandName": { "type": "string", "maxLength": 128 },
+        "genericName": { "type": "string", "maxLength": 256 },
+        "type": { "type": "string", "maxLength": 64 },
+        "strength": { "type": "string", "maxLength": 64 },
+        "mealTiming": { "type": "string", "maxLength": 64 },
+        "schedules": { "type": "array" },
+        "stock": { "type": "number" },
+        "minStockAlert": { "type": "number" },
+        "unit": { "type": "string", "maxLength": 32 },
+        "startDate": { "type": "string", "maxLength": 32 },
+        "durationDays": { "type": "number" },
+        "isChronic": { "type": "boolean" },
+        "doctorName": { "type": "string", "maxLength": 128 },
+        "purpose": { "type": "string", "maxLength": 256 },
+        "instructions": { "type": "string", "maxLength": 512 },
+        "assignedPatientId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "maxLength": 32 },
+        "colorTag": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["id", "brandName", "type", "schedules", "status"]
+    },
+    "DoseLog": {
+      "title": "DoseLog",
+      "description": "Log of taken or skipped medication doses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "medicineId": { "type": "string", "maxLength": 128 },
+        "medicineName": { "type": "string", "maxLength": 128 },
+        "genericName": { "type": "string", "maxLength": 256 },
+        "patientId": { "type": "string", "maxLength": 128 },
+        "scheduledDate": { "type": "string", "maxLength": 32 },
+        "scheduledTime": { "type": "string", "maxLength": 32 },
+        "timeSlot": { "type": "string", "maxLength": 32 },
+        "dosage": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "maxLength": 32 },
+        "loggedAt": { "type": "string", "maxLength": 64 },
+        "notes": { "type": "string", "maxLength": 256 }
+      },
+      "required": ["id", "medicineId", "medicineName", "patientId", "scheduledDate", "timeSlot", "status"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User notification and reminder preferences",
+      "type": "object",
+      "properties": {
+        "soundEnabled": { "type": "boolean" },
+        "selectedTone": { "type": "string", "maxLength": 64 },
+        "advanceMinutes": { "type": "number" },
+        "snoozeDurationMinutes": { "type": "number" },
+        "language": { "type": "string", "maxLength": 16 }
+      },
+      "required": ["soundEnabled", "selectedTone"]
+    },
+    "GlobalMedicine": {
+      "title": "GlobalMedicine",
+      "description": "Global pharmaceutical compendium medicine entry with compliance metadata",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "brandName": { "type": "string", "maxLength": 128 },
+        "genericName": { "type": "string", "maxLength": 256 },
+        "strength": { "type": "string", "maxLength": 64 },
+        "dosageForm": { "type": "string", "maxLength": 64 },
+        "manufacturer": { "type": "string", "maxLength": 128 },
+        "therapeuticClass": { "type": "string", "maxLength": 256 },
+        "indication": { "type": "string", "maxLength": 512 },
+        "pricePerUnit": { "type": "number" },
+        "packageDescription": { "type": "string", "maxLength": 128 },
+        "darNumber": { "type": "string", "maxLength": 64 },
+        "source": { "type": "string", "maxLength": 64 },
+        "sourceType": { "type": "string", "maxLength": 64 },
+        "sourceName": { "type": "string", "maxLength": 128 },
+        "licenseReference": { "type": "string", "maxLength": 256 },
+        "writtenPermissionRef": { "type": "string", "maxLength": 256 },
+        "importBatchId": { "type": "string", "maxLength": 128 },
+        "importedAt": { "type": "string", "maxLength": 64 },
+        "verifiedByAdmin": { "type": "boolean" },
+        "verificationNotes": { "type": "string", "maxLength": 256 },
+        "status": { "type": "string", "maxLength": 32 },
+        "duplicateKey": { "type": "string", "maxLength": 256 }
+      },
+      "required": ["id", "brandName", "genericName", "strength", "dosageForm", "manufacturer", "source", "duplicateKey"]
+    },
+    "ImportBatch": {
+      "title": "ImportBatch",
+      "description": "Admin catalog import batch and audit log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "source": { "type": "string", "maxLength": 64 },
+        "sourceProfile": { "type": "string", "maxLength": 32 },
+        "sourceType": { "type": "string", "maxLength": 32 },
+        "importedAt": { "type": "string", "maxLength": 64 },
+        "importedByUid": { "type": "string", "maxLength": 128 },
+        "importedByEmail": { "type": "string", "maxLength": 256 },
+        "licenseReference": { "type": "string", "maxLength": 256 },
+        "writtenPermissionRef": { "type": "string", "maxLength": 256 },
+        "attestationAccepted": { "type": "boolean" },
+        "totalRecordsInFile": { "type": "number" },
+        "validRecordsCount": { "type": "number" },
+        "duplicateRecordsCount": { "type": "number" },
+        "errorRecordsCount": { "type": "number" },
+        "publishedCount": { "type": "number" },
+        "pendingVerificationCount": { "type": "number" },
+        "status": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["id", "source", "importedAt", "importedByEmail", "licenseReference", "totalRecordsInFile"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Private user account profile"
+    },
+    "/users/{userId}/patients/{patientId}": {
+      "schema": "PatientProfile",
+      "description": "Patient profiles for this user"
+    },
+    "/users/{userId}/medicines/{medicineId}": {
+      "schema": "Medicine",
+      "description": "Medicines tracked by this user"
+    },
+    "/users/{userId}/doseLogs/{logId}": {
+      "schema": "DoseLog",
+      "description": "Medication compliance history logs"
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": "UserSettings",
+      "description": "Settings configuration for this user"
+    },
+    "/global_medicines/{medicineId}": {
+      "schema": "GlobalMedicine",
+      "description": "Global verified medicine catalog"
+    },
+    "/import_batches/{batchId}": {
+      "schema": "ImportBatch",
+      "description": "Admin import audit batch metadata"
+    }
+  }
+}

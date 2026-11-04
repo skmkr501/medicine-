@@ -1,0 +1,6 @@
+{
+  "name": "স্বাস্থ্যবন্ধু (Shasthobondhu)",
+  "description": "বাংলা ভাষায় আধুনিক, দায়িত্বশীল ও সহজে ব্যবহারযোগ্য ডিজিটাল ওষুধ ব্যবস্থাপনা অ্যাপ্লিকেশন।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

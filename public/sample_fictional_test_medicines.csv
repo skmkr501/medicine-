@@ -1,0 +1,6 @@
+DAR Number,Brand Name,Generic Name,Strength,Dosage Form,Manufacturer,Therapeutic Class,Max Retail Price,Pack Size
+TEST-DAR-000-001,TestMed-Alpha (TEST DATA),Fictional-Comp-A (TEST DATA),10 mg (TEST),ট্যাবলেট,Sample Demo Pharma PLC (TEST DATA),Non-clinical Test Category (TEST DATA),2.50,10's Test Strip
+TEST-DAR-000-002,FictioCure-Beta (TEST DATA),DummyMolecule-B (TEST DATA),250 mg (TEST),ক্যাপসুল,Simulated Health Labs Ltd. (TEST DATA),Mock Agent Category (TEST DATA),12.00,20's Test Box
+TEST-DAR-000-003,MockRelief-Gamma (TEST DATA),SyntheticPoly-C (TEST DATA),5 mg/5ml (TEST),সিরাপ,Fictional Therapeutics BD (TEST DATA),Simulated Solution (TEST DATA),65.00,100 ml Test Bottle
+TEST-DAR-000-004,DemoSoothe-Delta (TEST DATA),InertCompound-D (TEST DATA),50 mcg (TEST),চোখের ড্রপ,Sample Demo Pharma PLC (TEST DATA),Trial Test Formulation (TEST DATA),80.00,5 ml Test Dropper
+TEST-DAR-000-005,TestGrip-Epsilon (TEST DATA),NonMedicalBase-E (TEST DATA),1% (TEST),মলম/জেল,Simulated Health Labs Ltd. (TEST DATA),Non-therapeutic Carrier (TEST DATA),45.00,15 gm Test Tube

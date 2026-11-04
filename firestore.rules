@@ -1,0 +1,174 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity validation functions
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email'])
+        && data.uid is string && data.uid.size() <= 128
+        && data.email is string && data.email.size() <= 256;
+    }
+
+    function isValidPatient(data) {
+      return data.keys().hasAll(['id', 'name', 'relation', 'age'])
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 128
+        && data.relation is string && data.relation.size() <= 64
+        && data.age is number && data.age >= 0 && data.age <= 150;
+    }
+
+    function isValidMedicine(data) {
+      return data.keys().hasAll(['id', 'brandName', 'type', 'schedules', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.brandName is string && data.brandName.size() > 0 && data.brandName.size() <= 128
+        && data.type is string && data.type.size() <= 64
+        && data.schedules is list && data.schedules.size() <= 10
+        && (!('assignedPatientId' in data) || (data.assignedPatientId is string && data.assignedPatientId.size() <= 128))
+        && data.status is string && data.status.size() <= 32;
+    }
+
+    function isValidDoseLog(data) {
+      return data.keys().hasAll(['id', 'medicineId', 'medicineName', 'scheduledDate', 'timeSlot', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.medicineId is string && data.medicineId.size() <= 128
+        && data.medicineName is string && data.medicineName.size() <= 128
+        && (!('patientId' in data) || (data.patientId is string && data.patientId.size() <= 128))
+        && data.scheduledDate is string && data.scheduledDate.size() <= 32
+        && data.timeSlot is string && data.timeSlot.size() <= 32
+        && (data.status == 'taken' || data.status == 'skipped' || data.status == 'missed');
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['soundEnabled', 'selectedTone'])
+        && data.soundEnabled is bool
+        && data.selectedTone is string && data.selectedTone.size() <= 64;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == 'sarashatikmkr501@gmail.com';
+    }
+
+    // User Root Document
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) && isValidUser(incoming());
+      allow list: if isAdmin();
+      allow delete: if false;
+
+      // Patient Profiles Subcollection (Strictly private to the owner)
+      match /patients/{patientId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(patientId) && isValidPatient(incoming());
+        allow delete: if isOwner(userId) && isValidId(patientId);
+      }
+
+      // Medicines Subcollection (Strictly private to the owner)
+      match /medicines/{medicineId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(medicineId) && isValidMedicine(incoming());
+        allow delete: if isOwner(userId) && isValidId(medicineId);
+      }
+
+      // Dose History Logs Subcollection (Strictly private to the owner)
+      match /doseLogs/{logId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(logId) && isValidDoseLog(incoming());
+        allow delete: if isOwner(userId) && isValidId(logId);
+      }
+
+      // User Settings Subcollection (Strictly private to the owner)
+      match /settings/{settingId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(settingId) && isValidSettings(incoming());
+        allow delete: if isOwner(userId) && isValidId(settingId);
+      }
+    }
+
+    // Collection Group for Admin Patient Stats (Read-only aggregate for authorized admin)
+    match /{path=**}/patients/{patientId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    function isValidGlobalMedicine(data) {
+      return data.keys().hasAll(['id', 'brandName', 'genericName', 'strength', 'dosageForm', 'manufacturer', 'source', 'duplicateKey'])
+        && data.id is string && data.id.size() <= 128
+        && data.brandName is string && data.brandName.size() > 0 && data.brandName.size() <= 128
+        && data.genericName is string && data.genericName.size() > 0 && data.genericName.size() <= 256
+        && data.strength is string && data.strength.size() <= 64
+        && data.dosageForm is string && data.dosageForm.size() <= 64
+        && data.manufacturer is string && data.manufacturer.size() <= 128
+        && data.source is string && data.source.size() <= 64
+        && data.duplicateKey is string && data.duplicateKey.size() <= 256;
+    }
+
+    function isValidImportBatch(data) {
+      return data.keys().hasAll(['id', 'source', 'importedAt', 'importedByEmail', 'licenseReference', 'totalRecordsInFile'])
+        && data.id is string && data.id.size() <= 128
+        && data.importedByEmail == 'sarashatikmkr501@gmail.com'
+        && data.licenseReference is string && data.licenseReference.size() <= 256;
+    }
+
+    // Global Medicine Catalog Collection
+    match /global_medicines/{medicineId} {
+      // 1. General users can read published medicines (single-field query support without requiring composite index)
+      // 2. Draft/unpublished records can ONLY be read by authorized Admin
+      allow get: if isAdmin() || resource.data.status == 'published';
+      allow list: if isAdmin() || resource.data.status == 'published';
+
+      // Authorized Admin can create or update medicines
+      allow create: if isAdmin() && isValidId(medicineId) && isValidGlobalMedicine(incoming());
+      allow update: if isAdmin() && isValidId(medicineId);
+
+      // Only authorized Admin can delete, and ONLY if it is a draft or test data (never published real medicine)
+      allow delete: if isAdmin() && isValidId(medicineId) && (
+        resource.data.status != 'published' ||
+        resource.data.verifiedByAdmin != true ||
+        resource.data.brandName.matches('.*\\(TEST DATA\\).*') ||
+        (resource.data.darNumber is string && resource.data.darNumber.matches('^TEST-.*'))
+      );
+    }
+
+    // Admin Import Batches and Audit Trail (Admin only read & write)
+    match /import_batches/{batchId} {
+      allow get, list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(batchId) && isValidImportBatch(incoming());
+      allow delete: if isAdmin() && isValidId(batchId);
+    }
+
+    // Admin Activities & Audit Logs (Admin only read & write)
+    match /admin_activities/{activityId} {
+      allow get, list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(activityId);
+      allow delete: if isAdmin() && isValidId(activityId);
+    }
+  }
+}
+

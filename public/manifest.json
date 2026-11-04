@@ -1,0 +1,19 @@
+{
+  "name": "স্বাস্থ্যবন্ধু — আধুনিক ওষুধ ব্যবস্থাপনা",
+  "short_name": "স্বাস্থ্যবন্ধু",
+  "description": "বাংলা ভাষায় আধুনিক, দায়িত্বশীল ও সহজে ব্যবহারযোগ্য ডিজিটাল ওষুধ ব্যবস্থাপনা অ্যাপ্লিকেশন।",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F766E",
+  "theme_color": "#0F766E",
+  "lang": "bn",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/src/assets/images/shasthobondhu_hero_1793655800567.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}
