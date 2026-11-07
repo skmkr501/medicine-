@@ -3,19 +3,22 @@ name: Build Shasthobondhu APK
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     paths:
       - 'android/**'
       - '.github/workflows/**'
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -28,10 +31,12 @@ jobs:
 
       - name: Build APK
         working-directory: android
-        run: gradle assembleDebug
+        run: gradle --settings-file settings.gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Shasthobondhu-APK
           path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
