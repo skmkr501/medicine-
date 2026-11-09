@@ -15,7 +15,8 @@
         android:name=".ShasthobondhuApp"
         android:allowBackup="true"
         android:label="স্বাস্থ্যবন্ধু"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+android:theme="@style/Theme.Shasthobondhu">
 
         <activity
             android:name=".MainActivity"
