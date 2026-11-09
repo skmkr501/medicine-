@@ -197,7 +197,7 @@ class MedicineAlarmForegroundService : Service() {
             putExtra(MedicineReminderScheduler.EXTRA_DOSAGE, dosage)
             putExtra(MedicineReminderScheduler.EXTRA_MEAL_TIMING, mealTiming)
             putExtra(MedicineReminderScheduler.EXTRA_PATIENT_NAME, patientName)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         val fullScreenPendingIntent = PendingIntent.getActivity(this, 101, fullScreenIntent, flags)
 
