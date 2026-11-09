@@ -2,25 +2,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Alarm permissions -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
-
-    <!-- Notification permission -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Reboot permission -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
-    <!-- Foreground service permissions -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-
-    <!-- Full screen alarm permission -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-
-    <!-- Battery optimization -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
@@ -29,7 +18,6 @@
         android:label="স্বাস্থ্যবন্ধু"
         android:supportsRtl="true">
 
-        <!-- Main Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -42,7 +30,6 @@
 
         </activity>
 
-        <!-- Medicine Alarm Screen -->
         <activity
             android:name=".reminder.AlarmAlertActivity"
             android:exported="false"
@@ -50,7 +37,6 @@
             android:turnScreenOn="true"
             android:launchMode="singleInstance" />
 
-        <!-- Alarm Receiver -->
         <receiver
             android:name=".reminder.MedicineAlarmReceiver"
             android:exported="false">
@@ -61,7 +47,6 @@
 
         </receiver>
 
-        <!-- Reboot Receiver -->
         <receiver
             android:name=".reminder.BootAndRebootReceiver"
             android:enabled="true"
@@ -78,7 +63,6 @@
 
         </receiver>
 
-        <!-- Foreground Alarm Service -->
         <service
             android:name=".reminder.MedicineAlarmForegroundService"
             android:enabled="true"
