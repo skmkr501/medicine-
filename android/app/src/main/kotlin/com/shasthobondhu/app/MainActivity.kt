@@ -5,6 +5,12 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.print.PrintAttributes
+import android.print.PrintManager
+import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.ActivityNotFoundException
 import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -31,6 +37,28 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var progress: ProgressBar
     private lateinit var errorView: LinearLayout
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    // ছবি/ফাইল বাছাইয়ের ফলাফল ওয়েব পেজে ফেরত দেয়
+    private val fileChooserLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val uris = android.webkit.WebChromeClient.FileChooserParams
+                .parseResult(result.resultCode, result.data)
+            filePathCallback?.onReceiveValue(uris)
+            filePathCallback = null
+        }
+
+    // ওয়েবের window.print() কে Android প্রিন্ট/PDF সেভে যুক্ত করে
+    inner class PrintBridge {
+        @JavascriptInterface
+        fun print() {
+            runOnUiThread {
+                val pm = getSystemService(PRINT_SERVICE) as PrintManager
+                val name = "Shasthobondhu_Report"
+                pm.print(name, webView.createPrintDocumentAdapter(name), PrintAttributes.Builder().build())
+            }
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,16 +86,23 @@ class MainActivity : AppCompatActivity() {
             mediaPlaybackRequiresUserGesture = false
         }
 
+        webView.addJavascriptInterface(PrintBridge(), "AndroidBridge")
+
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
-                // নিজের অ্যাপ ও Firebase লগইন পেজ ভিতরেই খুলবে, বাকি লিংক ব্রাউজারে
+                val scheme = uri.scheme ?: return true
+                // কল, SMS, ইমেইল, WhatsApp: ফোনের নিজস্ব অ্যাপে খুলবে
+                if (scheme in listOf("tel", "sms", "smsto", "mailto", "whatsapp", "geo")) {
+                    openExternal(uri)
+                    return true
+                }
                 val host = uri.host ?: return true
                 val internal = host == APP_HOST ||
                     host.endsWith(".firebaseapp.com") ||
                     host.endsWith(".run.app")
                 if (internal) return false
-                startActivity(Intent(Intent.ACTION_VIEW, uri))
+                openExternal(uri)
                 return true
             }
 
@@ -78,6 +113,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView, url: String?) {
                 progress.visibility = View.GONE
+                view.evaluateJavascript("window.print = function(){ AndroidBridge.print(); };", null)
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -88,6 +124,22 @@ class MainActivity : AppCompatActivity() {
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) {
                 progress.progress = newProgress
+            }
+
+            override fun onShowFileChooser(
+                view: WebView,
+                callback: ValueCallback<Array<Uri>>,
+                params: FileChooserParams
+            ): Boolean {
+                filePathCallback?.onReceiveValue(null)
+                filePathCallback = callback
+                return try {
+                    fileChooserLauncher.launch(params.createIntent())
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    filePathCallback = null
+                    false
+                }
             }
         }
 
@@ -103,6 +155,14 @@ class MainActivity : AppCompatActivity() {
 
         if (savedInstanceState != null) webView.restoreState(savedInstanceState)
         else webView.loadUrl(APP_URL)
+    }
+
+    private fun openExternal(uri: Uri) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "এই লিংক খোলার অ্যাপ পাওয়া যায়নি", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun buildErrorView(): LinearLayout {
