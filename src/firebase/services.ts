@@ -29,6 +29,8 @@ import {
   PatientProfile,
   DoseLog,
   ReminderSettings,
+  HealthRecord,
+  DoctorAppointment,
   GlobalMedicine,
   ImportBatch,
   AdminActivity,
@@ -183,6 +185,44 @@ export async function saveSettingsToCloud(userId: string, settings: ReminderSett
     await setDoc(doc(db, 'users', userId, 'settings', 'preferences'), settings, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// Cloud Firestore CRUD for Health Records (ধাপ ১)
+export async function saveHealthRecordToCloud(userId: string, record: HealthRecord): Promise<void> {
+  const path = `users/${userId}/healthRecords/${record.id}`;
+  try {
+    await setDoc(doc(db, 'users', userId, 'healthRecords', record.id), record, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteHealthRecordFromCloud(userId: string, recordId: string): Promise<void> {
+  const path = `users/${userId}/healthRecords/${recordId}`;
+  try {
+    await deleteDoc(doc(db, 'users', userId, 'healthRecords', recordId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// Cloud Firestore CRUD for Doctor Appointments (ধাপ ২)
+export async function saveAppointmentToCloud(userId: string, appointment: DoctorAppointment): Promise<void> {
+  const path = `users/${userId}/appointments/${appointment.id}`;
+  try {
+    await setDoc(doc(db, 'users', userId, 'appointments', appointment.id), appointment, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteAppointmentFromCloud(userId: string, appointmentId: string): Promise<void> {
+  const path = `users/${userId}/appointments/${appointmentId}`;
+  try {
+    await deleteDoc(doc(db, 'users', userId, 'appointments', appointmentId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 

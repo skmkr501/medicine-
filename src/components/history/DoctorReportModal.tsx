@@ -1,7 +1,9 @@
 import React from 'react';
 import { PatientProfile, Medicine, DoseLog } from '../../types';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
-import { X, Printer, Download, FileText, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { X, Printer, Download, FileText, CheckCircle2, ShieldCheck, Share2, Activity, Heart, Scale } from 'lucide-react';
+import { AppLogo } from '../ui/AppLogo';
+import { useMedicine } from '../../context/MedicineContext';
 
 interface DoctorReportModalProps {
   patient: PatientProfile | null;
@@ -16,10 +18,27 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
   logs,
   onClose,
 }) => {
+  const { healthRecords } = useMedicine();
+
   const patientMedicines = patient
     ? medicines.filter((m) => !m.assignedPatientId || m.assignedPatientId === patient.id)
     : medicines;
   const patientLogs = patient ? logs.filter((l) => !l.patientId || l.patientId === patient.id) : logs;
+
+  const targetPatientId = patient?.id;
+  const memberRecords = targetPatientId ? healthRecords.filter((r) => r.patientId === targetPatientId) : healthRecords;
+
+  const latestBP = memberRecords
+    .filter((r) => r.systolic !== undefined && r.diastolic !== undefined)
+    .sort((a, b) => `${b.recordDate} ${b.recordTime || ''}`.localeCompare(`${a.recordDate} ${a.recordTime || ''}`))[0];
+
+  const latestSugar = memberRecords
+    .filter((r) => r.bloodSugar !== undefined)
+    .sort((a, b) => `${b.recordDate} ${b.recordTime || ''}`.localeCompare(`${a.recordDate} ${a.recordTime || ''}`))[0];
+
+  const latestWeight = memberRecords
+    .filter((r) => r.weight !== undefined)
+    .sort((a, b) => `${b.recordDate} ${b.recordTime || ''}`.localeCompare(`${a.recordDate} ${a.recordTime || ''}`))[0];
 
   const takenCount = patientLogs.filter((l) => l.status === 'taken').length;
   const skippedCount = patientLogs.filter((l) => l.status === 'skipped').length;
@@ -30,6 +49,29 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
     window.print();
   };
 
+  const handleShareWhatsApp = () => {
+    let text = `📋 *স্বাস্থ্যবন্ধু — ডাক্তার পরামর্শ রিপোর্ট*\n`;
+    text += `রোগী: ${patient ? patient.name : 'সাধারণ রোগী'}\n`;
+    if (patient) text += `বয়স: ${toBengaliNumber(patient.age)} বছর | রক্ত: ${patient.bloodGroup}\n`;
+    text += `সেবনের নিয়মানুবর্তিতা: ${toBengaliNumber(complianceRate)}%\n`;
+
+    if (latestBP || latestSugar || latestWeight) {
+      text += `\n*সর্বশেষ স্বাস্থ্য রেকর্ড:*\n`;
+      if (latestBP) text += `• রক্তচাপ: ${toBengaliNumber(latestBP.systolic || 0)}/${toBengaliNumber(latestBP.diastolic || 0)} mmHg (${latestBP.recordDate})\n`;
+      if (latestSugar) text += `• ব্লাড সুগার: ${toBengaliNumber(latestSugar.bloodSugar || 0)} mmol/L (${latestSugar.sugarType || 'খালি পেটে'}, ${latestSugar.recordDate})\n`;
+      if (latestWeight) text += `• ওজন: ${toBengaliNumber(latestWeight.weight || 0)} কেজি (${latestWeight.recordDate})\n`;
+    }
+
+    text += `\n*চলমান ওষুধসমূহ:*\n`;
+    patientMedicines.forEach((m, i) => {
+      text += `${toBengaliNumber(i + 1)}. ${m.brandName} (${m.genericName}) - ${m.schedules.map((s) => `${s.timeSlot} ${s.dosage}`).join(', ')} [${m.mealTiming}]\n`;
+    });
+    if (patient?.allergies?.length) {
+      text += `\n⚠️ অ্যালার্জি: ${patient.allergies.join(', ')}`;
+    }
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div
@@ -37,13 +79,21 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Controls (Hidden in Print) */}
-        <div className="no-print flex items-center justify-between pb-4 mb-6 border-b border-slate-200 dark:border-slate-800">
+        <div className="no-print flex items-center justify-between pb-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex-wrap gap-3">
           <div className="flex items-center gap-2 text-slate-800 dark:text-slate-100 font-bold text-sm">
             <FileText className="w-5 h-5 text-teal-600" />
             <span>ডাক্তার পরামর্শের জন্য ওষুধ সেবনের আনুষ্ঠানিক রিপোর্ট</span>
           </div>
           
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleShareWhatsApp}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-950/60 hover:bg-emerald-200 dark:hover:bg-emerald-900/80 rounded-lg shadow-2xs transition-colors cursor-pointer"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>WhatsApp এ শেয়ার</span>
+            </button>
             <button
               type="button"
               onClick={handlePrint}
@@ -69,10 +119,8 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
           {/* Clinic / App Letterhead */}
           <div className="border-b-2 border-teal-700 pb-4 flex flex-col sm:flex-row justify-between sm:items-end gap-3">
             <div>
-              <div className="flex items-center gap-2">
-                <span className="w-7 h-7 rounded bg-teal-700 text-white flex items-center justify-center text-sm font-bold">
-                  স্বা
-                </span>
+              <div className="flex items-center gap-2.5">
+                <AppLogo size="md" showText={false} />
                 <span className="text-xl font-bold text-teal-900 dark:text-teal-400">
                   স্বাস্থ্যবন্ধু (Shasthobondhu)
                 </span>
@@ -128,6 +176,50 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
               </span>
             </div>
           </div>
+
+          {/* Latest Health Records (Vitals) */}
+          {(latestBP || latestSugar || latestWeight) && (
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2 text-xs">
+              <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-200">
+                <Activity className="w-4 h-4 text-teal-600" />
+                <span>সর্বশেষ স্বাস্থ্য রেকর্ড (Vitals):</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {latestBP && (
+                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[11px] text-slate-400 block">রক্তচাপ (BP)</span>
+                    <strong className="text-sm text-slate-800 dark:text-white">
+                      {toBengaliNumber(latestBP.systolic || 0)}/{toBengaliNumber(latestBP.diastolic || 0)}{' '}
+                      <span className="text-xs font-normal text-slate-400">mmHg</span>
+                    </strong>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">{latestBP.recordDate}</span>
+                  </div>
+                )}
+                {latestSugar && (
+                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[11px] text-slate-400 block">
+                      ব্লাড সুগার ({latestSugar.sugarType || 'খালি পেটে'})
+                    </span>
+                    <strong className="text-sm text-slate-800 dark:text-white">
+                      {toBengaliNumber(latestSugar.bloodSugar || 0)}{' '}
+                      <span className="text-xs font-normal text-slate-400">mmol/L</span>
+                    </strong>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">{latestSugar.recordDate}</span>
+                  </div>
+                )}
+                {latestWeight && (
+                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[11px] text-slate-400 block">শারীরিক ওজন</span>
+                    <strong className="text-sm text-slate-800 dark:text-white">
+                      {toBengaliNumber(latestWeight.weight || 0)}{' '}
+                      <span className="text-xs font-normal text-slate-400">কেজি</span>
+                    </strong>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">{latestWeight.recordDate}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Adherence Compliance Summary */}
           <div className="p-4 bg-teal-50/60 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-800 rounded-xl flex items-center justify-between text-xs">

@@ -28,7 +28,9 @@
         "chronicConditions": { "type": "array" },
         "allergies": { "type": "array" },
         "emergencyContact": { "type": "string", "maxLength": 64 },
-        "avatarUrl": { "type": "string", "maxLength": 512 }
+        "avatarUrl": { "type": "string", "maxLength": 512 },
+        "isArchived": { "type": "boolean" },
+        "archivedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "name", "relation", "age"]
     },
@@ -88,9 +90,50 @@
         "selectedTone": { "type": "string", "maxLength": 64 },
         "advanceMinutes": { "type": "number" },
         "snoozeDurationMinutes": { "type": "number" },
-        "language": { "type": "string", "maxLength": 16 }
+        "language": { "type": "string", "maxLength": 16 },
+        "themeMode": { "type": "string", "maxLength": 16 },
+        "largeFontMode": { "type": "boolean" },
+        "emergencyContactName": { "type": "string", "maxLength": 128 },
+        "emergencyContactPhone": { "type": "string", "maxLength": 64 }
       },
       "required": ["soundEnabled", "selectedTone"]
+    },
+    "HealthRecord": {
+      "title": "HealthRecord",
+      "description": "Patient health tracking records including blood pressure, blood glucose, and weight",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "patientId": { "type": "string", "maxLength": 128 },
+        "recordDate": { "type": "string", "maxLength": 32 },
+        "recordTime": { "type": "string", "maxLength": 32 },
+        "systolic": { "type": "number" },
+        "diastolic": { "type": "number" },
+        "bloodSugar": { "type": "number" },
+        "sugarType": { "type": "string", "maxLength": 32 },
+        "weight": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 256 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "patientId", "recordDate"]
+    },
+    "DoctorAppointment": {
+      "title": "DoctorAppointment",
+      "description": "Scheduled medical appointments with reminders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "patientId": { "type": "string", "maxLength": 128 },
+        "doctorName": { "type": "string", "maxLength": 128 },
+        "specialty": { "type": "string", "maxLength": 128 },
+        "appointmentDate": { "type": "string", "maxLength": 32 },
+        "appointmentTime": { "type": "string", "maxLength": 32 },
+        "location": { "type": "string", "maxLength": 256 },
+        "notes": { "type": "string", "maxLength": 512 },
+        "status": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "doctorName", "appointmentDate", "appointmentTime"]
     },
     "GlobalMedicine": {
       "title": "GlobalMedicine",
@@ -168,6 +211,14 @@
     "/users/{userId}/settings/{settingId}": {
       "schema": "UserSettings",
       "description": "Settings configuration for this user"
+    },
+    "/users/{userId}/healthRecords/{recordId}": {
+      "schema": "HealthRecord",
+      "description": "Personal health records for user patients"
+    },
+    "/users/{userId}/appointments/{appointmentId}": {
+      "schema": "DoctorAppointment",
+      "description": "Doctor appointments tracked by user"
     },
     "/global_medicines/{medicineId}": {
       "schema": "GlobalMedicine",

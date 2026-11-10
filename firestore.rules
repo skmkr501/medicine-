@@ -41,7 +41,9 @@ service cloud.firestore {
         && data.id is string && data.id.size() <= 128
         && data.name is string && data.name.size() > 0 && data.name.size() <= 128
         && data.relation is string && data.relation.size() <= 64
-        && data.age is number && data.age >= 0 && data.age <= 150;
+        && data.age is number && data.age >= 0 && data.age <= 150
+        && (!('isArchived' in data) || data.isArchived is bool)
+        && (!('archivedAt' in data) || (data.archivedAt is string && data.archivedAt.size() <= 64));
     }
 
     function isValidMedicine(data) {
@@ -68,7 +70,38 @@ service cloud.firestore {
     function isValidSettings(data) {
       return data.keys().hasAll(['soundEnabled', 'selectedTone'])
         && data.soundEnabled is bool
-        && data.selectedTone is string && data.selectedTone.size() <= 64;
+        && data.selectedTone is string && data.selectedTone.size() <= 64
+        && (!('themeMode' in data) || (data.themeMode is string && data.themeMode.size() <= 16))
+        && (!('largeFontMode' in data) || data.largeFontMode is bool)
+        && (!('language' in data) || (data.language is string && data.language.size() <= 16))
+        && (!('emergencyContactName' in data) || (data.emergencyContactName is string && data.emergencyContactName.size() <= 128))
+        && (!('emergencyContactPhone' in data) || (data.emergencyContactPhone is string && data.emergencyContactPhone.size() <= 64));
+    }
+
+    function isValidHealthRecord(data) {
+      return data.keys().hasAll(['id', 'patientId', 'recordDate'])
+        && data.id is string && data.id.size() <= 128
+        && data.patientId is string && data.patientId.size() <= 128
+        && data.recordDate is string && data.recordDate.size() <= 32
+        && (!('systolic' in data) || (data.systolic is number && data.systolic >= 40 && data.systolic <= 300))
+        && (!('diastolic' in data) || (data.diastolic is number && data.diastolic >= 30 && data.diastolic <= 200))
+        && (!('bloodSugar' in data) || (data.bloodSugar is number && data.bloodSugar >= 1 && data.bloodSugar <= 50))
+        && (!('sugarType' in data) || (data.sugarType is string && data.sugarType.size() <= 32))
+        && (!('weight' in data) || (data.weight is number && data.weight >= 1 && data.weight <= 500))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 256));
+    }
+
+    function isValidAppointment(data) {
+      return data.keys().hasAll(['id', 'doctorName', 'appointmentDate', 'appointmentTime'])
+        && data.id is string && data.id.size() <= 128
+        && data.doctorName is string && data.doctorName.size() > 0 && data.doctorName.size() <= 128
+        && data.appointmentDate is string && data.appointmentDate.size() <= 32
+        && data.appointmentTime is string && data.appointmentTime.size() <= 32
+        && (!('patientId' in data) || (data.patientId is string && data.patientId.size() <= 128))
+        && (!('specialty' in data) || (data.specialty is string && data.specialty.size() <= 128))
+        && (!('location' in data) || (data.location is string && data.location.size() <= 256))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 512))
+        && (!('status' in data) || (data.status is string && data.status.size() <= 32));
     }
 
     function isAdmin() {
@@ -108,6 +141,20 @@ service cloud.firestore {
         allow get, list: if isOwner(userId);
         allow create, update: if isOwner(userId) && isValidId(settingId) && isValidSettings(incoming());
         allow delete: if isOwner(userId) && isValidId(settingId);
+      }
+
+      // Health Records Subcollection (Strictly private to the owner)
+      match /healthRecords/{recordId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(recordId) && isValidHealthRecord(incoming());
+        allow delete: if isOwner(userId) && isValidId(recordId);
+      }
+
+      // Doctor Appointments Subcollection (Strictly private to the owner)
+      match /appointments/{appointmentId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(appointmentId) && isValidAppointment(incoming());
+        allow delete: if isOwner(userId) && isValidId(appointmentId);
       }
     }
 

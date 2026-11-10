@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavigationPage } from '../../types';
-import { LayoutDashboard, Pill, BookOpen, Bell, History } from 'lucide-react';
+import { LayoutDashboard, CheckSquare, Pill, Sparkles, Bell } from 'lucide-react';
 
 interface MobileNavProps {
   activePage: NavigationPage;
@@ -9,11 +9,11 @@ interface MobileNavProps {
 
 export const MobileNav: React.FC<MobileNavProps> = ({ activePage, onNavigate }) => {
   const items = [
-    { id: 'dashboard' as NavigationPage, label: 'ড্যাশবোর্ড', icon: LayoutDashboard },
-    { id: 'medicines' as NavigationPage, label: 'আমার ওষুধ', icon: Pill },
-    { id: 'library' as NavigationPage, label: 'লাইব্রেরি', icon: BookOpen },
+    { id: 'dashboard' as NavigationPage, label: 'হোম', icon: LayoutDashboard },
+    { id: 'checklist' as NavigationPage, label: 'চেকলিস্ট', icon: CheckSquare },
+    { id: 'medicines' as NavigationPage, label: 'ওষুধ', icon: Pill },
+    { id: 'ai-assistant' as NavigationPage, label: 'AI সহায়ক', icon: Sparkles },
     { id: 'reminders' as NavigationPage, label: 'রিমাইন্ডার', icon: Bell },
-    { id: 'history' as NavigationPage, label: 'ইতিহাস', icon: History },
   ];
 
 

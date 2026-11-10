@@ -41,8 +41,8 @@ export const MedicineList: React.FC = () => {
   // Filter medicines for current active patient + search & status
   const filteredMedicines = useMemo(() => {
     return medicines.filter((m) => {
-      // If an active patient is selected, show medicines belonging to this patient
-      if (activePatient && m.assignedPatientId && m.assignedPatientId !== activePatient.id) {
+      // If an active patient is selected, show strictly medicines belonging to this patient
+      if (activePatient && m.assignedPatientId !== activePatient.id) {
         return false;
       }
 

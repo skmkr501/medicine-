@@ -19,6 +19,12 @@ import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AuthModal } from './components/auth/AuthModal';
 import { ProfileModal } from './components/profiles/ProfileModal';
 import { StockAdjustmentModal } from './components/medicines/StockAdjustmentModal';
+import { AppLogo } from './components/ui/AppLogo';
+
+import { DailyChecklist } from './components/checklist/DailyChecklist';
+import { AiAssistantPage } from './components/ai/AiAssistantPage';
+import { HealthRecordsPage } from './components/health/HealthRecordsPage';
+import { AppointmentsPage } from './components/appointments/AppointmentsPage';
 
 const AppContent: React.FC = () => {
   const {
@@ -40,8 +46,12 @@ const AppContent: React.FC = () => {
       {/* Main Page Content */}
       <main className="flex-1 pb-20 md:pb-12">
         {currentPage === 'dashboard' && <Dashboard />}
+        {currentPage === 'checklist' && <DailyChecklist />}
         {currentPage === 'medicines' && <MedicineList />}
+        {currentPage === 'health-records' && <HealthRecordsPage />}
+        {currentPage === 'appointments' && <AppointmentsPage />}
         {currentPage === 'add-medicine' && <AddMedicine />}
+        {currentPage === 'ai-assistant' && <AiAssistantPage />}
         {currentPage === 'reminders' && <MedicineReminder />}
         {currentPage === 'history' && <MedicineHistory />}
         {currentPage === 'settings' && <Settings />}
@@ -72,10 +82,8 @@ const AppContent: React.FC = () => {
       {/* Quiet Footer */}
       <footer className="hidden md:block border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 text-xs text-slate-500 dark:text-slate-400">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <span className="w-5 h-5 rounded bg-teal-700 text-white flex items-center justify-center text-[11px] font-bold">
-              স্বা
-            </span>
+          <div className="flex items-center gap-2.5">
+            <AppLogo size="sm" showText={false} />
             <span className="font-semibold text-slate-800 dark:text-slate-200">
               স্বাস্থ্যবন্ধু (Shasthobondhu)
             </span>

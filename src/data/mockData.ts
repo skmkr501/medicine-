@@ -1,4 +1,11 @@
-import { Medicine, PatientProfile, DoseLog, ReminderSettings } from '../types';
+import {
+  Medicine,
+  PatientProfile,
+  DoseLog,
+  ReminderSettings,
+  HealthRecord,
+  DoctorAppointment,
+} from '../types';
 
 export const initialPatients: PatientProfile[] = [
   {
@@ -333,7 +340,106 @@ export const initialSettings: ReminderSettings = {
   advanceMinutes: 15,
   snoozeDurationMinutes: 10,
   language: 'bn',
+  themeMode: 'system',
+  largeFontMode: false,
+  emergencyContactName: 'তানভীর করিম (ছেলে)',
+  emergencyContactPhone: '+8801711223344',
 };
+
+export const initialHealthRecords: HealthRecord[] = [
+  {
+    id: 'hr-1',
+    patientId: 'patient-1',
+    recordDate: '2026-10-28',
+    recordTime: '08:00 AM',
+    systolic: 128,
+    diastolic: 84,
+    bloodSugar: 5.8,
+    sugarType: 'খালি পেটে',
+    weight: 68.5,
+    notes: 'সকালে হাটার পর পরিমাপ',
+    createdAt: '2026-10-28T08:15:00Z',
+  },
+  {
+    id: 'hr-2',
+    patientId: 'patient-1',
+    recordDate: '2026-10-30',
+    recordTime: '08:30 AM',
+    systolic: 122,
+    diastolic: 80,
+    bloodSugar: 6.1,
+    sugarType: 'খালি পেটে',
+    weight: 68.2,
+    notes: 'স্বাভাবিক প্রেসার',
+    createdAt: '2026-10-30T08:40:00Z',
+  },
+  {
+    id: 'hr-3',
+    patientId: 'patient-1',
+    recordDate: '2026-11-01',
+    recordTime: '09:00 AM',
+    systolic: 125,
+    diastolic: 82,
+    bloodSugar: 7.2,
+    sugarType: 'খাওয়ার পরে',
+    weight: 68.0,
+    notes: 'নাস্তার ২ ঘণ্টা পর',
+    createdAt: '2026-11-01T09:10:00Z',
+  },
+  {
+    id: 'hr-4',
+    patientId: 'patient-1',
+    recordDate: '2026-11-02',
+    recordTime: '08:15 AM',
+    systolic: 120,
+    diastolic: 78,
+    bloodSugar: 5.5,
+    sugarType: 'খালি পেটে',
+    weight: 68.0,
+    notes: 'খুবই স্থিতিশীল রক্তচাপ ও সুগার',
+    createdAt: '2026-11-02T08:20:00Z',
+  },
+  {
+    id: 'hr-5',
+    patientId: 'patient-2',
+    recordDate: '2026-11-02',
+    recordTime: '08:30 AM',
+    systolic: 118,
+    diastolic: 76,
+    bloodSugar: 5.2,
+    sugarType: 'খালি পেটে',
+    weight: 59.0,
+    notes: 'মায়ের সাধারণ চেকআপ',
+    createdAt: '2026-11-02T08:35:00Z',
+  },
+];
+
+export const initialAppointments: DoctorAppointment[] = [
+  {
+    id: 'apt-1',
+    patientId: 'patient-1',
+    doctorName: 'ডা. মীর মোস্তাফিজুর রহমান',
+    specialty: 'গ্যাস্ট্রোএন্টেরোলজিস্ট ও মেডিসিন বিশেষজ্ঞ',
+    appointmentDate: '2026-11-03', // Tomorrow!
+    appointmentTime: '06:30 PM',
+    location: 'ল্যাবএইড স্পেশালাইজড হাসপাতাল, ধানমন্ডি (রুম ৪০২)',
+    notes: 'পূর্ববর্তী প্রেসক্রিপশন ও সুগার চার্ট সঙ্গে নিতে হবে।',
+    status: 'upcoming',
+    createdAt: '2026-10-25T10:00:00Z',
+  },
+  {
+    id: 'apt-2',
+    patientId: 'patient-2',
+    doctorName: 'ডা. নাসরিন আক্তার',
+    specialty: 'অর্থোপেডিক ও বাতব্যথা বিশেষজ্ঞ',
+    appointmentDate: '2026-11-08',
+    appointmentTime: '11:00 AM',
+    location: 'পপুলার ডায়াগনস্টিক সেন্টার, শান্তিনগর',
+    notes: 'হাঁটু ব্যথার ফলোআপ ভিজিট।',
+    status: 'upcoming',
+    createdAt: '2026-10-26T12:00:00Z',
+  },
+];
 
 export const commonMedicinePresets = [
   {

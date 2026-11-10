@@ -37,13 +37,13 @@ export const MedicineHistory: React.FC = () => {
   const [manualNotes, setManualNotes] = useState('');
 
   const patientMedicines = medicines.filter(
-    (m) => !activePatient || !m.assignedPatientId || m.assignedPatientId === activePatient.id
+    (m) => !activePatient || m.assignedPatientId === activePatient.id
   );
 
-  // Filter logs for active patient + date + status
+  // Filter logs strictly for active patient + date + status (Requirement 3)
   const filteredLogs = useMemo(() => {
     return doseLogs.filter((log) => {
-      if (activePatient && log.patientId && log.patientId !== activePatient.id) return false;
+      if (activePatient && log.patientId !== activePatient.id) return false;
 
       if (statusFilter !== 'all' && log.status !== statusFilter) return false;
 

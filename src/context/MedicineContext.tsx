@@ -10,11 +10,15 @@ import {
   ImportBatch,
   StockAdjustment,
   StockPrediction,
+  HealthRecord,
+  DoctorAppointment,
 } from '../types';
 import {
   initialMedicines,
   initialDoseLogs,
   initialSettings,
+  initialHealthRecords,
+  initialAppointments,
 } from '../data/mockData';
 import { playAlertTone, toBengaliNumber } from '../utils/bengaliUtils';
 import {
@@ -23,6 +27,11 @@ import {
   getNewEligibleAlerts,
   markStockAlertSent,
 } from '../utils/stockPredictor';
+import {
+  syncNativeReminders,
+  clearAllNativeReminders,
+  isNativeRemindersAvailable,
+} from '../services/nativeReminders';
 import { auth, db, testFirestoreConnection } from '../firebase/config';
 import {
   onAuthStateChanged,
@@ -41,6 +50,10 @@ import {
   deletePatientFromCloud,
   saveDoseLogToCloud,
   saveSettingsToCloud,
+  saveHealthRecordToCloud,
+  deleteHealthRecordFromCloud,
+  saveAppointmentToCloud,
+  deleteAppointmentFromCloud,
   migrateLocalDataToCloud,
   logOut,
   ADMIN_EMAIL,
@@ -91,6 +104,9 @@ interface MedicineContextType {
   addPatient: (patient: Omit<PatientProfile, 'id'>) => void;
   updatePatient: (id: string, updates: Partial<PatientProfile>) => void;
   deletePatient: (id: string) => void;
+  archivePatient: (id: string) => void;
+  unarchivePatient: (id: string) => void;
+  seedFictionalFamilyProfiles: () => void;
   isProfileModalOpen: boolean;
   editingPatient: PatientProfile | null;
   openCreateProfileModal: () => void;
@@ -100,6 +116,17 @@ interface MedicineContextType {
   resetAllData: () => void;
   toast: ToastState | null;
   showToast: (message: string, type?: 'success' | 'info' | 'alert') => void;
+
+  // Health Records (ধাপ ১)
+  healthRecords: HealthRecord[];
+  addHealthRecord: (record: Omit<HealthRecord, 'id' | 'createdAt'>) => string;
+  deleteHealthRecord: (id: string) => void;
+
+  // Doctor Appointments (ধাপ ২)
+  appointments: DoctorAppointment[];
+  addAppointment: (appointment: Omit<DoctorAppointment, 'id' | 'createdAt'>) => string;
+  updateAppointment: (id: string, updates: Partial<DoctorAppointment>) => void;
+  deleteAppointment: (id: string) => void;
   
   // Firebase Auth & Cloud Sync States
   currentUser: User | null;
@@ -166,6 +193,8 @@ const STORAGE_KEYS = {
   ACTIVE_PATIENT: 'shasthobondhu_active_patient_v2',
   GLOBAL_MEDS: 'shasthobondhu_global_meds_v2',
   IMPORT_BATCHES: 'shasthobondhu_import_batches_v2',
+  HEALTH_RECORDS: 'shasthobondhu_health_records_v2',
+  APPOINTMENTS: 'shasthobondhu_appointments_v2',
 };
 
 export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -235,6 +264,25 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   });
 
+  // Health records & Doctor appointments (ধাপ ১ ও ২)
+  const [healthRecords, setHealthRecords] = useState<HealthRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.HEALTH_RECORDS);
+      return saved ? JSON.parse(saved) : initialHealthRecords;
+    } catch {
+      return initialHealthRecords;
+    }
+  });
+
+  const [appointments, setAppointments] = useState<DoctorAppointment[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.APPOINTMENTS);
+      return saved ? JSON.parse(saved) : initialAppointments;
+    } catch {
+      return initialAppointments;
+    }
+  });
+
   const [selectedGlobalMedForDetail, setSelectedGlobalMedForDetail] = useState<GlobalMedicine | null>(null);
   const [isAddToPersonalModalOpen, setIsAddToPersonalModalOpen] = useState(false);
   const [catalogMedToAddToPersonal, setCatalogMedToAddToPersonal] = useState<GlobalMedicine | null>(null);
@@ -295,6 +343,55 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [settings]);
 
+  // Apply Dark Mode and Listen to System Preferences
+  useEffect(() => {
+    const applyTheme = () => {
+      const mode = settings.themeMode || 'system';
+      const root = document.documentElement;
+      const isSystemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+      if (mode === 'dark' || (mode === 'system' && isSystemDark)) {
+        root.classList.add('dark');
+      } else {
+        root.classList.remove('dark');
+      }
+    };
+
+    applyTheme();
+
+    if (window.matchMedia) {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const listener = () => {
+        if ((settings.themeMode || 'system') === 'system') {
+          applyTheme();
+        }
+      };
+      mediaQuery.addEventListener('change', listener);
+      return () => mediaQuery.removeEventListener('change', listener);
+    }
+  }, [settings.themeMode]);
+
+  // Apply Elderly Large Font Mode to root document
+  useEffect(() => {
+    const root = document.documentElement;
+    if (settings.largeFontMode) {
+      root.style.fontSize = '18px';
+    } else {
+      root.style.fontSize = '';
+    }
+  }, [settings.largeFontMode]);
+
+  // Debounced auto-sync to native Android APK bridge (Requirement 3: 500ms debounce)
+  useEffect(() => {
+    if (!isNativeRemindersAvailable()) return;
+
+    const timer = setTimeout(() => {
+      syncNativeReminders(medicines, patients);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [medicines, patients, currentUser]);
+
   useEffect(() => {
     try {
       if (activePatientId) {
@@ -322,6 +419,22 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       console.warn('Storage sync error', e);
     }
   }, [importBatches]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.HEALTH_RECORDS, JSON.stringify(healthRecords));
+    } catch (e) {
+      console.warn('Storage sync error', e);
+    }
+  }, [healthRecords]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(appointments));
+    } catch (e) {
+      console.warn('Storage sync error', e);
+    }
+  }, [appointments]);
 
   // Real-time Firestore Listener for Global Medicine Catalog
   // Non-admins listen to published medicines via single-field query (no composite index needed)
@@ -500,6 +613,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const signOutUser = async () => {
+    clearAllNativeReminders();
     await logOut();
     setActivePatientId(null);
     showToast('অ্যাকাউন্ট থেকে সফলভাবে লগআউট হয়েছে', 'info');
@@ -532,7 +646,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const activePatient: PatientProfile | null =
     (activePatientId ? patients.find((p) => p.id === activePatientId) : null) ||
-    (patients.length > 0 ? patients[0] : null);
+    (patients.filter((p) => !p.isArchived).length > 0 ? patients.filter((p) => !p.isArchived)[0] : (patients.length > 0 ? patients[0] : null));
 
   const updateSettings = (newSettings: Partial<ReminderSettings>) => {
     const updated = { ...settings, ...newSettings };
@@ -607,7 +721,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       medicineId,
       medicineName: med?.brandName || 'ওষুধ',
       genericName: med?.genericName,
-      patientId: activePatient?.id || med?.assignedPatientId || undefined,
+      patientId: med?.assignedPatientId || activePatient?.id || undefined,
       scheduledDate: todayStr,
       scheduledTime,
       timeSlot,
@@ -874,14 +988,397 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     showToast(`"${target?.name || 'প্রোফাইল'}" সফলভাবে মুছে ফেলা হয়েছে`, 'info');
   };
 
+  const archivePatient = (id: string) => {
+    const target = patients.find((p) => p.id === id);
+    if (!target) return;
+    const nowIso = new Date().toISOString();
+    const updated: PatientProfile = { ...target, isArchived: true, archivedAt: nowIso };
+
+    setPatients((prev) => prev.map((p) => (p.id === id ? updated : p)));
+
+    // If active was archived, switch activePatientId to first non-archived patient or null
+    if (activePatientId === id) {
+      const remainingActive = patients.filter((p) => p.id !== id && !p.isArchived);
+      setActivePatientId(remainingActive.length > 0 ? remainingActive[0].id : null);
+    }
+
+    if (currentUser) {
+      savePatientToCloud(currentUser.uid, updated).catch((err) =>
+        console.warn('Cloud archive patient error', err)
+      );
+    }
+
+    showToast(`"${target.name}" এর প্রোফাইল সফলভাবে আর্কাইভ করা হয়েছে (ইতিহাস ও ডেটা অক্ষত আছে)`, 'info');
+  };
+
+  const unarchivePatient = (id: string) => {
+    const target = patients.find((p) => p.id === id);
+    if (!target) return;
+    const updated: PatientProfile = { ...target, isArchived: false, archivedAt: undefined };
+
+    setPatients((prev) => prev.map((p) => (p.id === id ? updated : p)));
+    setActivePatientId(id);
+
+    if (currentUser) {
+      savePatientToCloud(currentUser.uid, updated).catch((err) =>
+        console.warn('Cloud unarchive patient error', err)
+      );
+    }
+
+    showToast(`"${target.name}" এর প্রোফাইল পুনরায় সক্রিয় করা হয়েছে`, 'success');
+  };
+
+  const seedFictionalFamilyProfiles = () => {
+    const fictionalPatients: PatientProfile[] = [
+      {
+        id: 'patient-fictional-father',
+        name: 'আব্দুর রহমান',
+        relation: 'বাবা',
+        age: 68,
+        gender: 'পুরুষ',
+        bloodGroup: 'O+',
+        chronicConditions: ['উচ্চ রক্তচাপ (Hypertension)', 'টাইপ-২ ডায়াবেটিস'],
+        allergies: ['সালফা ড্রাগ অ্যালার্জি'],
+        emergencyContact: '+৮৮০ ১৭ ১১২২ ৩৩৪৪',
+        isArchived: false,
+      },
+      {
+        id: 'patient-fictional-mother',
+        name: 'ফাতেমা বেগম',
+        relation: 'মা',
+        age: 62,
+        gender: 'মহিলা',
+        bloodGroup: 'B+',
+        chronicConditions: ['অস্টিওআর্থ্রাইটিস', 'ক্রনিক গ্যাস্ট্রাইটিস'],
+        allergies: ['পেনিসিলিন'],
+        emergencyContact: '+৮৮০ ১৮ ২২৩৩ ৪৪৫৫',
+        isArchived: false,
+      },
+      {
+        id: 'patient-fictional-child',
+        name: 'রায়ান আহমেদ',
+        relation: 'ছেলে',
+        age: 8,
+        gender: 'পুরুষ',
+        bloodGroup: 'A+',
+        chronicConditions: ['সিজনাল অ্যালার্জি ও ডাস্ট কোল্ড'],
+        allergies: ['কোনো ড্রাগ অ্যালার্জি নেই'],
+        emergencyContact: '+৮৮০ ১৯ ৩৩৪৪ ৫৫৬৬',
+        isArchived: false,
+      },
+    ];
+
+    const fictionalMedicines: Medicine[] = [
+      // আব্দুর রহমান (বাবা) medicines
+      {
+        id: 'med-fic-father-1',
+        brandName: 'টেলমিভাস ৪০ (Telmivas 40)',
+        genericName: 'Telmisartan 40mg (Square Pharmaceuticals)',
+        type: 'ট্যাবলেট',
+        strength: '40 mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [
+          { id: 'sch-fic-f1', timeSlot: 'সকাল', time: '08:30 AM', dosage: '১টি' },
+        ],
+        stock: 30,
+        minStockAlert: 7,
+        unit: 'টি',
+        startDate: '2026-10-01',
+        isChronic: true,
+        doctorName: 'ডা. এ কে এম সামসুল হক (কার্ডিওলজিস্ট)',
+        purpose: 'উচ্চ রক্তচাপ নিয়ন্ত্রণ',
+        instructions: 'প্রতিদিন সকালের নাস্তার পর সেব্য।',
+        assignedPatientId: 'patient-fictional-father',
+        status: 'active',
+        colorTag: 'teal',
+      },
+      {
+        id: 'med-fic-father-2',
+        brandName: 'মেটফোর ৫০০ (Metfor 500)',
+        genericName: 'Metformin Hydrochloride 500mg (Beximco)',
+        type: 'ট্যাবলেট',
+        strength: '500 mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [
+          { id: 'sch-fic-f2', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
+          { id: 'sch-fic-f3', timeSlot: 'রাত', time: '08:00 PM', dosage: '১টি' },
+        ],
+        stock: 45,
+        minStockAlert: 10,
+        unit: 'টি',
+        startDate: '2026-09-15',
+        isChronic: true,
+        doctorName: 'ডা. ফাহমিদা সুলতানা (এন্ডোক্রাইনোলজিস্ট)',
+        purpose: 'ডায়াবেটিস ও ব্লাড সুগার নিয়ন্ত্রণ',
+        instructions: 'খাবারের ঠিক পরপরই সেবন করুন।',
+        assignedPatientId: 'patient-fictional-father',
+        status: 'active',
+        colorTag: 'blue',
+      },
+      // ফাতেমা বেগম (মা) medicines
+      {
+        id: 'med-fic-mother-1',
+        brandName: 'সেক্লো ২০ (Seclo 20)',
+        genericName: 'Omeprazole 20mg (Square Pharmaceuticals)',
+        type: 'ক্যাপসুল',
+        strength: '20 mg',
+        mealTiming: 'খাওয়ার আগে',
+        schedules: [
+          { id: 'sch-fic-m1', timeSlot: 'সকাল', time: '07:30 AM', dosage: '১টি' },
+          { id: 'sch-fic-m2', timeSlot: 'রাত', time: '08:30 PM', dosage: '১টি' },
+        ],
+        stock: 24,
+        minStockAlert: 8,
+        unit: 'টি',
+        startDate: '2026-10-10',
+        isChronic: true,
+        doctorName: 'ডা. রাশেদুল হাসান (গ্যাস্ট্রো)',
+        purpose: 'গ্যাস্ট্রিক ও বুকজ্বালা উপশম',
+        instructions: 'খাবারের ৩০ মিনিট পূর্বে এক গ্লাস পানি সহ সেব্য।',
+        assignedPatientId: 'patient-fictional-mother',
+        status: 'active',
+        colorTag: 'emerald',
+      },
+      {
+        id: 'med-fic-mother-2',
+        brandName: 'ক্যালবো-ডি (Calbo-D)',
+        genericName: 'Calcium Carbonate 500mg + Vitamin D3 (Square)',
+        type: 'ট্যাবলেট',
+        strength: '500 mg + 200 IU',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [
+          { id: 'sch-fic-m3', timeSlot: 'দুপুর', time: '02:00 PM', dosage: '১টি' },
+        ],
+        stock: 28,
+        minStockAlert: 7,
+        unit: 'টি',
+        startDate: '2026-10-05',
+        isChronic: true,
+        doctorName: 'ডা. নাজমুল ইসলাম (অর্থোপেডিকস)',
+        purpose: 'হাড়ের ক্ষয়রোধ ও জয়েন্টের যত্ন',
+        instructions: 'দুপুরের ভরা পেটে সেবন করুন।',
+        assignedPatientId: 'patient-fictional-mother',
+        status: 'active',
+        colorTag: 'indigo',
+      },
+      // রায়ান আহমেদ (ছেলে) medicines
+      {
+        id: 'med-fic-child-1',
+        brandName: 'অ্যালার্ট্রল সিরাপ (Alertrol Syrup)',
+        genericName: 'Cetirizine Dihydrochloride 5mg/5ml (Acme)',
+        type: 'সিরাপ',
+        strength: '5 mg / 5 ml',
+        mealTiming: 'ঘুমানোর আগে',
+        schedules: [
+          { id: 'sch-fic-c1', timeSlot: 'রাত', time: '09:00 PM', dosage: '১ চামচ (৫ মিলি)' },
+        ],
+        stock: 100,
+        minStockAlert: 20,
+        unit: 'মিলি',
+        startDate: '2026-11-01',
+        durationDays: 7,
+        isChronic: false,
+        doctorName: 'ডা. তাহমিনা আনোয়ার (শিশু বিশেষজ্ঞ)',
+        purpose: 'সর্দি, হাঁচি ও নাক বন্ধ উপশম',
+        instructions: 'রাতে ঘুমানোর পূর্বে ৫ মিলি চামচ দিয়ে মাপুন।',
+        assignedPatientId: 'patient-fictional-child',
+        status: 'active',
+        colorTag: 'rose',
+      },
+      {
+        id: 'med-fic-child-2',
+        brandName: 'টাসপেল সিরাপ (Tuspel Syrup)',
+        genericName: 'Guaifenesin + Bromhexine (Incepta)',
+        type: 'সিরাপ',
+        strength: '100mg + 4mg / 5ml',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [
+          { id: 'sch-fic-c2', timeSlot: 'সকাল', time: '09:00 AM', dosage: '১ চামচ (৫ মিলি)' },
+          { id: 'sch-fic-c3', timeSlot: 'দুপুর', time: '02:30 PM', dosage: '১ চামচ (৫ মিলি)' },
+        ],
+        stock: 80,
+        minStockAlert: 25,
+        unit: 'মিলি',
+        startDate: '2026-11-01',
+        durationDays: 5,
+        isChronic: false,
+        doctorName: 'ডা. তাহমিনা আনোয়ার (শিশু বিশেষজ্ঞ)',
+        purpose: 'শ্লেষ্মাযুক্ত কাশি উপশম',
+        instructions: 'খাবারের পর কুসুম গরম পানি সহ সেব্য।',
+        assignedPatientId: 'patient-fictional-child',
+        status: 'active',
+        colorTag: 'amber',
+      },
+    ];
+
+    const todayStr = '2026-11-02';
+    const fictionalLogs: DoseLog[] = [
+      // Father's taken doses
+      {
+        id: 'log-fic-f1',
+        medicineId: 'med-fic-father-1',
+        medicineName: 'টেলমিভাস ৪০ (Telmivas 40)',
+        genericName: 'Telmisartan 40mg',
+        patientId: 'patient-fictional-father',
+        scheduledDate: todayStr,
+        scheduledTime: '08:30 AM',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'taken',
+        loggedAt: '2026-11-02T08:32:00Z',
+        notes: 'প্রেসার পরিমাপের পর সকালে গৃহীত',
+      },
+      // Mother's taken dose
+      {
+        id: 'log-fic-m1',
+        medicineId: 'med-fic-mother-1',
+        medicineName: 'সেক্লো ২০ (Seclo 20)',
+        genericName: 'Omeprazole 20mg',
+        patientId: 'patient-fictional-mother',
+        scheduledDate: todayStr,
+        scheduledTime: '07:30 AM',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'taken',
+        loggedAt: '2026-11-02T07:35:00Z',
+        notes: 'সকালে নাস্তার পূর্বে গৃহীত',
+      },
+      // Child's taken dose
+      {
+        id: 'log-fic-c1',
+        medicineId: 'med-fic-child-2',
+        medicineName: 'টাসপেল সিরাপ (Tuspel Syrup)',
+        genericName: 'Guaifenesin + Bromhexine',
+        patientId: 'patient-fictional-child',
+        scheduledDate: todayStr,
+        scheduledTime: '09:00 AM',
+        timeSlot: 'সকাল',
+        dosage: '১ চামচ (৫ মিলি)',
+        status: 'taken',
+        loggedAt: '2026-11-02T09:05:00Z',
+        notes: 'নাস্তার পর কুসুম গরম পানি দিয়ে সেবন করানো হয়েছে',
+      },
+    ];
+
+    // Merge fictional data
+    setPatients((prev) => {
+      const existingIds = new Set(prev.map((p) => p.id));
+      const filteredFictional = fictionalPatients.filter((p) => !existingIds.has(p.id));
+      return [...filteredFictional, ...prev];
+    });
+
+    setMedicines((prev) => {
+      const existingIds = new Set(prev.map((m) => m.id));
+      const filteredFictional = fictionalMedicines.filter((m) => !existingIds.has(m.id));
+      return [...filteredFictional, ...prev];
+    });
+
+    setDoseLogs((prev) => {
+      const existingIds = new Set(prev.map((l) => l.id));
+      const filteredFictional = fictionalLogs.filter((l) => !existingIds.has(l.id));
+      return [...filteredFictional, ...prev];
+    });
+
+    setActivePatientId('patient-fictional-father');
+
+    // Cloud sync if signed in
+    if (currentUser) {
+      fictionalPatients.forEach((p) => savePatientToCloud(currentUser.uid, p));
+      fictionalMedicines.forEach((m) => saveMedicineToCloud(currentUser.uid, m));
+      fictionalLogs.forEach((l) => saveDoseLogToCloud(currentUser.uid, l));
+    }
+
+    showToast('৩টি কাল্পনিক ফ্যামিলি প্রোফাইল এবং ভিন্ন ভিন্ন ওষুধ সফলভাবে লোড হয়েছে!', 'success');
+  };
+
   const resetAllData = () => {
     setMedicines(initialMedicines);
     setDoseLogs(initialDoseLogs);
     setPatients([]);
     setActivePatientId(null);
     setSettings(initialSettings);
+    setHealthRecords(initialHealthRecords);
+    setAppointments(initialAppointments);
     localStorage.clear();
     showToast('সকল ডেটা রিসেট করা হয়েছে', 'info');
+  };
+
+  // Health Records CRUD (ধাপ ১)
+  const addHealthRecord = (recordData: Omit<HealthRecord, 'id' | 'createdAt'>): string => {
+    const newId = `hr-${Date.now()}`;
+    const newRecord: HealthRecord = {
+      ...recordData,
+      id: newId,
+      createdAt: new Date().toISOString(),
+    };
+    setHealthRecords((prev) => [newRecord, ...prev]);
+
+    if (currentUser) {
+      saveHealthRecordToCloud(currentUser.uid, newRecord).catch((err) =>
+        console.warn('Cloud health record save error', err)
+      );
+    }
+    showToast('স্বাস্থ্য পরিমাপ রেকর্ড সফলভাবে সংরক্ষিত হয়েছে', 'success');
+    return newId;
+  };
+
+  const deleteHealthRecord = (id: string) => {
+    setHealthRecords((prev) => prev.filter((r) => r.id !== id));
+    if (currentUser) {
+      deleteHealthRecordFromCloud(currentUser.uid, id).catch((err) =>
+        console.warn('Cloud health record delete error', err)
+      );
+    }
+    showToast('স্বাস্থ্য রেকর্ড মুছে ফেলা হয়েছে', 'info');
+  };
+
+  // Doctor Appointments CRUD (ধাপ ২)
+  const addAppointment = (aptData: Omit<DoctorAppointment, 'id' | 'createdAt'>): string => {
+    const newId = `apt-${Date.now()}`;
+    const newApt: DoctorAppointment = {
+      ...aptData,
+      id: newId,
+      createdAt: new Date().toISOString(),
+    };
+    setAppointments((prev) => [newApt, ...prev]);
+
+    if (currentUser) {
+      saveAppointmentToCloud(currentUser.uid, newApt).catch((err) =>
+        console.warn('Cloud appointment save error', err)
+      );
+    }
+    showToast(`ডা. ${newApt.doctorName}-এর সাথে অ্যাপয়েন্টমেন্ট নির্ধারিত হয়েছে`, 'success');
+    return newId;
+  };
+
+  const updateAppointment = (id: string, updates: Partial<DoctorAppointment>) => {
+    let updatedApt: DoctorAppointment | undefined;
+    setAppointments((prev) =>
+      prev.map((a) => {
+        if (a.id === id) {
+          updatedApt = { ...a, ...updates };
+          return updatedApt;
+        }
+        return a;
+      })
+    );
+
+    if (currentUser && updatedApt) {
+      saveAppointmentToCloud(currentUser.uid, updatedApt).catch((err) =>
+        console.warn('Cloud appointment update error', err)
+      );
+    }
+    showToast('অ্যাপয়েন্টমেন্ট তথ্য হালনাগাদ করা হয়েছে', 'info');
+  };
+
+  const deleteAppointment = (id: string) => {
+    setAppointments((prev) => prev.filter((a) => a.id !== id));
+    if (currentUser) {
+      deleteAppointmentFromCloud(currentUser.uid, id).catch((err) =>
+        console.warn('Cloud appointment delete error', err)
+      );
+    }
+    showToast('অ্যাপয়েন্টমেন্ট মুছে ফেলা হয়েছে', 'info');
   };
 
   const openAddToPersonalModal = (med: GlobalMedicine) => {
@@ -1226,6 +1723,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         addPatient,
         updatePatient,
         deletePatient,
+        archivePatient,
+        unarchivePatient,
+        seedFictionalFamilyProfiles,
         isProfileModalOpen,
         editingPatient,
         openCreateProfileModal,
@@ -1263,6 +1763,13 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         stockAdjustmentModalMedId,
         openStockAdjustmentModal,
         closeStockAdjustmentModal,
+        healthRecords,
+        addHealthRecord,
+        deleteHealthRecord,
+        appointments,
+        addAppointment,
+        updateAppointment,
+        deleteAppointment,
       }}
     >
       {children}

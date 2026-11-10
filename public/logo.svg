@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F766E" />
+      <stop offset="50%" stop-color="#115E59" />
+      <stop offset="100%" stop-color="#042F2E" />
+    </linearGradient>
+    <linearGradient id="pillWhite" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#E6FFFA" />
+    </linearGradient>
+    <linearGradient id="pillTeal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2DD4BF" />
+      <stop offset="100%" stop-color="#0D9488" />
+    </linearGradient>
+    <linearGradient id="heartGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255, 255, 255, 0.4)" />
+      <stop offset="100%" stop-color="rgba(45, 212, 191, 0.15)" />
+    </linearGradient>
+    <filter id="glow512" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#042F2E" flood-opacity="0.45"/>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#042F2E" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Base App Background (Rounded Squircle for PWA Maskable Icon) -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bgGrad512)" />
+
+  <!-- Subtle Inner Circular Ambient Glow -->
+  <circle cx="256" cy="240" r="180" fill="url(#heartGlow)" opacity="0.35" />
+
+  <!-- Protective Heart Outline (Signifying Caring Health Protection) -->
+  <path d="M256 120 C310 65, 420 88, 420 196 C420 292, 305 375, 256 414 C207 375, 92 292, 92 196 C92 88, 202 65, 256 120 Z" 
+        fill="rgba(255, 255, 255, 0.08)" 
+        stroke="rgba(255, 255, 255, 0.3)" 
+        stroke-width="14" 
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        filter="url(#softShadow)" />
+
+  <!-- Central Dynamic Capsule (Pill) angled at -38 deg -->
+  <g transform="translate(256, 250) rotate(-38)" filter="url(#glow512)">
+    <!-- Pill Top Dome (Pure White, with rounded cap) -->
+    <path d="M-45,-105 C-45,-140 45,-140 45,-105 L45,0 L-45,0 Z" fill="url(#pillWhite)" />
+    
+    <!-- Pill Bottom Dome (Vibrant Mint Teal) -->
+    <path d="M-45,0 L45,0 L45,105 C45,140 -45,140 -45,105 Z" fill="url(#pillTeal)" />
+
+    <!-- Dividing Ring -->
+    <rect x="-47" y="-3" width="94" height="6" rx="3" fill="#0F766E" />
+
+    <!-- Glass Specular Highlight on Top Half -->
+    <path d="M-22,-120 C-10,-128 10,-128 22,-120 C18,-115 -18,-115 -22,-120 Z" fill="rgba(255, 255, 255, 0.85)" />
+    <rect x="-30" y="-85" width="8" height="60" rx="4" fill="rgba(255, 255, 255, 0.65)" />
+    <rect x="-30" y="25" width="8" height="50" rx="4" fill="rgba(255, 255, 255, 0.35)" />
+  </g>
+
+  <!-- Care Spark / Warm Vital Star on Top Right of Heart -->
+  <g transform="translate(350, 160)">
+    <circle cx="0" cy="0" r="20" fill="#FACC15" filter="url(#softShadow)" />
+    <path d="M0 -30 L0 30 M-30 0 L30 0" stroke="#FEF08A" stroke-width="6" stroke-linecap="round" />
+  </g>
+</svg>

@@ -33,7 +33,7 @@ export const ExpiringStockSection: React.FC = () => {
   const patientPredictions = useMemo(() => {
     if (!activePatient) return stockPredictions;
     return stockPredictions.filter(
-      (p) => !p.medicine.assignedPatientId || p.medicine.assignedPatientId === activePatient.id
+      (p) => p.medicine.assignedPatientId === activePatient.id
     );
   }, [stockPredictions, activePatient]);
 

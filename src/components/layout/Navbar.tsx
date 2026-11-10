@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { NavigationPage } from '../../types';
-import { Plus, User, Cloud, CloudCheck, LogOut, RefreshCw } from 'lucide-react';
+import { Plus, User, Cloud, CloudCheck, LogOut, RefreshCw, Sun, Moon, CheckSquare, Sparkles } from 'lucide-react';
+
+import { AppLogo } from '../ui/AppLogo';
 
 interface NavbarProps {
   activePage: NavigationPage;
@@ -21,18 +23,35 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
     isSyncing,
     isCloudConnected,
     isAdmin,
+    settings,
+    updateSettings,
   } = useMedicine();
 
   const [showUserMenu, setShowUserMenu] = useState(false);
 
+  const isDarkMode =
+    settings.themeMode === 'dark' ||
+    ((!settings.themeMode || settings.themeMode === 'system') &&
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+
+  const toggleTheme = () => {
+    updateSettings({ themeMode: isDarkMode ? 'light' : 'dark' });
+  };
+
+  const isBn = settings.language !== 'en';
+
   const navLinks: { id: NavigationPage; label: string; badge?: string }[] = [
-    { id: 'dashboard', label: 'ড্যাশবোর্ড' },
-    { id: 'medicines', label: 'আমার ওষুধ' },
-    { id: 'library', label: 'ওষুধ লাইব্রেরি' },
-    { id: 'reminders', label: 'রিমাইন্ডার' },
-    { id: 'history', label: 'ইতিহাস' },
-    { id: 'settings', label: 'সেটিংস' },
-    ...(isAdmin ? [{ id: 'admin-import' as NavigationPage, label: 'অ্যাডমিন ড্যাশবোর্ড', badge: 'Admin' }] : []),
+    { id: 'dashboard', label: isBn ? 'ড্যাশবোর্ড' : 'Dashboard' },
+    { id: 'checklist', label: isBn ? 'চেকলিস্ট' : 'Checklist', badge: isBn ? 'আজ' : 'Today' },
+    { id: 'medicines', label: isBn ? 'আমার ওষুধ' : 'Medicines' },
+    { id: 'health-records', label: isBn ? 'স্বাস্থ্য রেকর্ড' : 'Health Records' },
+    { id: 'appointments', label: isBn ? 'অ্যাপয়েন্টমেন্ট' : 'Appointments' },
+    { id: 'ai-assistant', label: isBn ? 'AI সহায়ক' : 'AI Assistant', badge: 'Gemini' },
+    { id: 'reminders', label: isBn ? 'রিমাইন্ডার' : 'Reminders' },
+    { id: 'history', label: isBn ? 'ইতিহাস' : 'History' },
+    { id: 'settings', label: isBn ? 'সেটিংস' : 'Settings' },
+    ...(isAdmin ? [{ id: 'admin-import' as NavigationPage, label: isBn ? 'অ্যাডমিন ড্যাশবোর্ড' : 'Admin', badge: 'Admin' }] : []),
   ];
 
 
@@ -40,16 +59,13 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
     <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
         
-        {/* Zone 1: Single Brand Wordmark */}
+        {/* Zone 1: Single Brand Wordmark with SVG Emblem */}
         <button
           type="button"
           onClick={() => onNavigate('dashboard')}
-          className="text-xl font-bold tracking-tight text-teal-900 dark:text-teal-400 whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer hover:opacity-90"
+          className="whitespace-nowrap shrink-0 cursor-pointer hover:opacity-90 transition-opacity"
         >
-          <span className="w-8 h-8 rounded-lg bg-teal-600 text-white flex items-center justify-center text-base font-semibold shadow-xs">
-            স্বা
-          </span>
-          <span>স্বাস্থ্যবন্ধু</span>
+          <AppLogo size="md" showText={true} animate={true} />
         </button>
 
         {/* Zone 2: Clean single-line text links */}
@@ -127,6 +143,17 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
           >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">নতুন ওষুধ</span>
+          </button>
+
+          {/* Dark / Light Mode Switcher Button */}
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="p-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            title={isDarkMode ? 'লাইট মোড চালু করুন' : 'ডার্ক মোড চালু করুন'}
+            aria-label="থিম পরিবর্তন"
+          >
+            {isDarkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600" />}
           </button>
 
           {/* Firebase Authentication & Cloud Sync Widget */}

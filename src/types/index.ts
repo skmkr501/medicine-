@@ -114,6 +114,35 @@ export interface PatientProfile {
   allergies: string[];
   emergencyContact: string;
   avatarUrl?: string;
+  isArchived?: boolean;
+  archivedAt?: string;
+}
+
+export interface HealthRecord {
+  id: string;
+  patientId: string;
+  recordDate: string; // YYYY-MM-DD
+  recordTime?: string; // e.g. "08:30 AM"
+  systolic?: number; // mmHg
+  diastolic?: number; // mmHg
+  bloodSugar?: number; // mmol/L
+  sugarType?: 'খালি পেটে' | 'খাওয়ার পরে';
+  weight?: number; // kg
+  notes?: string;
+  createdAt: string;
+}
+
+export interface DoctorAppointment {
+  id: string;
+  patientId?: string;
+  doctorName: string;
+  specialty?: string;
+  appointmentDate: string; // YYYY-MM-DD
+  appointmentTime: string; // e.g. "10:30 AM"
+  location: string;
+  notes?: string;
+  status: 'upcoming' | 'completed' | 'cancelled';
+  createdAt: string;
 }
 
 export interface ReminderSettings {
@@ -122,14 +151,22 @@ export interface ReminderSettings {
   advanceMinutes: number; // 0, 10, 15, 30
   snoozeDurationMinutes: number;
   language: 'bn' | 'en';
+  themeMode?: 'light' | 'dark' | 'system';
+  largeFontMode?: boolean;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
 }
 
 export type NavigationPage =
   | 'dashboard'
+  | 'checklist'
+  | 'health-records'
+  | 'appointments'
   | 'medicines'
   | 'add-medicine'
   | 'reminders'
   | 'history'
+  | 'ai-assistant'
   | 'settings'
   | 'library'
   | 'admin-import'

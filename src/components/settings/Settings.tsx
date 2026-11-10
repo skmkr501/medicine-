@@ -18,7 +18,24 @@ import {
   Smartphone,
   Code,
   ExternalLink,
+  Sun,
+  Moon,
+  Monitor,
+  Type,
+  AlertTriangle,
+  Globe,
+  Phone,
+  Save,
 } from 'lucide-react';
+import {
+  isNativeRemindersAvailable,
+  getNativePermissionStatus,
+  openExactAlarmSettings,
+  openBatterySettings,
+  requestNotificationPermission,
+  scheduleTestAlarm,
+  NativePermissionStatus,
+} from '../../services/nativeReminders';
 
 export const Settings: React.FC = () => {
   const {
@@ -41,6 +58,53 @@ export const Settings: React.FC = () => {
     isSyncing,
     isCloudConnected,
   } = useMedicine();
+
+  const isNative = isNativeRemindersAvailable();
+  const [permissionStatus, setPermissionStatus] = useState<NativePermissionStatus | null>(() =>
+    getNativePermissionStatus()
+  );
+
+  const isBn = settings.language !== 'en';
+  const [emergencyName, setEmergencyName] = useState(settings.emergencyContactName || '');
+  const [emergencyPhone, setEmergencyPhone] = useState(settings.emergencyContactPhone || '');
+  const [isSavingContact, setIsSavingContact] = useState(false);
+
+  const handleSaveEmergencyContact = (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingContact(true);
+    updateSettings({
+      emergencyContactName: emergencyName.trim(),
+      emergencyContactPhone: emergencyPhone.trim(),
+    });
+    setIsSavingContact(false);
+    showToast(
+      isBn ? 'জরুরি পারিবারিক যোগাযোগের নম্বর সংরক্ষিত হয়েছে।' : 'Emergency family contact saved successfully.',
+      'success'
+    );
+  };
+
+  const refreshPermissions = () => {
+    if (isNativeRemindersAvailable()) {
+      const status = getNativePermissionStatus();
+      setPermissionStatus(status);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!isNative) return;
+    refreshPermissions();
+    window.addEventListener('focus', refreshPermissions);
+    return () => window.removeEventListener('focus', refreshPermissions);
+  }, [isNative]);
+
+  const handleTestAlarm = () => {
+    const success = scheduleTestAlarm();
+    if (success) {
+      showToast('১ মিনিট পর টেস্ট অ্যালার্ম সফলভাবে শিডিউল করা হয়েছে (Android AlarmManager)', 'success');
+    } else {
+      showToast('টেস্ট অ্যালার্ম শিডিউল করা যায়নি। দয়া করে পারমিশন চেক করুন।', 'alert');
+    }
+  };
 
   const handleExportData = () => {
     const data = {
@@ -196,6 +260,179 @@ export const Settings: React.FC = () => {
         )}
       </section>
 
+      {/* Section: Theme & Accessibility Settings */}
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <Sun className="w-5 h-5 text-teal-600" />
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            ডিসপ্লে ও থিম পছন্দ (Display & Accessibility)
+          </h2>
+        </div>
+
+        <div className="space-y-4 text-xs sm:text-sm">
+          {/* Dark Mode Switcher */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+              কালার থিম (Theme Mode)
+            </label>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { id: 'light' as const, label: 'লাইট মোড', icon: Sun },
+                { id: 'dark' as const, label: 'ডার্ক মোড', icon: Moon },
+                { id: 'system' as const, label: 'ডিভাইস অটো', icon: Monitor },
+              ].map((theme) => {
+                const Icon = theme.icon;
+                const isSelected = (settings.themeMode || 'system') === theme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => updateSettings({ themeMode: theme.id })}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                      isSelected
+                        ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-900 dark:text-teal-200 shadow-xs ring-1 ring-teal-500/40'
+                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                    <span>{theme.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Elderly Large Font Mode */}
+          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              <span className="font-semibold text-slate-900 dark:text-white block flex items-center gap-1.5">
+                <Type className="w-4 h-4 text-teal-600" />
+                বয়স্কদের জন্য সহজ পাঠ ও বড় ফন্ট মোড (Large Font Mode)
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                অ্যাপের বাটন ও টেক্সট আকারে বড় হবে যাতে প্রবীণরা সহজে পড়তে পারেন
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => updateSettings({ largeFontMode: !settings.largeFontMode })}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                settings.largeFontMode ? 'bg-teal-600' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  settings.largeFontMode ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Language Switcher (Step 5) */}
+          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              <span className="font-semibold text-slate-900 dark:text-white block flex items-center gap-1.5">
+                <Globe className="w-4 h-4 text-teal-600" />
+                {isBn ? 'ভাষা নির্বাচন (Language)' : 'Application Language'}
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                {isBn ? 'বাংলা অথবা ইংরেজিতে অ্যাপ প্রদর্শন করুন' : 'Display the app interface in Bengali or English'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => updateSettings({ language: 'bn' })}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  (settings.language || 'bn') === 'bn'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
+                }`}
+              >
+                বাংলা
+              </button>
+              <button
+                type="button"
+                onClick={() => updateSettings({ language: 'en' })}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  settings.language === 'en'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
+                }`}
+              >
+                English
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Section: Family Emergency Contact for Overdue Doses (Step 4) */}
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <Phone className="w-5 h-5 text-teal-600" />
+          <div>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">
+              {isBn ? 'জরুরি পারিবারিক যোগাযোগ (ডোজ মিস সতর্কতা)' : 'Emergency Family Contact (Overdue Doses)'}
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {isBn
+                ? 'কোনো ডোজ ৩০ মিনিটের বেশি পার হয়ে গেলে ড্যাশবোর্ডে "পরিবারকে জানান" বাটনে ক্লিক করে দ্রুত এই নম্বরে এসএমএস বা হোয়াটসঅ্যাপ পাঠানো যাবে।'
+                : 'When a dose is over 30 minutes overdue, dashboard alert lets you send a quick SMS/WhatsApp to this family contact.'}
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={handleSaveEmergencyContact} className="space-y-4 text-xs sm:text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                {isBn ? 'পারিবারিক সদস্যের নাম' : 'Family Member / Caregiver Name'}
+              </label>
+              <input
+                type="text"
+                placeholder={isBn ? 'উদা: মো. তারেক (বড় ছেলে)' : 'e.g. John Doe (Son)'}
+                value={emergencyName}
+                onChange={(e) => setEmergencyName(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs sm:text-sm focus:ring-1 focus:ring-teal-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                {isBn ? 'জরুরি মোবাইল নম্বর' : 'Emergency Mobile Phone Number'}
+              </label>
+              <input
+                type="tel"
+                placeholder={isBn ? 'উদা: 01711234567 বা +8801711234567' : 'e.g. +8801711234567'}
+                value={emergencyPhone}
+                onChange={(e) => setEmergencyPhone(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs sm:text-sm focus:ring-1 focus:ring-teal-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              {isBn
+                ? '* গোপনীয়তা সুরক্ষা: অ্যাপ কখনো নিজে থেকে সরাসরি এসএমএস পাঠায় না; ব্যবহারকারী ক্লিক করার পর ফোনের মেসেজিং অ্যাপ খোলে।'
+                : '* Privacy: The app never sends messages automatically; it opens your phone messaging app for manual confirmation.'}
+            </span>
+
+            <button
+              type="submit"
+              disabled={isSavingContact}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs rounded-lg shadow-xs transition cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{isBn ? 'সংরক্ষণ করুন' : 'Save Contact'}</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
       {/* Section 2: Reminder Preferences */}
       <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
@@ -303,40 +540,164 @@ export const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* Android Native Exact Alarm Configuration Box */}
-          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5 text-xs">
-                <span>🤖</span> Android নেটিভ ব্যাকগ্রাউন্ড শিডিউলার ও পারমিশন
-              </span>
-              <span className="text-[10px] text-teal-700 dark:text-teal-400 font-semibold bg-teal-50 dark:bg-teal-950 px-2 py-0.5 rounded border border-teal-200 dark:border-teal-800">
-                Kotlin + AlarmManager
-              </span>
-            </div>
+          {/* Phone Alarm Card (Requirement 4: শুধু Android APK WebView-তে দেখাবে) */}
+          {isNative && (
+            <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-700 gap-2">
+                <div className="flex items-center gap-2">
+                  <Smartphone className="w-5 h-5 text-teal-600" />
+                  <div>
+                    <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                      ফোন অ্যালার্ম (Android APK নেটিভ রিমাইন্ডার)
+                    </h3>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      সরাসরি অ্যান্ড্রয়েড অ্যালার্ম ম্যানেজারের মাধ্যমে অ্যালার্ম ও শব্দ নিশ্চিত করার পারমিশন
+                    </p>
+                  </div>
+                </div>
 
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              অ্যাপ বন্ধ বা ডিভাইস ডিপ স্লিপে (Doze Mode) থাকলেও অ্যালার্ম বাজাতে অ্যান্ড্রয়েডের <code className="text-teal-700 dark:text-teal-400 font-mono">AlarmManager.setAlarmClock()</code> এবং <code className="text-teal-700 dark:text-teal-400 font-mono">MedicineAlarmForegroundService</code> প্রস্তুত করা হয়েছে।
-            </p>
+                <button
+                  type="button"
+                  onClick={refreshPermissions}
+                  className="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline cursor-pointer self-start sm:self-auto"
+                >
+                  অবস্থা রিফ্রেশ
+                </button>
+              </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
-              <div className="p-2 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700">
-                <strong className="block text-slate-700 dark:text-slate-300">Exact Alarm:</strong>
-                <span className="text-slate-500">Android 12+ এ সঠিক মিনিটে বাজার পারমিশন</span>
+              {/* 3 Permissions status with action buttons */}
+              <div className="space-y-2.5 text-xs">
+                {/* 1. Exact Alarm */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                        permissionStatus?.exactAlarm
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          : 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                      }`}
+                    >
+                      {permissionStatus?.exactAlarm ? '✓ সক্রিয়' : '✕ বন্ধ'}
+                    </span>
+                    <div>
+                      <strong className="block text-slate-900 dark:text-white font-semibold">
+                        নির্ধারিত সময়ে অ্যালার্ম (Exact Alarm)
+                      </strong>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        সঠিক মিনিট ও সেকেন্ডে অ্যালার্ম বাজার জন্য প্রয়োজন
+                      </span>
+                    </div>
+                  </div>
+
+                  {!permissionStatus?.exactAlarm && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openExactAlarmSettings();
+                        setTimeout(refreshPermissions, 1000);
+                      }}
+                      className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-semibold cursor-pointer shrink-0 transition-colors self-end sm:self-auto"
+                    >
+                      অনুমতি ঠিক করুন
+                    </button>
+                  )}
+                </div>
+
+                {/* 2. Notifications */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                        permissionStatus?.notifications
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          : 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
+                      }`}
+                    >
+                      {permissionStatus?.notifications ? '✓ সক্রিয়' : '✕ বন্ধ'}
+                    </span>
+                    <div>
+                      <strong className="block text-slate-900 dark:text-white font-semibold">
+                        সিস্টেম নোটিফিকেশন (Notifications)
+                      </strong>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        নোটিফিকেশন প্যানেলে ওষুধের ডোজ ও সময় প্রদর্শনের জন্য
+                      </span>
+                    </div>
+                  </div>
+
+                  {!permissionStatus?.notifications && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        requestNotificationPermission();
+                        setTimeout(refreshPermissions, 1000);
+                      }}
+                      className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-semibold cursor-pointer shrink-0 transition-colors self-end sm:self-auto"
+                    >
+                      অনুমতি দিন
+                    </button>
+                  )}
+                </div>
+
+                {/* 3. Battery Unrestricted */}
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex items-start gap-2.5">
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                        permissionStatus?.batteryUnrestricted
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                      }`}
+                    >
+                      {permissionStatus?.batteryUnrestricted ? '✓ সক্রিয়' : '✕ সীমাবদ্ধ'}
+                    </span>
+                    <div>
+                      <strong className="block text-slate-900 dark:text-white font-semibold">
+                        ব্যাটারি অপ্টিমাইজেশন ছাড় (Battery Unrestricted)
+                      </strong>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        স্ক্রিন বন্ধ বা স্লিপ মোডে অ্যালার্ম মিস হওয়া ঠেকায়
+                      </span>
+                    </div>
+                  </div>
+
+                  {!permissionStatus?.batteryUnrestricted && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openBatterySettings();
+                        setTimeout(refreshPermissions, 1000);
+                      }}
+                      className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-semibold cursor-pointer shrink-0 transition-colors self-end sm:self-auto"
+                    >
+                      সেটিংস খুলুন
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="p-2 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700">
-                <strong className="block text-slate-700 dark:text-slate-300">Auto Reboot Reschedule:</strong>
-                <span className="text-slate-500">ফোন রিস্টার্ট হলেও শিডিউল অক্ষত থাকে</span>
-              </div>
-              <div className="p-2 bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-700">
-                <strong className="block text-slate-700 dark:text-slate-300">Offline Storage:</strong>
-                <span className="text-slate-500">ইন্টারনেট ছাড়া সম্পূর্ণ অফলাইনে কার্যকর</span>
+
+              {/* Test Alarm Action */}
+              <div className="p-3.5 bg-teal-50/70 dark:bg-teal-950/30 rounded-xl border border-teal-200 dark:border-teal-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold text-teal-950 dark:text-teal-200 block">
+                    অ্যালার্ম কার্যকারিতা পরীক্ষা
+                  </span>
+                  <span className="text-[11px] text-teal-800 dark:text-teal-300">
+                    ফোনের সাউন্ড ও রিং পরীক্ষা করতে এখুনি টেস্ট শিডিউল করুন
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleTestAlarm}
+                  className="px-3.5 py-2 bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer flex items-center justify-center gap-1.5 shrink-0 transition-colors"
+                >
+                  <Bell className="w-3.5 h-3.5 text-amber-300" />
+                  <span>১ মিনিট পর টেস্ট অ্যালার্ম</span>
+                </button>
               </div>
             </div>
-
-            <div className="text-[11px] text-amber-700 dark:text-amber-400 italic">
-              * নোট: অ্যান্ড্রয়েড ব্যাকগ্রাউন্ড রিমাইন্ডার বাস্তব ডিভাইসে (Real Android Device) APK রান করে পরীক্ষা করতে হবে।
-            </div>
-          </div>
+          )}
 
         </div>
       </section>

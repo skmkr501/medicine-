@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { loginWithGoogle, loginWithEmail, registerWithEmail } from '../../firebase/services';
 import { X, Lock, Mail, User, ShieldCheck, AlertCircle } from 'lucide-react';
+import { AppLogo } from '../ui/AppLogo';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -86,11 +87,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
           <X className="w-5 h-5" />
         </button>
 
-        {/* Brand Lockup */}
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-9 h-9 rounded-lg bg-teal-600 text-white flex items-center justify-center font-bold text-base shadow-xs">
-            স্বা
-          </div>
+        {/* Brand Lockup with AppLogo */}
+        <div className="flex items-center gap-3 mb-5">
+          <AppLogo size="lg" showText={false} />
           <div>
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">
               {isRegister ? 'স্বাস্থ্যবন্ধু অ্যাকাউন্ট তৈরি' : 'স্বাস্থ্যবন্ধুতে লগইন'}

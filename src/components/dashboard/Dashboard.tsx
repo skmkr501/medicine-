@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
 import { TimeSlot } from '../../types';
@@ -18,11 +18,47 @@ import {
   Lock,
   UserPlus,
   Edit2,
+  ShoppingCart,
+  Sparkles,
+  Calendar,
+  Bell,
+  PhoneCall,
+  Share2,
+  Activity,
+  Stethoscope,
 } from 'lucide-react';
 
 import { ExpiringStockSection } from './ExpiringStockSection';
+import { FamilyCareSummary } from './FamilyCareSummary';
+import { EmergencyCard } from '../emergency/EmergencyCard';
+import { AdherenceAnalytics } from '../analytics/AdherenceAnalytics';
+import { BuyListModal } from '../stock/BuyListModal';
+import {
+  isNativeRemindersAvailable,
+  getNativePermissionStatus,
+  NativePermissionStatus,
+} from '../../services/nativeReminders';
 
 export const Dashboard: React.FC = () => {
+  const [isBuyListOpen, setIsBuyListOpen] = useState(false);
+  const isNative = isNativeRemindersAvailable();
+  const [nativePerms, setNativePerms] = useState<NativePermissionStatus | null>(() =>
+    getNativePermissionStatus()
+  );
+
+  React.useEffect(() => {
+    if (!isNative) return;
+    const check = () => setNativePerms(getNativePermissionStatus());
+    check();
+    window.addEventListener('focus', check);
+    return () => window.removeEventListener('focus', check);
+  }, [isNative]);
+
+  const hasMissingPermissions =
+    isNative &&
+    nativePerms !== null &&
+    (!nativePerms.exactAlarm || !nativePerms.notifications || !nativePerms.batteryUnrestricted);
+
   const {
     medicines,
     doseLogs,
@@ -41,16 +77,81 @@ export const Dashboard: React.FC = () => {
     isCloudConnected,
     openCreateProfileModal,
     openEditProfileModal,
+    appointments,
+    settings,
   } = useMedicine();
 
+  const isBn = settings.language !== 'en';
   const todayStr = '2026-11-02';
 
-  // Filter medicines for current active patient or unassigned (Requirement 6)
+  // Urgent Appointments (Today or Tomorrow)
+  const nowDate = new Date();
+  const realTodayStr = nowDate.toISOString().split('T')[0];
+  const tomorrowDate = new Date(nowDate);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const realTomorrowStr = tomorrowDate.toISOString().split('T')[0];
+
+  const urgentAppointments = appointments.filter((app) => {
+    if (app.status === 'completed') return false;
+    const isTargetPatient = activePatient ? app.patientId === activePatient.id : true;
+    return isTargetPatient && (app.appointmentDate === realTodayStr || app.appointmentDate === realTomorrowStr);
+  });
+
+  // Dose overdue helper (>30 minutes past scheduled time)
+  const isDoseOverdueBy30Min = (doseTime: string): boolean => {
+    const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+    let normalized = doseTime.trim();
+    bengaliDigits.forEach((d, idx) => {
+      normalized = normalized.split(d).join(String(idx));
+    });
+
+    const match = normalized.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?/i);
+    if (!match) return false;
+
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const meridiem = (match[3] || '').toUpperCase();
+
+    if (meridiem === 'PM' && hours < 12) hours += 12;
+    if (meridiem === 'AM' && hours === 12) hours = 0;
+
+    const now = new Date();
+    const doseDate = new Date();
+    doseDate.setHours(hours, minutes, 0, 0);
+
+    const diffMinutes = (now.getTime() - doseDate.getTime()) / (1000 * 60);
+    return diffMinutes > 30;
+  };
+
+  const handleNotifyFamily = (dose: { brandName: string; dosage: string; time: string }, method: 'whatsapp' | 'sms') => {
+    const patientName = activePatient?.name || (isBn ? 'সদস্য' : 'Member');
+    const contactPhone = settings.emergencyContactPhone || '';
+
+    const message = isBn
+      ? `জরুরি স্বাস্থ্যবার্তা: ${patientName}-এর "${dose.brandName}" (${dose.dosage}) নির্ধারিত সময় (${dose.time})-এর ডোজ ৩০ মিনিটের বেশি পার হলেও এখনও গ্রহণ করা হয়নি। অনুগ্রহ করে খোঁজ নিন। - স্বাস্থ্যবন্ধু`
+      : `Health Alert: ${patientName}'s dose of "${dose.brandName}" (${dose.dosage}) scheduled for ${dose.time} is over 30 minutes overdue. Please check in. - Shasthobondhu`;
+
+    if (!contactPhone) {
+      if (confirm(isBn
+        ? 'সেটিংস-এ পরিবারের জরুরি যোগাযোগের ফোন নম্বর যোগ করা নেই। আপনি কি সেটিংস পৃষ্ঠায় যেতে চান?'
+        : 'No family emergency contact number set in Settings. Would you like to go to Settings?')) {
+        setCurrentPage('settings');
+      }
+      return;
+    }
+
+    const cleanPhone = contactPhone.replace(/[^0-9+]/g, '');
+    if (method === 'whatsapp') {
+      window.open(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`, '_blank');
+    } else {
+      window.location.href = `sms:${cleanPhone}?body=${encodeURIComponent(message)}`;
+    }
+  };
+
+  // Filter medicines for current active patient strictly (Requirement 3 & 5)
   const patientMedicines = activePatient
     ? medicines.filter(
-        (m) =>
-          (!m.assignedPatientId || m.assignedPatientId === activePatient.id) &&
-          m.status === 'active'
+        (m) => m.assignedPatientId === activePatient.id && m.status === 'active'
       )
     : medicines.filter((m) => m.status === 'active');
 
@@ -68,6 +169,7 @@ export const Dashboard: React.FC = () => {
     stock: number;
     logStatus?: 'taken' | 'skipped' | 'missed';
     loggedAt?: string;
+    isOverdue?: boolean;
   }
 
   const todayDoses: TodayDoseItem[] = [];
@@ -80,6 +182,8 @@ export const Dashboard: React.FC = () => {
           l.scheduledDate === todayStr &&
           l.timeSlot === sch.timeSlot
       );
+      const overdue = !log?.status && isDoseOverdueBy30Min(sch.time);
+
       todayDoses.push({
         medicineId: med.id,
         brandName: med.brandName,
@@ -93,6 +197,7 @@ export const Dashboard: React.FC = () => {
         stock: med.stock,
         logStatus: log?.status,
         loggedAt: log?.loggedAt,
+        isOverdue: overdue,
       });
     });
   });
@@ -110,6 +215,7 @@ export const Dashboard: React.FC = () => {
   const takenCount = todayDoses.filter((d) => d.logStatus === 'taken').length;
   const remainingCount = totalToday - takenCount;
   const adherencePercent = totalToday > 0 ? Math.round((takenCount / totalToday) * 100) : 0;
+  const overdueDoses = todayDoses.filter((d) => d.logStatus !== 'taken' && d.isOverdue);
 
   // Low stock medicines
   const lowStockMedicines = patientMedicines.filter((m) => m.stock <= m.minStockAlert);
@@ -117,7 +223,139 @@ export const Dashboard: React.FC = () => {
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       
-      {/* Patient Greeting or Beautiful Zero-Profile Empty State (Requirement 12) */}
+      {/* Doctor Appointment Reminder Alert (Step 2: আগের দিন ও দিনের শুরুতে ড্যাশবোর্ডে সতর্কতা) */}
+      {urgentAppointments.length > 0 && (
+        <section className="bg-teal-50 dark:bg-teal-950/40 border border-teal-300 dark:border-teal-700 rounded-2xl p-4 sm:p-5 shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-teal-600 text-white shrink-0 mt-0.5">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-teal-950 dark:text-teal-100">
+                    {isBn ? 'আসন্ন ডাক্তারের অ্যাপয়েন্টমেন্ট সতর্কতা' : 'Upcoming Doctor Appointment Alert'}
+                  </h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-200 dark:bg-teal-900 text-teal-900 dark:text-teal-200">
+                    {urgentAppointments.length}টি সাক্ষাৎ
+                  </span>
+                </div>
+                <div className="mt-1 space-y-1">
+                  {urgentAppointments.map((app) => {
+                    const isToday = app.appointmentDate === realTodayStr;
+                    return (
+                      <p key={app.id} className="text-xs text-teal-800 dark:text-teal-200 font-medium flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-600" />
+                        <span>
+                          <strong>{app.doctorName}</strong> ({app.specialty || (isBn ? 'ডাক্তার' : 'Doctor')}) — {isToday ? (isBn ? 'আজ' : 'Today') : (isBn ? 'আগামীকাল' : 'Tomorrow')} {app.appointmentTime}
+                          {app.location && ` [${app.location}]`}
+                        </span>
+                      </p>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setCurrentPage('appointments')}
+              className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors shrink-0 self-start sm:self-center cursor-pointer"
+            >
+              {isBn ? 'অ্যাপয়েন্টমেন্ট দেখুন' : 'View Appointments'}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Missed Dose Family Notification Alert (Step 4: ৩০ মিনিট পার হলেও Taken না হলে পরিবারকে জানান) */}
+      {overdueDoses.length > 0 && (
+        <section className="bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 rounded-2xl p-4 sm:p-5 shadow-xs animate-pulse-subtle">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-600 text-white shrink-0 mt-0.5">
+                <Bell className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-rose-950 dark:text-rose-100 flex items-center gap-2">
+                  <span>{isBn ? 'ওষুধ সেবনের সময় পার হয়ে গেছে (বিলম্বিত ডোজ)' : 'Overdue Dose Warning'}</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-200">
+                    {toBengaliNumber(overdueDoses.length)}টি ডোজ বাকি
+                  </span>
+                </h3>
+                <p className="text-xs text-rose-800 dark:text-rose-300 mt-1">
+                  <strong>{overdueDoses.map((d) => `${d.brandName} (${d.time})`).join(', ')}</strong> {isBn ? 'নির্ধারিত সময় পেরিয়ে ৩০ মিনিটের বেশি হয়েছে কিন্তু এখনো খাওয়া হয়নি।' : 'scheduled time is past 30 minutes and not taken yet.'}
+                </p>
+                {settings.emergencyContactName && (
+                  <p className="text-[11px] text-rose-700 dark:text-rose-400 mt-0.5">
+                    {isBn ? 'জরুরি পারিবারিক যোগাযোগ:' : 'Emergency Family Contact:'} {settings.emergencyContactName} ({settings.emergencyContactPhone || 'নম্বর নেই'})
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start md:self-center shrink-0 flex-wrap">
+              <button
+                type="button"
+                onClick={() => handleNotifyFamily(overdueDoses[0], 'whatsapp')}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>{isBn ? 'পরিবারকে জানান (WhatsApp)' : 'Alert Family (WhatsApp)'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleNotifyFamily(overdueDoses[0], 'sms')}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <PhoneCall className="w-3.5 h-3.5" />
+                <span>{isBn ? 'SMS পাঠান' : 'Send SMS'}</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Native Alarm Permission Alert Banner (Requirement 4: পারমিশন বন্ধ থাকলে ড্যাশবোর্ডে সতর্কতা) */}
+      {hasMissingPermissions && (
+        <section className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/80 rounded-2xl p-4 sm:p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 shrink-0 mt-0.5">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                ফোন অ্যালার্মের কিছু পারমিশন বন্ধ রয়েছে
+              </h3>
+              <p className="text-xs text-amber-800/90 dark:text-amber-300/90 mt-0.5 leading-relaxed">
+                অ্যান্ড্রয়েড ফোনে স্ক্রিন বন্ধ বা স্লিপ মোডেও সঠিক সময়ে ওষুধের অ্যালার্ম বাজার জন্য Exact Alarm, Notifications ও Battery পারমিশন নিশ্চিত করা প্রয়োজন।
+              </p>
+              <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-amber-900 dark:text-amber-200 font-medium">
+                <span className="text-slate-500 dark:text-slate-400">বর্তমান অবস্থা:</span>
+                <span className={nativePerms.exactAlarm ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
+                  অ্যালার্ম {nativePerms.exactAlarm ? '✓ সক্রিয়' : '✕ বন্ধ'}
+                </span>
+                <span>·</span>
+                <span className={nativePerms.notifications ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
+                  নোটিফিকেশন {nativePerms.notifications ? '✓ সক্রিয়' : '✕ বন্ধ'}
+                </span>
+                <span>·</span>
+                <span className={nativePerms.batteryUnrestricted ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
+                  ব্যাটারি {nativePerms.batteryUnrestricted ? '✓ সক্রিয়' : '✕ সীমাবদ্ধ'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setCurrentPage('settings')}
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors shrink-0 self-start sm:self-center cursor-pointer"
+          >
+            অনুমতি ঠিক করুন
+          </button>
+        </section>
+      )}
       {!activePatient ? (
         <section className="bg-gradient-to-br from-teal-50/90 via-white to-slate-50 dark:from-teal-950/40 dark:via-slate-900 dark:to-slate-950 border border-teal-200/90 dark:border-teal-800/70 rounded-2xl p-6 sm:p-8 text-center shadow-xs">
           <div className="w-16 h-16 rounded-2xl bg-teal-100 dark:bg-teal-900/60 text-teal-700 dark:text-teal-300 flex items-center justify-center mx-auto mb-4 shadow-2xs">
@@ -312,8 +550,14 @@ export const Dashboard: React.FC = () => {
       </section>
       )}
 
+      {/* Family Care Summary Section */}
+      <FamilyCareSummary />
+
       {/* Smart Medicine Stock Predictor Section */}
       <ExpiringStockSection />
+
+      {/* Adherence & Streak Analytics */}
+      <AdherenceAnalytics />
 
       {/* Main Grid: Schedule on left (2 cols), Refill Alerts & Tips on right (1 col) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -404,19 +648,35 @@ export const Dashboard: React.FC = () => {
                             {dose.genericName}
                           </div>
 
-                          <div className="flex items-center gap-2 mt-2 text-xs text-slate-600 dark:text-slate-300">
+                          <div className="flex items-center gap-2 mt-2 text-xs text-slate-600 dark:text-slate-300 flex-wrap">
                             <span className="font-medium text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-2 py-0.5 rounded">
                               {dose.timeSlot} ({toBengaliNumber(dose.time)})
                             </span>
                             <span>ডোজ: {dose.dosage}</span>
                             <span className="text-slate-400">·</span>
                             <span>{dose.mealTiming}</span>
+                            {dose.isOverdue && !isTaken && !isSkipped && (
+                              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                                {isBn ? '৩০+ মি. বিলম্বিত' : '30+m Overdue'}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
 
                       {/* Action buttons */}
-                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0 flex-wrap">
+                        {dose.isOverdue && !isTaken && !isSkipped && (
+                          <button
+                            type="button"
+                            onClick={() => handleNotifyFamily(dose, 'whatsapp')}
+                            className="px-2.5 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800 rounded-lg flex items-center gap-1 cursor-pointer transition"
+                            title={isBn ? 'পরিবারকে সতর্কবার্তা পাঠান' : 'Notify family contact'}
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            <span>{isBn ? 'পরিবারকে জানান' : 'Alert Family'}</span>
+                          </button>
+                        )}
                         {isTaken ? (
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2.5 py-1 rounded-md flex items-center gap-1">
@@ -542,15 +802,29 @@ export const Dashboard: React.FC = () => {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => setCurrentPage('medicines')}
-              className="w-full mt-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-teal-700 dark:hover:text-teal-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors text-center border border-slate-200 dark:border-slate-700 cursor-pointer flex items-center justify-center gap-1"
-            >
-              <Package className="w-3.5 h-3.5" />
-              <span>ওষুধের বিস্তারিত স্টক দেখুন</span>
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+              <button
+                type="button"
+                onClick={() => setIsBuyListOpen(true)}
+                className="w-full py-2 px-3 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 active:bg-amber-800 rounded-lg transition-colors text-center cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+              >
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>কিনতে হবে তালিকা</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage('medicines')}
+                className="w-full py-2 px-3 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-teal-700 dark:hover:text-teal-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors text-center border border-slate-200 dark:border-slate-700 cursor-pointer flex items-center justify-center gap-1"
+              >
+                <Package className="w-3.5 h-3.5" />
+                <span>স্টক বিস্তারিত</span>
+              </button>
+            </div>
           </div>
+
+          {/* Emergency Contact Card (Requirement 3: জরুরি যোগাযোগ কার্ড) */}
+          <EmergencyCard />
 
           {/* Quick Doctor / Patient Notes Card */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs">
@@ -602,6 +876,12 @@ export const Dashboard: React.FC = () => {
         </div>
 
       </div>
+
+      {/* Low Stock Shopping & Refill Modal */}
+      <BuyListModal
+        isOpen={isBuyListOpen}
+        onClose={() => setIsBuyListOpen(false)}
+      />
 
     </div>
   );

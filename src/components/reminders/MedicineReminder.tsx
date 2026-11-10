@@ -34,10 +34,10 @@ export const MedicineReminder: React.FC = () => {
 
   const todayStr = '2026-11-02';
 
-  // Gather active patient medicines or unassigned/all if no active patient
+  // Gather active patient medicines or all if no active patient
   const patientMedicines = medicines.filter(
     (m) =>
-      (!activePatient || !m.assignedPatientId || m.assignedPatientId === activePatient.id) &&
+      (!activePatient || m.assignedPatientId === activePatient.id) &&
       m.status === 'active'
   );
 
