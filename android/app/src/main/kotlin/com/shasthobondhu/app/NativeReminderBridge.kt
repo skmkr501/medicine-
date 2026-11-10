@@ -1,6 +1,10 @@
 package com.shasthobondhu.app
 
 import android.app.Activity
+import android.media.MediaPlayer
+import android.os.Handler
+import android.os.Looper
+import com.shasthobondhu.app.reminder.AlarmToneStore
 import android.webkit.JavascriptInterface
 import com.shasthobondhu.app.reminder.MedicineReminderScheduler
 import com.shasthobondhu.app.reminder.PermissionHelper
@@ -10,15 +14,23 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 
+/** টোন বাছাইয়ের স্ক্রিন খোলার দায়িত্ব MainActivity-র */
+interface ToneHost {
+    fun pickSystemTone()
+    fun pickAudioFile()
+}
+
 /**
  * ওয়েব অ্যাপ (WebView) থেকে নেটিভ Android অ্যালার্ম নিয়ন্ত্রণের সেতু।
  * ওয়েবে ব্যবহার: window.AndroidReminders.syncReminders(JSON.stringify([...]))
  */
-class NativeReminderBridge(private val activity: Activity) {
+class NativeReminderBridge(private val activity: Activity, private val host: ToneHost? = null) {
 
     private val appContext = activity.applicationContext
     private val scheduler = MedicineReminderScheduler(appContext)
     private val storage = ReminderStorage(appContext)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var preview: MediaPlayer? = null
 
     @JavascriptInterface
     fun isNative(): Boolean = true
@@ -120,4 +132,62 @@ class NativeReminderBridge(private val activity: Activity) {
         )
         return scheduler.scheduleReminder(r)
     }
+
+    // ---------- অ্যালার্ম টোন ----------
+
+    /** বর্তমান টোন: {"name":"...","isDefault":true/false} */
+    @JavascriptInterface
+    fun getAlarmTone(): String {
+        return JSONObject()
+            .put("name", AlarmToneStore.getName(appContext))
+            .put("isDefault", AlarmToneStore.getUri(appContext) == null)
+            .toString()
+    }
+
+    /** ফোনের অ্যালার্ম/রিংটোনের তালিকা থেকে বাছাই */
+    @JavascriptInterface
+    fun pickAlarmTone() {
+        activity.runOnUiThread { host?.pickSystemTone() }
+    }
+
+    /** ফোনের ফাইল/গান (mp3 ইত্যাদি) থেকে বাছাই */
+    @JavascriptInterface
+    fun pickAlarmToneFromFiles() {
+        activity.runOnUiThread { host?.pickAudioFile() }
+    }
+
+    @JavascriptInterface
+    fun resetAlarmTone() {
+        AlarmToneStore.reset(appContext)
+        stopPreview()
+    }
+
+    /** বর্তমান টোন ৬ সেকেন্ড বাজিয়ে শোনায় */
+    @JavascriptInterface
+    fun previewAlarmTone() {
+        activity.runOnUiThread {
+            stopPreviewInternal()
+            val p = AlarmToneStore.createPlayer(appContext, loop = false) ?: return@runOnUiThread
+            preview = p
+            p.setOnCompletionListener { stopPreviewInternal() }
+            p.start()
+            mainHandler.postDelayed({ stopPreviewInternal() }, 6000)
+        }
+    }
+
+    @JavascriptInterface
+    fun stopPreview() {
+        activity.runOnUiThread { stopPreviewInternal() }
+    }
+
+    private fun stopPreviewInternal() {
+        mainHandler.removeCallbacksAndMessages(null)
+        try {
+            preview?.let { if (it.isPlaying) it.stop(); it.release() }
+        } catch (_: Exception) {
+        }
+        preview = null
+    }
+
+    fun release() = stopPreviewInternal()
 }
