@@ -97,21 +97,7 @@ class MedicineAlarmForegroundService : Service() {
 
     private fun startAlarmPlayback() {
         try {
-            val alarmUri: Uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(applicationContext, alarmUri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .build()
-                )
-                isLooping = true
-                prepare()
-                start()
-            }
+            mediaPlayer = AlarmToneStore.createPlayer(applicationContext, loop = true)?.also { it.start() }
         } catch (e: Exception) {
             Log.e(TAG, "Error playing alarm sound", e)
         }
@@ -224,7 +210,7 @@ class MedicineAlarmForegroundService : Service() {
             "ডোজ: $dosage $mealTiming"
         }
 
-        return NotificationCompat.Builder(this, ShasthobondhuApp.CHANNEL_HIGH_ALARM_ID)
+        return NotificationCompat.Builder(this, ShasthobondhuApp.CHANNEL_ALARM_SILENT_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle(title)
             .setContentText(content)
