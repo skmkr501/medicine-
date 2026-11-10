@@ -26,6 +26,174 @@ const ai = new GoogleGenAI({
 });
 
 const MANDATORY_DISCLAIMER = 'এটি সাধারণ তথ্য, ডাক্তারের পরামর্শের বিকল্প নয়।';
+const GEMINI_MODEL = 'gemini-3.8-flash';
+
+/**
+ * Extracts numeric HTTP/gRPC status code from GoogleGenAI errors
+ */
+function extractErrorStatus(error: any): number | null {
+  if (!error) return null;
+  if (typeof error.status === 'number') return error.status;
+  if (typeof error.statusCode === 'number') return error.statusCode;
+  if (typeof error.code === 'number') return error.code;
+  if (typeof error.response?.status === 'number') return error.response.status;
+  if (typeof error.error?.code === 'number') return error.error.code;
+  if (typeof error.error?.status === 'number') return error.error.status;
+
+  const msg = String(error.message || error || '');
+  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) return 429;
+  if (
+    msg.includes('401') ||
+    msg.includes('UNAUTHENTICATED') ||
+    msg.toLowerCase().includes('api key') ||
+    msg.toLowerCase().includes('api_key')
+  ) {
+    return 401;
+  }
+  if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) return 403;
+  if (msg.includes('404') || msg.includes('NOT_FOUND')) return 404;
+
+  return null;
+}
+
+/**
+ * Strips secrets, API keys, or long stacktraces from error messages, max 200 characters
+ */
+function sanitizeErrorMessage(rawMsg: string): string {
+  if (!rawMsg) return '';
+  let sanitized = String(rawMsg)
+    .replace(/AIza[0-9A-Za-z-_]{35}/g, '[REDACTED_KEY]')
+    .replace(/key=[^&\s]+/gi, 'key=[REDACTED]')
+    .replace(/Bearer\s+[a-zA-Z0-9._-]+/gi, 'Bearer [REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (sanitized.length > 200) {
+    sanitized = sanitized.slice(0, 197) + '...';
+  }
+  return sanitized;
+}
+
+/**
+ * Maps error status to localized Bengali error message:
+ * - 429 / RESOURCE_EXHAUSTED -> "AI সেবায় এখন অনেক চাপ, ১ মিনিট পরে চেষ্টা করুন।"
+ * - 401/403 / API key error -> "AI সেবা এখন চালু করা নেই। অ্যাডমিনকে জানান।"
+ * - 404 -> "AI মডেল পাওয়া যায়নি।"
+ * - Otherwise fallback message
+ */
+function getAiErrorMessage(
+  error: any,
+  fallbackMessage: string
+): { message: string; status: number } {
+  const status = extractErrorStatus(error);
+  const msg = String(error?.message || '');
+
+  if (status === 429 || msg.includes('RESOURCE_EXHAUSTED')) {
+    return {
+      status: 429,
+      message: 'AI সেবায় এখন অনেক চাপ, ১ মিনিট পরে চেষ্টা করুন।',
+    };
+  }
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    msg.includes('UNAUTHENTICATED') ||
+    msg.includes('PERMISSION_DENIED') ||
+    msg.toLowerCase().includes('api key') ||
+    msg.toLowerCase().includes('api_key')
+  ) {
+    return {
+      status: status === 401 || status === 403 ? status : 403,
+      message: 'AI সেবা এখন চালু করা নেই। অ্যাডমিনকে জানান।',
+    };
+  }
+
+  if (status === 404 || msg.includes('NOT_FOUND')) {
+    return {
+      status: 404,
+      message: 'AI মডেল পাওয়া যায়নি।',
+    };
+  }
+
+  return {
+    status: status || 500,
+    message: fallbackMessage,
+  };
+}
+
+// 1-minute caching for GET /api/ai/health probe
+interface HealthCheckCache {
+  data: {
+    keyPresent: boolean;
+    model: string;
+    ok: boolean;
+    errorStatus: number | null;
+    errorMessage: string;
+  };
+  timestamp: number;
+}
+let cachedAiHealth: HealthCheckCache | null = null;
+const HEALTH_CACHE_TTL_MS = 60 * 1000;
+
+/**
+ * Health check endpoint for AI service
+ * Checks API key presence, performs cached 1-minute probe, returns sanitized status.
+ */
+app.get('/api/ai/health', async (_req, res) => {
+  const now = Date.now();
+  if (cachedAiHealth && now - cachedAiHealth.timestamp < HEALTH_CACHE_TTL_MS) {
+    return res.json(cachedAiHealth.data);
+  }
+
+  const keyPresent = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim());
+
+  if (!keyPresent) {
+    const healthResult = {
+      keyPresent: false,
+      model: GEMINI_MODEL,
+      ok: false,
+      errorStatus: 401,
+      errorMessage: sanitizeErrorMessage('GEMINI_API_KEY is missing from environment variables.'),
+    };
+    cachedAiHealth = { data: healthResult, timestamp: now };
+    return res.json(healthResult);
+  }
+
+  try {
+    const probe = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: 'ok',
+    });
+
+    const isOk = Boolean(probe && (probe.text || probe.candidates?.length));
+    const healthResult = {
+      keyPresent: true,
+      model: GEMINI_MODEL,
+      ok: isOk,
+      errorStatus: null,
+      errorMessage: isOk ? '' : 'No content generated in health probe.',
+    };
+
+    cachedAiHealth = { data: healthResult, timestamp: now };
+    return res.json(healthResult);
+  } catch (error: any) {
+    console.error('AI Health Probe Check Error with status:', extractErrorStatus(error), error);
+    const status = extractErrorStatus(error);
+    const sanitizedMsg = sanitizeErrorMessage(error?.message || 'AI service probe failed');
+
+    const healthResult = {
+      keyPresent: true,
+      model: GEMINI_MODEL,
+      ok: false,
+      errorStatus: status || 500,
+      errorMessage: sanitizedMsg,
+    };
+
+    cachedAiHealth = { data: healthResult, timestamp: now };
+    return res.json(healthResult);
+  }
+});
 
 /**
  * Endpoint 1: Bengali Medicine Information
@@ -53,7 +221,7 @@ app.post('/api/ai/medicine-info', async (req, res) => {
 "${MANDATORY_DISCLAIMER}"`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+      model: GEMINI_MODEL,
       contents: prompt,
       config: {
         systemInstruction: 'You are a compassionate, medically neutral health educator answering in clear, gentle Bengali (বাংলা). Never provide definitive personal diagnostic or prescription changes. Always include the statutory disclaimer.',
@@ -69,10 +237,14 @@ app.post('/api/ai/medicine-info', async (req, res) => {
       disclaimer: MANDATORY_DISCLAIMER,
     });
   } catch (error: any) {
-    console.error('Error generating medicine info:', error);
-    return res.status(500).json({
-      error: 'ওষুধের তথ্য প্রদানে সাময়িক সমস্যা হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।',
-      details: error?.message || 'Unknown error',
+    console.error('Error generating medicine info with status:', extractErrorStatus(error), error);
+    const errDetails = getAiErrorMessage(
+      error,
+      'ওষুধের তথ্য প্রদানে সাময়িক সমস্যা হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'
+    );
+    return res.status(errDetails.status).json({
+      error: errDetails.message,
+      errorStatus: errDetails.status,
     });
   }
 });
@@ -161,10 +333,14 @@ app.post('/api/ai/scan-prescription', async (req, res) => {
       disclaimer: MANDATORY_DISCLAIMER,
     });
   } catch (error: any) {
-    console.error('Error scanning prescription:', error);
-    return res.status(500).json({
-      error: 'প্রেসক্রিপশন স্ক্যান করতে সমস্যা হয়েছে। অনুগ্রহ করে পরিষ্কার আলোতে আবার ছবি তুলে চেষ্টা করুন।',
-      details: error?.message || 'Unknown error',
+    console.error('Error scanning prescription with status:', extractErrorStatus(error), error);
+    const errDetails = getAiErrorMessage(
+      error,
+      'প্রেসক্রিপশন স্ক্যান করতে সমস্যা হয়েছে। অনুগ্রহ করে পরিষ্কার আলোতে আবার ছবি তুলে চেষ্টা করুন।'
+    );
+    return res.status(errDetails.status).json({
+      error: errDetails.message,
+      errorStatus: errDetails.status,
     });
   }
 });
@@ -253,10 +429,14 @@ JSON ফরম্যাটে উত্তর দাও:
       disclaimer: 'এটি সম্ভাব্য পারস্পরিক মিথস্ক্রিয়া তথ্য, ডাক্তারের পরামর্শের বিকল্প নয়। কোনো অবস্থাতেই নিজে থেকে ওষুধ বন্ধ বা ডোজ পরিবর্তন করবেন না।',
     });
   } catch (error: any) {
-    console.error('Error checking drug interactions:', error);
-    return res.status(500).json({
-      error: 'পারস্পরিক ক্রিয়া যাচাই করতে সমস্যা হয়েছে।',
-      details: error?.message || 'Unknown error',
+    console.error('Error checking drug interactions with status:', extractErrorStatus(error), error);
+    const errDetails = getAiErrorMessage(
+      error,
+      'পারস্পরিক ক্রিয়া যাচাই করতে সমস্যা হয়েছে।'
+    );
+    return res.status(errDetails.status).json({
+      error: errDetails.message,
+      errorStatus: errDetails.status,
     });
   }
 });

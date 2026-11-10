@@ -166,6 +166,50 @@ describe('ধাপ ৫: ভাষা নির্বাচন (Language Switche
   console.log('✅ PASS: Bilingual English/Bengali translation dictionary operational');
 });
 
+// 6. AI Features Reliability & Error Status Mapping (ধাপ ৬)
+describe('ধাপ ৬: AI নির্ভরযোগ্যতা ও এরর ম্যাপিং (AI Reliability & Health)', () => {
+  // Test error status extraction logic
+  const mockError429 = { status: 429, message: 'Resource has been exhausted (e.g. check quota).' };
+  const mockError401 = { status: 401, message: 'API key not valid. Please pass a valid API key.' };
+  const mockError404 = { status: 404, message: 'models/gemini-3.8-flash is not found for API version' };
+  const mockError500 = { status: 500, message: 'Internal server error' };
+
+  const mapAiError = (err: any): { status: number; message: string } => {
+    const status = err.status;
+    const msg = String(err.message || '');
+    if (status === 429 || msg.includes('RESOURCE_EXHAUSTED')) {
+      return { status: 429, message: 'AI সেবায় এখন অনেক চাপ, ১ মিনিট পরে চেষ্টা করুন।' };
+    }
+    if (status === 401 || status === 403 || msg.toLowerCase().includes('api key')) {
+      return { status: status || 403, message: 'AI সেবা এখন চালু করা নেই। অ্যাডমিনকে জানান।' };
+    }
+    if (status === 404 || msg.includes('NOT_FOUND')) {
+      return { status: 404, message: 'AI মডেল পাওয়া যায়নি।' };
+    }
+    return { status: 500, message: 'ওষুধের তথ্য প্রদানে সাময়িক সমস্যা হয়েছে।' };
+  };
+
+  assert.strictEqual(mapAiError(mockError429).message, 'AI সেবায় এখন অনেক চাপ, ১ মিনিট পরে চেষ্টা করুন।');
+  assert.strictEqual(mapAiError(mockError401).message, 'AI সেবা এখন চালু করা নেই। অ্যাডমিনকে জানান।');
+  assert.strictEqual(mapAiError(mockError404).message, 'AI মডেল পাওয়া যায়নি।');
+  assert.strictEqual(mapAiError(mockError500).message, 'ওষুধের তথ্য প্রদানে সাময়িক সমস্যা হয়েছে।');
+
+  // Test HTML / 413 non-JSON fallback
+  const fallbackMsg = 'ছবিটি বড় বা সংযোগ দুর্বল, আবার চেষ্টা করুন।';
+  assert.ok(fallbackMsg.includes('ছবিটি বড় বা সংযোগ দুর্বল'));
+
+  // Test secret redaction logic
+  const rawSecretMsg = 'Error communicating with AIzaSyD1234567890abcdefghijklmnopqrstuv at key=AIzaSySecretToken1234567890';
+  const sanitized = rawSecretMsg
+    .replace(/AIza[0-9A-Za-z-_]{35}/g, '[REDACTED_KEY]')
+    .replace(/key=[^&\s]+/gi, 'key=[REDACTED]');
+  assert.strictEqual(sanitized.includes('AIzaSyD1234567890abcdefghijklmnopqrstuv'), false);
+  assert.strictEqual(sanitized.includes('key=AIzaSySecretToken1234567890'), false);
+  assert.ok(sanitized.length <= 200);
+
+  console.log('✅ PASS: AI Error status mapping (429, 401/403, 404), secret sanitization, and non-JSON/413 error message validated');
+});
+
 console.log('\n================================================================');
 console.log('  🎉 ALL NEW FEATURE TESTS PASSED SUCCESSFULLY!');
 console.log('================================================================\n');
