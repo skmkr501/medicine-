@@ -1,0 +1,50 @@
+name: Build Shasthobondhu APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'android/**'
+      - '.github/workflows/**'
+      - 'public/logo.svg'
+      - 'scripts/make_android_icons.py'
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.2.1'
+
+      - name: Generate app icons from logo
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq librsvg2-bin
+          python3 scripts/make_android_icons.py public/logo.svg android/app/src/main/res
+
+      - name: Build APK
+        working-directory: android
+        run: gradle --settings-file settings.gradle assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shasthobondhu-APK
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
