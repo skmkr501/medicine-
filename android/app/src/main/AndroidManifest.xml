@@ -16,6 +16,7 @@
     <application
         android:name=".ShasthobondhuApp"
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="স্বাস্থ্যবন্ধু"
         android:supportsRtl="true"
         android:theme="@style/Theme.Shasthobondhu">
