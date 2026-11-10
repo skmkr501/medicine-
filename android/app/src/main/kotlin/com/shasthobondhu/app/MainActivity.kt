@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val APP_URL = "https://shasthobondhu-1.ai.studio"
         const val APP_HOST = "shasthobondhu-1.ai.studio"
+        const val AUTH_HOST = "sodium-compass-tbvhw.firebaseapp.com"
     }
 
     private lateinit var webView: WebView
@@ -87,6 +88,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.addJavascriptInterface(PrintBridge(), "AndroidBridge")
+        webView.addJavascriptInterface(NativeReminderBridge(this), "AndroidReminders")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -98,9 +100,7 @@ class MainActivity : AppCompatActivity() {
                     return true
                 }
                 val host = uri.host ?: return true
-                val internal = host == APP_HOST ||
-                    host.endsWith(".firebaseapp.com") ||
-                    host.endsWith(".run.app")
+                val internal = host == APP_HOST || host == AUTH_HOST
                 if (internal) return false
                 openExternal(uri)
                 return true
