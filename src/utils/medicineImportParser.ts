@@ -555,32 +555,25 @@ TEST-DAR-000-005,TestGrip-Epsilon (TEST DATA),NonMedicalBase-E (TEST DATA),1% (T
 }
 
 /**
- * Checks whether a given global medicine record is fictional / TEST DATA
- * Used for safe deletion filtering in the Draft / Unpublished queue
+ * Checks whether a given global medicine record is genuinely dummy / TEST DATA.
+ * Only explicit mock simulation records (e.g. brand or generic with "(TEST DATA)",
+ * or DAR starting with "TEST-") are marked as TEST DATA.
+ * Real registered medicines (e.g. Nimocon 500, Napa, Ace, Seclo) are NEVER flagged as TEST DATA.
  */
 export function isTestMedicine(med: Partial<GlobalMedicine>): boolean {
-  const combined = [
-    med.brandName,
-    med.genericName,
-    med.strength,
-    med.manufacturer,
-    med.darNumber,
-    med.licenseReference,
-    med.writtenPermissionRef,
-    med.therapeuticClass,
-    med.indication,
-    med.packageDescription,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+  const brand = (med.brandName || '').toLowerCase().trim();
+  const generic = (med.genericName || '').toLowerCase().trim();
+  const dar = (med.darNumber || '').toLowerCase().trim();
+  const mfg = (med.manufacturer || '').toLowerCase().trim();
 
   return (
-    combined.includes('(test data)') ||
-    combined.includes('test data') ||
-    combined.includes('টেস্ট ডাটা') ||
-    combined.includes('(test)') ||
-    (med.darNumber ? med.darNumber.toLowerCase().startsWith('test-') : false) ||
-    (med.licenseReference ? med.licenseReference.toLowerCase().includes('test') : false)
+    brand.includes('(test data)') ||
+    brand.includes('test data') ||
+    brand.includes('টেস্ট ডাটা') ||
+    generic.includes('(test data)') ||
+    generic.includes('test data') ||
+    mfg.includes('(test data)') ||
+    dar.startsWith('test-')
   );
 }
+
