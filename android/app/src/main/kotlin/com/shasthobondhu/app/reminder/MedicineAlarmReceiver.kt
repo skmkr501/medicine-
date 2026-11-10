@@ -46,10 +46,15 @@ class MedicineAlarmReceiver : BroadcastReceiver() {
 
             // 3. Reschedule this recurring reminder for tomorrow
             val storage = ReminderStorage(context)
-            val reminder = storage.getAllReminders().find { it.reminderId == reminderId }
-            if (reminder != null && reminder.isActive) {
-                val scheduler = MedicineReminderScheduler(context)
-                scheduler.scheduleReminder(reminder)
+            if (reminderId.startsWith("snooze_") || reminderId.startsWith("test_alarm_")) {
+                // স্নুজ ও টেস্ট অ্যালার্ম একবারই বাজবে, প্রতিদিন পুনরাবৃত্তি হবে না
+                storage.removeReminder(reminderId)
+            } else {
+                val reminder = storage.getAllReminders().find { it.reminderId == reminderId }
+                if (reminder != null && reminder.isActive) {
+                    val scheduler = MedicineReminderScheduler(context)
+                    scheduler.scheduleReminder(reminder)
+                }
             }
 
         } catch (e: Exception) {
