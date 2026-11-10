@@ -4,7 +4,12 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.media.RingtoneManager
 import android.os.Bundle
+import android.provider.OpenableColumns
+import androidx.core.content.IntentCompat
+import com.shasthobondhu.app.reminder.AlarmToneStore
+import android.widget.Toast
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.webkit.JavascriptInterface
@@ -27,7 +32,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import com.shasthobondhu.app.reminder.PermissionHelper
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), ToneHost {
 
     companion object {
         const val APP_URL = "https://shasthobondhu-1.ai.studio"
@@ -39,6 +44,87 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var errorView: LinearLayout
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private lateinit var reminderBridge: NativeReminderBridge
+
+    // ফোনের অ্যালার্ম/রিংটোন তালিকা থেকে বাছাইয়ের ফলাফল
+    private val ringtonePicker =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == RESULT_OK) {
+                val uri: Uri? = result.data?.let {
+                    IntentCompat.getParcelableExtra(it, RingtoneManager.EXTRA_RINGTONE_PICKED_URI, Uri::class.java)
+                }
+                if (uri == null) {
+                    AlarmToneStore.reset(this)
+                } else if (AlarmToneStore.canPlay(this, uri)) {
+                    val title = try {
+                        RingtoneManager.getRingtone(this, uri)?.getTitle(this)
+                    } catch (e: Exception) {
+                        null
+                    } ?: "নির্বাচিত টোন"
+                    AlarmToneStore.save(this, uri, title)
+                } else {
+                    Toast.makeText(this, "এই টোনটি বাজানো যাচ্ছে না। \"ফাইল থেকে বাছুন\" ব্যবহার করুন।", Toast.LENGTH_LONG).show()
+                }
+                notifyToneChanged()
+            }
+        }
+
+    // ফোনের ফাইল/গান বাছাইয়ের ফলাফল
+    private val audioPicker =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (_: Exception) {
+                }
+                if (AlarmToneStore.canPlay(this, uri)) {
+                    AlarmToneStore.save(this, uri, queryDisplayName(uri) ?: "নির্বাচিত গান")
+                } else {
+                    Toast.makeText(this, "এই ফাইলটি বাজানো যাচ্ছে না। অন্য অডিও ফাইল বাছুন।", Toast.LENGTH_LONG).show()
+                }
+                notifyToneChanged()
+            }
+        }
+
+    override fun pickSystemTone() {
+        val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+            putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALARM)
+            putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "অ্যালার্ম টোন বাছুন")
+            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+            putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, AlarmToneStore.getUri(this@MainActivity))
+        }
+        try {
+            ringtonePicker.launch(intent)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "এই ফোনে টোন বাছাইয়ের অপশন নেই। \"ফাইল থেকে বাছুন\" ব্যবহার করুন।", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun pickAudioFile() {
+        try {
+            audioPicker.launch(arrayOf("audio/*"))
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "ফাইল বাছাইয়ের অ্যাপ পাওয়া যায়নি", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.substringBeforeLast('.') else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    // ওয়েব পেজকে জানায় টোন বদলেছে (ওয়েব: window.addEventListener('alarmToneChanged', ...))
+    private fun notifyToneChanged() {
+        webView.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('alarmToneChanged'));", null
+        )
+    }
 
     // ছবি/ফাইল বাছাইয়ের ফলাফল ওয়েব পেজে ফেরত দেয়
     private val fileChooserLauncher =
@@ -88,7 +174,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.addJavascriptInterface(PrintBridge(), "AndroidBridge")
-        webView.addJavascriptInterface(NativeReminderBridge(this), "AndroidReminders")
+        reminderBridge = NativeReminderBridge(this, this)
+        webView.addJavascriptInterface(reminderBridge, "AndroidReminders")
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -195,6 +282,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        reminderBridge.release()
         webView.destroy()
         super.onDestroy()
     }
