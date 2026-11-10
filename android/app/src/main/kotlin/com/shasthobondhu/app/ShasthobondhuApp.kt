@@ -12,6 +12,8 @@ class ShasthobondhuApp : Application() {
     companion object {
         const val CHANNEL_REMINDERS_ID = "channel_medicine_reminders"
         const val CHANNEL_HIGH_ALARM_ID = "channel_medicine_high_alarm"
+        // অ্যালার্মের শব্দ ও কম্পন সার্ভিস নিজে বাজায়, তাই এই চ্যানেল নীরব (শব্দ জড়িয়ে যাওয়া ঠেকাতে)
+        const val CHANNEL_ALARM_SILENT_ID = "channel_medicine_alarm_silent"
     }
 
     override fun onCreate() {
@@ -56,7 +58,20 @@ class ShasthobondhuApp : Application() {
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
 
+            val silentAlarmChannel = NotificationChannel(
+                CHANNEL_ALARM_SILENT_ID,
+                "ওষুধ সেবনের অ্যালার্ম",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "ওষুধ খাওয়ার সময় হলে স্ক্রিনে দেখানো অ্যালার্ম"
+                enableVibration(false)
+                setSound(null, null)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                setBypassDnd(true)
+            }
+
             notificationManager.createNotificationChannel(highAlarmChannel)
+            notificationManager.createNotificationChannel(silentAlarmChannel)
             notificationManager.createNotificationChannel(standardChannel)
         }
     }
