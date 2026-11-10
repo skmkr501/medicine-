@@ -3,6 +3,7 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   updateProfile,
   signOut,
   User,
@@ -46,6 +47,7 @@ export function isUserAdmin(email?: string | null): boolean {
 /**
  * Asserts that the currently authenticated user is the designated admin.
  * Throws a clear Bengali error if unauthenticated or unauthorized.
+ * Does not expose the admin's personal email to unauthorized callers.
  */
 export function assertAdminAuth(): void {
   const currentUser = auth.currentUser;
@@ -54,7 +56,7 @@ export function assertAdminAuth(): void {
   }
   if (!isUserAdmin(currentUser.email)) {
     throw new Error(
-      `নিরাপত্তা বিধিনিষেধ: শুধুমাত্র অনুমোদিত প্রধান প্রশাসক (${ADMIN_EMAIL}) এই কাজটি করতে পারবেন। বর্তমান অ্যাকাউন্ট (${currentUser.email || 'বেনামী'}) অননুমোদিত।`
+      'নিরাপত্তা বিধিনিষেধ: আপনার বর্তমান অ্যাকাউন্টে অ্যাডমিন কার্যক্রম পরিচালনার অনুমতি নেই।'
     );
   }
 }
@@ -107,6 +109,19 @@ export async function logOut(): Promise<void> {
     await signOut(auth);
   } catch (error) {
     console.error('Logout Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Sends a password reset email in Bengali via Firebase Auth.
+ */
+export async function resetPassword(email: string): Promise<void> {
+  try {
+    auth.languageCode = 'bn';
+    await sendPasswordResetEmail(auth, email.trim());
+  } catch (error) {
+    console.error('Password Reset Error:', error);
     throw error;
   }
 }

@@ -1396,7 +1396,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     records: GlobalMedicine[]
   ): Promise<boolean> => {
     if (!isAdmin) {
-      showToast('শুধুমাত্র অনুমোদিত অ্যাডমিন (sarashatikmkr501@gmail.com) ডাটা ইমপোর্ট করতে পারেন', 'alert');
+      showToast('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাকাউন্টে ডাটা ইমপোর্ট করার অনুমতি নেই।', 'alert');
       return false;
     }
 
@@ -1479,7 +1479,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const publishGlobalMedicineAction = async (medicineId: string): Promise<boolean> => {
     if (!isAdmin) {
-      showToast('শুধুমাত্র অনুমোদিত অ্যাডমিন (sarashatikmkr501@gmail.com) ওষুধ অনুমোদন ও প্রকাশ করতে পারেন', 'alert');
+      showToast('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাকাউন্টে ওষুধ অনুমোদন ও প্রকাশ করার অনুমতি নেই।', 'alert');
       return false;
     }
 
@@ -1542,7 +1542,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const deleteGlobalMedicineAction = async (medicineId: string): Promise<boolean> => {
     if (!isAdmin) {
-      showToast('নিরাপত্তা প্রত্যাখ্যান: শুধুমাত্র অনুমোদিত অ্যাডমিন (sarashatikmkr501@gmail.com) ডাটা মুছতে পারেন', 'alert');
+      showToast('নিরাপত্তা প্রত্যাখ্যান: আপনার এই অ্যাকাউন্টে ডাটা মোছার প্রশাসনিক অনুমতি নেই।', 'alert');
       return false;
     }
 
@@ -1591,7 +1591,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const bulkDeleteGlobalMedicinesAction = async (medicineIds: string[]): Promise<boolean> => {
     if (!isAdmin) {
-      showToast('নিরাপত্তা প্রত্যাখ্যান: শুধুমাত্র অনুমোদিত অ্যাডমিন (sarashatikmkr501@gmail.com) ডাটা মুছতে পারেন', 'alert');
+      showToast('নিরাপত্তা প্রত্যাখ্যান: আপনার এই অ্যাকাউন্টে ডাটা মোছার প্রশাসনিক অনুমতি নেই।', 'alert');
       return false;
     }
 

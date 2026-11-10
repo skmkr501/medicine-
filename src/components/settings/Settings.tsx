@@ -821,24 +821,28 @@ export const Settings: React.FC = () => {
         <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs">
           <div>
             <strong className="block text-sm font-semibold text-rose-600 dark:text-rose-400 mb-0.5">
-              প্রাথমিক ডেমো ডেটা রিসেট
+              সব ডেটা মুছে নতুন করে শুরু করুন
             </strong>
             <span className="text-slate-500 dark:text-slate-400">
-              অ্যাপের সমস্ত কাস্টম ডেটা মুছে প্রাথমিক উদাহরণ ওষুধ ও হিস্ট্রি ফিরিয়ে আনবে
+              অ্যাপের সংরক্ষিত সমস্ত ওষুধ, সেবন ইতিহাস, প্রোফাইল ও সেটিংস মুছে একদম নতুন করে শুরু করবে
             </span>
           </div>
 
           <button
             type="button"
             onClick={() => {
-              if (window.confirm('আপনি কি নিশ্চিত যে সমস্ত ডেটা প্রাথমিক অবস্থায় রিসেট করতে চান?')) {
+              if (
+                window.confirm(
+                  'আপনি কি নিশ্চিত যে সমস্ত ওষুধ, ইতিহাস, প্রোফাইল ও সেটিংস মুছে একদম নতুন করে শুরু করতে চান? এই কাজটি আর ফেরানো যাবে না।'
+                )
+              ) {
                 resetAllData();
               }
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg hover:bg-rose-100 cursor-pointer shrink-0"
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg hover:bg-rose-100 cursor-pointer shrink-0"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>রিসেট করুন</span>
+            <span>সব মুছে নতুন শুরু করুন</span>
           </button>
         </div>
       </section>
