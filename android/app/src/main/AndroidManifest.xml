@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -16,7 +18,7 @@
         android:allowBackup="true"
         android:label="স্বাস্থ্যবন্ধু"
         android:supportsRtl="true"
-android:theme="@style/Theme.Shasthobondhu">
+        android:theme="@style/Theme.Shasthobondhu">
 
         <activity
             android:name=".MainActivity"
