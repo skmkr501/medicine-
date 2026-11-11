@@ -19,6 +19,7 @@ import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AuthModal } from './components/auth/AuthModal';
 import { ProfileModal } from './components/profiles/ProfileModal';
 import { StockAdjustmentModal } from './components/medicines/StockAdjustmentModal';
+import { AdminManualMedicineModal } from './components/admin/AdminManualMedicineModal';
 import { AppLogo } from './components/ui/AppLogo';
 
 import { DailyChecklist } from './components/checklist/DailyChecklist';
@@ -78,6 +79,9 @@ const AppContent: React.FC = () => {
 
       {/* Smart Medicine Stock Adjustment Modal */}
       <StockAdjustmentModal />
+
+      {/* Admin Manual Medicine Entry Modal */}
+      <AdminManualMedicineModal />
 
       {/* Quiet Footer */}
       <footer className="hidden md:block border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 text-xs text-slate-500 dark:text-slate-400">

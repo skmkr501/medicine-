@@ -45,6 +45,7 @@ export const MedicineLibrary: React.FC = () => {
     bulkPublishGlobalMedicinesAction,
     deleteGlobalMedicineAction,
     bulkDeleteGlobalMedicinesAction,
+    openManualAddModal,
   } = useMedicine();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -315,14 +316,26 @@ export const MedicineLibrary: React.FC = () => {
         {/* Quick Admin Import Link or Catalog Stats */}
         <div className="flex items-center gap-3">
           {isAdmin ? (
-            <button
-              type="button"
-              onClick={() => setCurrentPage('admin-dashboard')}
-              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-teal-700 hover:bg-teal-800 text-white rounded-xl shadow-xs transition-colors cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span>অ্যাডমিন ড্যাশবোর্ড</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={openManualAddModal}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl shadow-xs transition-colors cursor-pointer"
+                title="ফরম পূরণ করে একটি নতুন ওষুধ সরাসরি লাইব্রেরিতে যোগ করুন"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ ম্যানুয়ালি ওষুধ যোগ</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage('admin-dashboard')}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold bg-teal-700 hover:bg-teal-800 text-white rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>অ্যাডমিন ড্যাশবোর্ড</span>
+              </button>
+            </div>
           ) : (
             <div className="text-right hidden sm:block">
               <span className="text-[11px] text-slate-400 block">অনুমোদিত ওষুধ সংখ্যা</span>

@@ -38,6 +38,7 @@ import {
   X,
   Server,
   Wifi,
+  Plus,
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -50,6 +51,7 @@ export const AdminDashboard: React.FC = () => {
     patients,
     setCurrentPage,
     openAuthModal,
+    openManualAddModal,
     deleteGlobalMedicineAction,
     bulkDeleteGlobalMedicinesAction,
     publishGlobalMedicineAction,
@@ -277,6 +279,16 @@ export const AdminDashboard: React.FC = () => {
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
               <span>{refreshing ? 'রিফ্রেশ হচ্ছে...' : 'লাইভ রিফ্রেশ'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={openManualAddModal}
+              className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 active:bg-emerald-600 text-emerald-950 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md"
+              title="ফরম পূরণ করে একটি নতুন ওষুধ সরাসরি ডাটাবেজে যুক্ত করুন"
+            >
+              <Plus className="w-4 h-4" />
+              <span>ম্যানুয়ালি ওষুধ যোগ</span>
             </button>
 
             <button
@@ -668,8 +680,26 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
           
+          <button
+            type="button"
+            onClick={openManualAddModal}
+            className="flex items-center gap-3 p-3.5 bg-white dark:bg-slate-900 hover:bg-emerald-50 dark:hover:bg-slate-800/90 rounded-2xl border border-emerald-300 dark:border-emerald-800 transition-all cursor-pointer group shadow-2xs text-left"
+          >
+            <div className="p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 group-hover:scale-105 transition-transform">
+              <Plus className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-xs font-bold text-slate-900 dark:text-white block group-hover:text-emerald-700 dark:group-hover:text-emerald-400">
+                ম্যানুয়ালি ওষুধ যোগ
+              </span>
+              <span className="text-[11px] text-slate-400 block mt-0.5">
+                ফরম পূরণ করে সরাসরি অন্তর্ভুক্তি
+              </span>
+            </div>
+          </button>
+
           <button
             type="button"
             onClick={() => setActiveTab('import')}

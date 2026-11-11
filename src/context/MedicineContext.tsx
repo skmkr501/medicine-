@@ -8,6 +8,8 @@ import {
   TimeSlot,
   GlobalMedicine,
   ImportBatch,
+  ImportDataSource,
+  ImportSourceType,
   StockAdjustment,
   StockPrediction,
   HealthRecord,
@@ -32,7 +34,7 @@ import {
   clearAllNativeReminders,
   isNativeRemindersAvailable,
 } from '../services/nativeReminders';
-import { auth, db, testFirestoreConnection } from '../firebase/config';
+import { auth, db, testFirestoreConnection, stripUndefined } from '../firebase/config';
 import {
   onAuthStateChanged,
   User,
@@ -58,6 +60,7 @@ import {
   logOut,
   ADMIN_EMAIL,
   isUserAdmin,
+  saveGlobalMedicine,
   bulkImportGlobalMedicines,
   publishGlobalMedicine,
   bulkPublishGlobalMedicines,
@@ -160,6 +163,12 @@ interface MedicineContextType {
   bulkPublishGlobalMedicinesAction: (medicineIds?: string[]) => Promise<number>;
   deleteGlobalMedicineAction: (medicineId: string) => Promise<boolean>;
   bulkDeleteGlobalMedicinesAction: (medicineIds: string[]) => Promise<boolean>;
+  isManualAddModalOpen: boolean;
+  openManualAddModal: () => void;
+  closeManualAddModal: () => void;
+  addSingleGlobalMedicineAction: (
+    medicine: Omit<GlobalMedicine, 'id' | 'duplicateKey' | 'importedAt'> & { id?: string }
+  ) => Promise<boolean>;
   executeAdminBatchImport: (
     batchInfo: Omit<ImportBatch, 'id' | 'importedAt' | 'importedByUid' | 'importedByEmail'>,
     records: GlobalMedicine[]
@@ -315,6 +324,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Profile modal state
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [editingPatient, setEditingPatient] = useState<PatientProfile | null>(null);
+
+  // Admin Manual Medicine Add Modal state
+  const [isManualAddModalOpen, setIsManualAddModalOpen] = useState(false);
+  const openManualAddModal = () => setIsManualAddModalOpen(true);
+  const closeManualAddModal = () => setIsManualAddModalOpen(false);
 
   // Stock Adjustment Modal state
   const [stockAdjustmentModalMedId, setStockAdjustmentModalMedId] = useState<string | null>(null);
@@ -1760,6 +1774,96 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  /**
+   * Manually adds a single medicine to the Global Catalog (Cloud Firestore)
+   * Supports immediate live publishing or saving as draft.
+   */
+  const addSingleGlobalMedicineAction = async (
+    rawMedicine: Omit<GlobalMedicine, 'id' | 'duplicateKey' | 'importedAt'> & { id?: string }
+  ): Promise<boolean> => {
+    if (!isAdmin) {
+      showToast('নিরাপত্তা প্রত্যাখ্যান: আপনার এই অ্যাকাউন্টে নতুন ওষুধ যোগ করার প্রশাসনিক অনুমতি নেই।', 'alert');
+      return false;
+    }
+
+    const brandName = (rawMedicine.brandName || '').trim();
+    const genericName = (rawMedicine.genericName || '').trim();
+    const strength = (rawMedicine.strength || '').trim();
+    const dosageForm = (rawMedicine.dosageForm || 'ট্যাবলেট').trim();
+    const manufacturer = (rawMedicine.manufacturer || '').trim();
+
+    if (!brandName || !genericName || !strength || !dosageForm || !manufacturer) {
+      showToast('ত্রুটি: ব্র্যান্ড নাম, জেনেরিক নাম, শক্তি, ডোজের ধরন এবং প্রস্তুতকারক পূরণ করা আবশ্যক।', 'alert');
+      return false;
+    }
+
+    // Auto-generate clean sanitized ID strictly conforming to firestore.rules regex
+    const baseId = rawMedicine.id || `gmed_${brandName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
+    const cleanId = sanitizeMedicineId(baseId);
+
+    // Generate duplicate key
+    const duplicateKey = generateDuplicateKey(brandName, genericName, strength, dosageForm, manufacturer);
+
+    // Source configuration defaults
+    const source = rawMedicine.source || 'DGDA_GOV';
+    const sourceType = rawMedicine.sourceType || 'government';
+    const sourceName = rawMedicine.sourceName || (source === 'DGDA_GOV' ? 'DGDA সরকারি গেজেট' : 'প্রস্তুতকারক মনোগ্রাফ');
+    const licenseReference = (rawMedicine.licenseReference || 'DGDA Public Gazette / National Formulary').trim();
+    const isPublished = rawMedicine.status === 'published';
+
+    const cleanMedicine: GlobalMedicine = stripUndefined({
+      ...rawMedicine,
+      id: cleanId,
+      brandName: brandName.substring(0, 128),
+      genericName: genericName.substring(0, 256),
+      strength: strength.substring(0, 64),
+      dosageForm: dosageForm.substring(0, 64),
+      manufacturer: manufacturer.substring(0, 128),
+      brandNameBn: rawMedicine.brandNameBn ? rawMedicine.brandNameBn.trim().substring(0, 128) : undefined,
+      genericNameBn: rawMedicine.genericNameBn ? rawMedicine.genericNameBn.trim().substring(0, 256) : undefined,
+      therapeuticClass: rawMedicine.therapeuticClass ? rawMedicine.therapeuticClass.trim().substring(0, 128) : undefined,
+      indication: rawMedicine.indication ? rawMedicine.indication.trim().substring(0, 512) : undefined,
+      pricePerUnit: typeof rawMedicine.pricePerUnit === 'number' && !isNaN(rawMedicine.pricePerUnit) ? rawMedicine.pricePerUnit : undefined,
+      packageDescription: rawMedicine.packageDescription ? rawMedicine.packageDescription.trim().substring(0, 128) : undefined,
+      darNumber: rawMedicine.darNumber ? rawMedicine.darNumber.trim().substring(0, 64) : undefined,
+      source: source as ImportDataSource,
+      sourceType,
+      sourceName: sourceName.substring(0, 128),
+      licenseReference: licenseReference.substring(0, 256),
+      status: isPublished ? 'published' : 'draft',
+      verifiedByAdmin: isPublished ? true : Boolean(rawMedicine.verifiedByAdmin),
+      verificationNotes: isPublished
+        ? 'প্রশাসক কর্তৃক ম্যানুয়ালি সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত'
+        : 'ম্যানুয়াল এন্ট্রি - পর্যালোচনার জন্য অপেক্ষমাণ খসড়া',
+      duplicateKey: duplicateKey.substring(0, 256),
+      importedAt: new Date().toISOString(),
+    });
+
+    try {
+      await saveGlobalMedicine(cleanMedicine);
+      await refreshCloudCounts();
+
+      recordAdminActivity({
+        type: isPublished ? 'publish' : 'import',
+        title: isPublished ? 'ম্যানুয়াল ওষুধ অন্তর্ভুক্তি ও সার্বজনীন প্রকাশ' : 'ম্যানুয়াল ওষুধ খসড়া তৈরি',
+        description: `ওষুধ "${cleanMedicine.brandName}" (${cleanMedicine.strength}, ${cleanMedicine.manufacturer}) সরাসরি ম্যানুয়ালি ক্লাউড লাইব্রেরিতে ${isPublished ? 'প্রকাশ' : 'খসড়া'} করা হয়েছে।`,
+        adminEmail: currentUser?.email || ADMIN_EMAIL,
+      }).catch((e) => console.warn('Activity log error:', e));
+
+      showToast(
+        isPublished
+          ? `"${cleanMedicine.brandName}" সফলভাবে ক্লাউড লাইব্রেরিতে যুক্ত ও সরাসরি প্রকাশিত হয়েছে!`
+          : `"${cleanMedicine.brandName}" খসড়া হিসেবে ক্লাউডে সংরক্ষিত হয়েছে!`,
+        'success'
+      );
+      return true;
+    } catch (err: any) {
+      console.error('Firestore saveGlobalMedicine error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      return false;
+    }
+  };
+
   const addCatalogMedToPersonal = (
     med: GlobalMedicine,
     config: {
@@ -1876,6 +1980,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         bulkPublishGlobalMedicinesAction,
         deleteGlobalMedicineAction,
         bulkDeleteGlobalMedicinesAction,
+        isManualAddModalOpen,
+        openManualAddModal,
+        closeManualAddModal,
+        addSingleGlobalMedicineAction,
         executeAdminBatchImport,
         addCatalogMedToPersonal,
         stockPredictions,

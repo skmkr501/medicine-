@@ -38,6 +38,7 @@ import {
   CheckSquare,
   Square,
   RefreshCw,
+  Plus,
 } from 'lucide-react';
 
 export const AdminImportView: React.FC = () => {
@@ -49,6 +50,7 @@ export const AdminImportView: React.FC = () => {
     importBatches,
     executeAdminBatchImport,
     openAuthModal,
+    openManualAddModal,
     setCurrentPage,
     deleteGlobalMedicineAction,
     bulkDeleteGlobalMedicinesAction,
@@ -513,6 +515,15 @@ export const AdminImportView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openManualAddModal}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl shadow-xs transition-colors cursor-pointer"
+            title="ফরম পূরণ করে একটি ওষুধ সরাসরি ক্লাউড লাইব্রেরিতে যুক্ত করুন"
+          >
+            <Plus className="w-4 h-4" />
+            <span>ম্যানুয়ালি ওষুধ যোগ</span>
+          </button>
           <button
             type="button"
             onClick={() => setCurrentPage('library')}
