@@ -27,13 +27,34 @@ export function generateDuplicateKey(
   dosageForm?: string,
   manufacturer?: string
 ): string {
-  return [
+  const key = [
     normalizeKeyPart(brandName),
     normalizeKeyPart(genericName),
     normalizeKeyPart(strength),
     normalizeKeyPart(dosageForm),
     normalizeKeyPart(manufacturer),
   ].join('_');
+  return key.length > 250 ? key.substring(0, 250) : key;
+}
+
+/**
+ * Sanitizes an ID so it strictly matches Firestore security rules:
+ * - non-empty string, length <= 128
+ * - regex: ^[a-zA-Z0-9_\-]+$
+ */
+export function sanitizeMedicineId(rawId?: string): string {
+  if (!rawId || typeof rawId !== 'string') {
+    return `gmed_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  }
+  let sanitized = rawId.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  sanitized = sanitized.replace(/^_+|_+$/g, '');
+  if (!sanitized) {
+    return `gmed_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  }
+  if (sanitized.length > 120) {
+    sanitized = sanitized.substring(0, 120);
+  }
+  return sanitized;
 }
 
 /**
@@ -301,29 +322,53 @@ export function validateMedicineRecord(
 ): string[] {
   const errors: string[] = [];
 
-  // Core essential attributes
+  // Core essential attributes & Firestore rules validation
   if (!record.brandName || record.brandName.trim().length === 0) {
     errors.push('ব্র্যান্ড নাম (Brand Name) অনুপস্থিত');
+  } else if (record.brandName.length > 128) {
+    errors.push('ব্র্যান্ড নাম সর্বোচ্চ ১২৮ অক্ষর হতে পারে (Firestore Rules)');
   }
+
   if (!record.genericName || record.genericName.trim().length === 0) {
     errors.push('জেনেরিক নাম (Generic Name) অনুপস্থিত');
+  } else if (record.genericName.length > 256) {
+    errors.push('জেনেরিক নাম সর্বোচ্চ ২৫৬ অক্ষর হতে পারে (Firestore Rules)');
   }
+
   if (!record.strength || record.strength.trim().length === 0) {
     errors.push('শক্তি/মাত্রা (Strength) অনুপস্থিত');
+  } else if (record.strength.length > 64) {
+    errors.push('শক্তি/মাত্রা সর্বোচ্চ ৬৪ অক্ষর হতে পারে (Firestore Rules)');
   }
+
   if (!record.dosageForm || record.dosageForm.trim().length === 0) {
     errors.push('ডোজের ধরন (Dosage Form) অনুপস্থিত');
+  } else if (record.dosageForm.length > 64) {
+    errors.push('ডোজের ধরন সর্বোচ্চ ৬৪ অক্ষর হতে পারে (Firestore Rules)');
   }
+
   if (!record.manufacturer || record.manufacturer.trim().length === 0) {
     errors.push('প্রস্তুতকারক প্রতিষ্ঠান (Manufacturer) অনুপস্থিত');
+  } else if (record.manufacturer.length > 128) {
+    errors.push('প্রস্তুতকারক প্রতিষ্ঠান সর্বোচ্চ ১২৮ অক্ষর হতে পারে (Firestore Rules)');
   }
 
   // Legal & Compliance validations (Requirements 1, 2, 5)
   if (!record.source) {
     errors.push('উৎস (Source) অনুপস্থিত');
+  } else if (record.source.length > 64) {
+    errors.push('উৎস সর্বোচ্চ ৬৪ অক্ষর হতে পারে (Firestore Rules)');
   }
+
   if (!record.licenseReference || record.licenseReference.trim().length === 0) {
     errors.push('আইনি লাইসেন্স রেফারেন্স (License Reference) অনুপস্থিত');
+  }
+
+  // Validate ID format if present
+  if (record.id) {
+    if (!/^[a-zA-Z0-9_\-]+$/.test(record.id) || record.id.length > 128) {
+      errors.push('আইডি শুধুমাত্র a-z, A-Z, 0-9, _ এবং - সমর্থন করে (সর্বোচ্চ ১২৮ অক্ষর)');
+    }
   }
 
   // Strict check for MedEx / DIMS: written permission reference is strictly mandatory

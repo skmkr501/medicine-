@@ -64,9 +64,11 @@ import {
   deleteGlobalMedicine,
   bulkDeleteGlobalMedicines,
   recordAdminActivity,
+  verifyCloudGlobalMedicinesCount,
+  getCloudMedicineCounts,
 } from '../firebase/services';
 import { handleFirestoreError, OperationType, getFriendlyErrorMessage } from '../firebase/errors';
-import { isTestMedicine } from '../utils/medicineImportParser';
+import { isTestMedicine, sanitizeMedicineId, generateDuplicateKey } from '../utils/medicineImportParser';
 
 
 interface ToastState {
@@ -145,6 +147,9 @@ interface MedicineContextType {
   importBatches: ImportBatch[];
   isAdmin: boolean;
   adminEmail: string;
+  lastSyncTime: string;
+  cloudStats: { total: number; published: number; draft: number };
+  refreshCloudCounts: () => Promise<void>;
   selectedGlobalMedForDetail: GlobalMedicine | null;
   setSelectedGlobalMedForDetail: (med: GlobalMedicine | null) => void;
   isAddToPersonalModalOpen: boolean;
@@ -248,13 +253,27 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   });
 
   // Global medicine catalog and import batch states
+  // Requirement 5: One-time cache reset migration (flag: shasthobondhu_global_cache_reset_v1)
   const [globalMedicines, setGlobalMedicines] = useState<GlobalMedicine[]>(() => {
+    const CACHE_RESET_KEY = 'shasthobondhu_global_cache_reset_v1';
     try {
+      if (typeof window !== 'undefined' && localStorage.getItem(CACHE_RESET_KEY) !== 'true') {
+        localStorage.removeItem(STORAGE_KEYS.GLOBAL_MEDS);
+        localStorage.setItem(CACHE_RESET_KEY, 'true');
+        return [];
+      }
       const saved = localStorage.getItem(STORAGE_KEYS.GLOBAL_MEDS);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
     }
+  });
+
+  const [lastSyncTime, setLastSyncTime] = useState<string>('');
+  const [cloudStats, setCloudStats] = useState<{ total: number; published: number; draft: number }>({
+    total: 0,
+    published: 0,
+    draft: 0,
   });
 
   const [importBatches, setImportBatches] = useState<ImportBatch[]>(() => {
@@ -452,18 +471,35 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const unsubGlobal = onSnapshot(
       targetQuery,
       (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudList: GlobalMedicine[] = [];
-          snapshot.forEach((doc) => {
-            cloudList.push(doc.data() as GlobalMedicine);
-          });
-          setGlobalMedicines((prev) => {
-            const map = new Map<string, GlobalMedicine>();
-            prev.forEach((m) => map.set(m.id, m));
-            cloudList.forEach((m) => map.set(m.id, m));
-            return Array.from(map.values());
-          });
+        const cloudList: GlobalMedicine[] = [];
+        snapshot.forEach((docSnap) => {
+          cloudList.push(docSnap.data() as GlobalMedicine);
+        });
+        // Single source of truth: replace local catalog directly with cloud results (Requirement 5)
+        setGlobalMedicines(cloudList);
+        try {
+          localStorage.setItem(STORAGE_KEYS.GLOBAL_MEDS, JSON.stringify(cloudList));
+        } catch (e) {
+          console.warn('Storage sync error', e);
         }
+        const now = new Date();
+        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+        setLastSyncTime(timeStr);
+
+        let published = 0;
+        let draft = 0;
+        cloudList.forEach((m) => {
+          if (m.status === 'published' && m.verifiedByAdmin) {
+            published++;
+          } else {
+            draft++;
+          }
+        });
+        setCloudStats({
+          total: cloudList.length,
+          published,
+          draft,
+        });
       },
       (error) => {
         console.warn('Global medicines snapshot notice:', error.message);
@@ -472,6 +508,18 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     return () => unsubGlobal();
   }, [isAdmin]);
+
+  const refreshCloudCounts = async () => {
+    try {
+      const counts = await getCloudMedicineCounts();
+      setCloudStats(counts);
+      const now = new Date();
+      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+      setLastSyncTime(timeStr);
+    } catch (e) {
+      console.warn('refreshCloudCounts error:', e);
+    }
+  };
 
   // Real-time Firestore Listener for Import Batches (Strictly Admin only)
   useEffect(() => {
@@ -1411,71 +1459,96 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       importedByEmail: currentUser?.email || ADMIN_EMAIL,
     };
 
-    const preparedRecords: GlobalMedicine[] = records.map((r, idx) => ({
-      ...r,
-      id: r.id || `gmed_${Date.now()}_${idx}`,
-      importBatchId: batchId,
-      importedAt: fullBatch.importedAt,
-      verifiedByAdmin: r.status === 'published' ? true : false,
-      status: r.status || 'published',
-      source: r.source || fullBatch.source,
-      sourceType: r.sourceType || fullBatch.sourceType,
-      sourceName: r.sourceName || fullBatch.source,
-      licenseReference: r.licenseReference || fullBatch.licenseReference,
-      writtenPermissionRef: r.writtenPermissionRef || fullBatch.writtenPermissionRef,
-    }));
+    // Requirement 4: Sanitize ID and validate against Firestore rules
+    const validRecordsToCommit: GlobalMedicine[] = [];
+    const invalidRecords: { brandName: string; reason: string }[] = [];
+
+    records.forEach((r, idx) => {
+      const sanitizedId = sanitizeMedicineId(r.id || `gmed_${Date.now()}_${idx}`);
+      const prepared: GlobalMedicine = {
+        ...r,
+        id: sanitizedId,
+        importBatchId: batchId,
+        importedAt: fullBatch.importedAt,
+        verifiedByAdmin: r.status === 'published' ? true : false,
+        status: r.status || 'published',
+        source: r.source || fullBatch.source,
+        sourceType: r.sourceType || fullBatch.sourceType,
+        sourceName: r.sourceName || fullBatch.source,
+        licenseReference: r.licenseReference || fullBatch.licenseReference,
+        writtenPermissionRef: r.writtenPermissionRef || fullBatch.writtenPermissionRef,
+        duplicateKey:
+          r.duplicateKey ||
+          generateDuplicateKey(r.brandName, r.genericName, r.strength, r.dosageForm, r.manufacturer),
+      };
+
+      // Strict Firestore security rules checks
+      if (
+        !prepared.id ||
+        !/^[a-zA-Z0-9_\-]+$/.test(prepared.id) ||
+        prepared.id.length > 128 ||
+        !prepared.brandName ||
+        prepared.brandName.trim().length === 0 ||
+        prepared.brandName.length > 128 ||
+        !prepared.genericName ||
+        prepared.genericName.trim().length === 0 ||
+        prepared.genericName.length > 256 ||
+        !prepared.strength ||
+        prepared.strength.length > 64 ||
+        !prepared.dosageForm ||
+        prepared.dosageForm.length > 64 ||
+        !prepared.manufacturer ||
+        prepared.manufacturer.length > 128 ||
+        !prepared.source ||
+        prepared.source.length > 64 ||
+        !prepared.duplicateKey ||
+        prepared.duplicateKey.length > 256
+      ) {
+        invalidRecords.push({
+          brandName: prepared.brandName || `ইনডেক্স ${idx}`,
+          reason: 'নিয়ম লঙ্ঘন (দৈর্ঘ্য বা অবৈধ অক্ষর)',
+        });
+        return;
+      }
+
+      validRecordsToCommit.push(prepared);
+    });
+
+    if (validRecordsToCommit.length === 0) {
+      showToast('ইমপোর্ট ব্যর্থ: কোনো রেকর্ডই ফায়ারস্টোর সিকিউরিটি রুলসের শর্ত পূরণ করেনি।', 'alert');
+      return false;
+    }
 
     try {
       // 1. Save to Cloud Firestore
-      await bulkImportGlobalMedicines(fullBatch, preparedRecords);
+      await bulkImportGlobalMedicines(fullBatch, validRecordsToCommit);
 
-      // 2. Merge into local state with deduplication
-      setGlobalMedicines((prev) => {
-        const map = new Map<string, GlobalMedicine>();
-        prev.forEach((item) => map.set(item.duplicateKey, item));
-        preparedRecords.forEach((item) => map.set(item.duplicateKey, item));
-        return Array.from(map.values());
-      });
-
-      setImportBatches((prev) => [fullBatch, ...prev]);
-
-      const publishedCount = preparedRecords.filter((r) => r.status === 'published').length;
-      const unverifiedCount = preparedRecords.length - publishedCount;
+      // 2. Requirement 3: Verify with server read how many are actually saved
+      const confirmedCount = await verifyCloudGlobalMedicinesCount();
 
       // Record activity in Firestore
+      const publishedCount = validRecordsToCommit.filter((r) => r.status === 'published').length;
+      const unverifiedCount = validRecordsToCommit.length - publishedCount;
+
       recordAdminActivity({
         type: 'import',
         title: `ওষুধ ডাটা ইমপোর্ট (${fullBatch.source})`,
-        description: `${preparedRecords.length} টি ওষুধ প্রক্রিয়াজাত (${publishedCount} টি প্রকাশিত, ${unverifiedCount} টি খসড়া)`,
+        description: `${validRecordsToCommit.length} টি ওষুধ ক্লাউডে সংরক্ষিত (${publishedCount} টি প্রকাশিত, ${unverifiedCount} টি খসড়া)`,
         adminEmail: fullBatch.importedByEmail,
       }).catch((e) => console.warn('Activity log error:', e));
 
-      if (unverifiedCount > 0 && publishedCount === 0) {
-        showToast(
-          `${unverifiedCount} টি ওষুধ যাচাইকরণের জন্য অপেক্ষমাণ (Unpublished Pending Verification) হিসেবে সংরক্ষিত হয়েছে।`,
-          'info'
-        );
-      } else if (unverifiedCount > 0) {
-        showToast(
-          `${publishedCount} টি ওষুধ প্রকাশিত হয়েছে এবং ${unverifiedCount} টি অপ্রকাশিত খসড়া হিসেবে রাখা হয়েছে।`,
-          'success'
-        );
-      } else {
-        showToast(`${publishedCount} টি ওষুধ সফলভাবে গ্লোবাল ক্যাটালগে প্রকাশিত হয়েছে!`, 'success');
+      let msg = `ক্লাউডে সফলভাবে সংরক্ষিত হয়েছে! ক্লাউডে নিশ্চিত: ${confirmedCount} টি`;
+      if (invalidRecords.length > 0) {
+        msg += ` (${invalidRecords.length} টি ত্রুটিপূর্ণ রেকর্ড বাদ দেওয়া হয়েছে)`;
       }
+      showToast(msg, 'success');
       return true;
     } catch (err: any) {
-      console.error('Batch import failed:', err);
-      // Local fallback for offline testing
-      setGlobalMedicines((prev) => {
-        const map = new Map<string, GlobalMedicine>();
-        prev.forEach((item) => map.set(item.duplicateKey, item));
-        preparedRecords.forEach((item) => map.set(item.duplicateKey, item));
-        return Array.from(map.values());
-      });
-      setImportBatches((prev) => [fullBatch, ...prev]);
-      showToast(`${preparedRecords.length} টি ওষুধ স্থানীয় ক্যাটালগে সংরক্ষিত হয়েছে`, 'info');
-      return true;
+      console.error('Batch import to cloud failed:', err);
+      // Requirement 2: NO local fallback! Do not add anything to local state.
+      const errorMsg = getFriendlyErrorMessage(err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${errorMsg}`, 'alert');
+      return false;
     }
   };
 
@@ -1485,6 +1558,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return false;
     }
 
+    const targetMed = globalMedicines.find((m) => m.id === medicineId);
     const cleanLicense =
       targetMed?.licenseReference && targetMed.licenseReference.includes('TEST-SYSTEM-ONLY')
         ? 'DGDA Public Gazette / National Formulary'
@@ -1516,35 +1590,24 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           importedAt: new Date().toISOString(),
         } as GlobalMedicine);
 
-    // 1. Immediately update local state & localStorage so the UI reflects the approval instantly
-    setGlobalMedicines((prev) => {
-      const exists = prev.some((m) => m.id === medicineId);
-      const next = exists
-        ? prev.map((med) => (med.id === medicineId ? updatedMed : med))
-        : [updatedMed, ...prev];
-      try {
-        localStorage.setItem(STORAGE_KEYS.GLOBAL_MEDS, JSON.stringify(next));
-      } catch (e) {
-        console.warn('Storage sync error', e);
-      }
-      return next;
-    });
-
-    // 2. Sync to Firestore in background with full payload
+    // Requirement 2: Write to Firestore FIRST! If it fails, do not update local state
     try {
       await publishGlobalMedicine(updatedMed);
+
       recordAdminActivity({
         type: 'publish',
         title: 'ওষুধ অনুমোদন ও সার্বজনীন প্রকাশ',
         description: `ওষুধ "${updatedMed.brandName}" (${updatedMed.id}) যাচাইকৃত ও গ্লোবাল ক্যাটালগে প্রকাশিত হয়েছে।`,
         adminEmail: currentUser?.email || ADMIN_EMAIL,
       }).catch((e) => console.warn('Activity log error:', e));
-    } catch (err: any) {
-      console.warn('Firestore publish notice (local state maintained):', err);
-    }
 
-    showToast(`"${updatedMed.brandName}" সফলভাবে অনুমোদিত ও লাইব্রেরিতে প্রকাশিত হয়েছে!`, 'success');
-    return true;
+      showToast(`"${updatedMed.brandName}" সফলভাবে অনুমোদিত ও লাইব্রেরিতে প্রকাশিত হয়েছে!`, 'success');
+      return true;
+    } catch (err: any) {
+      console.error('Firestore publish error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      return false;
+    }
   };
 
   /**
@@ -1585,38 +1648,30 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       };
     });
 
-    // 1. Immediately update local state & localStorage so the UI updates instantly
-    setGlobalMedicines((prev) => {
-      const map = new Map<string, GlobalMedicine>();
-      prev.forEach((m) => map.set(m.id, m));
-      updatedTargets.forEach((m) => map.set(m.id, m));
-      const next = Array.from(map.values());
-      try {
-        localStorage.setItem(STORAGE_KEYS.GLOBAL_MEDS, JSON.stringify(next));
-      } catch (e) {
-        console.warn('Storage sync error', e);
-      }
-      return next;
-    });
-
-    // 2. Sync to Firestore in background using writeBatch
+    // Requirement 2: Write to Firestore FIRST!
     try {
       await bulkPublishGlobalMedicines(updatedTargets);
+
+      // Requirement 3: Verify server count
+      const confirmedCount = await verifyCloudGlobalMedicinesCount();
+
       recordAdminActivity({
         type: 'publish',
         title: 'বাল্ক ওষুধ অনুমোদন ও সার্বজনীন প্রকাশ',
         description: `মোট ${updatedTargets.length}টি ওষুধ সরাসরি অনুমোদন করে লাইব্রেরিতে সার্বজনীন প্রকাশ করা হয়েছে।`,
         adminEmail: currentUser?.email || ADMIN_EMAIL,
       }).catch((e) => console.warn('Activity log error:', e));
-    } catch (err: any) {
-      console.warn('Firestore bulk publish notice (local state maintained):', err);
-    }
 
-    showToast(
-      `মোট ${updatedTargets.length}টি ওষুধ সফলভাবে লাইব্রেরিতে প্রকাশিত হয়েছে! সকল ব্যবহারকারী এখনই তা পাবেন।`,
-      'success'
-    );
-    return updatedTargets.length;
+      showToast(
+        `মোট ${updatedTargets.length}টি ওষুধ সফলভাবে লাইব্রেরিতে প্রকাশিত হয়েছে! (ক্লাউডে নিশ্চিত: ${confirmedCount} টি)`,
+        'success'
+      );
+      return updatedTargets.length;
+    } catch (err: any) {
+      console.error('Firestore bulk publish error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      return 0;
+    }
   };
 
   const deleteGlobalMedicineAction = async (medicineId: string): Promise<boolean> => {
@@ -1639,33 +1694,24 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return false;
     }
 
+    // Requirement 2: Execute in Cloud Firestore FIRST!
     try {
       await deleteGlobalMedicine(medicineId);
+
+      recordAdminActivity({
+        type: 'delete',
+        title: 'টেস্ট ডাটা নিরাপদ অপসারণ',
+        description: `খসড়া কিউ থেকে "${target.brandName}" মুছে ফেলা হয়েছে।`,
+        adminEmail: currentUser?.email || ADMIN_EMAIL,
+      }).catch((e) => console.warn('Activity log error:', e));
+
+      showToast(`"${target.brandName}" রেকর্ডটি সফলভাবে ক্লাউড থেকে মুছে ফেলা হয়েছে`, 'info');
+      return true;
     } catch (err: any) {
-      console.warn('Firestore delete error:', err);
-      const isAuthOrPermission =
-        err?.message?.includes('অননুমোদিত') ||
-        err?.message?.includes('নিরাপত্তা') ||
-        err?.message?.includes('permission-denied') ||
-        err?.message?.includes('PERMISSION_DENIED');
-      if (isAuthOrPermission) {
-        showToast(getFriendlyErrorMessage(err), 'alert');
-        return false;
-      }
+      console.error('Firestore delete error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      return false;
     }
-
-    // Safely remove from globalMedicines state
-    setGlobalMedicines((prev) => prev.filter((m) => m.id !== medicineId));
-
-    recordAdminActivity({
-      type: 'delete',
-      title: 'টেস্ট ডাটা নিরাপদ অপসারণ',
-      description: `খসড়া কিউ থেকে "${target.brandName}" মুছে ফেলা হয়েছে।`,
-      adminEmail: currentUser?.email || ADMIN_EMAIL,
-    }).catch((e) => console.warn('Activity log error:', e));
-
-    showToast(`"${target.brandName}" টেস্ট রেকর্ডটি সফলভাবে মুছে ফেলা হয়েছে`, 'info');
-    return true;
   };
 
   const bulkDeleteGlobalMedicinesAction = async (medicineIds: string[]): Promise<boolean> => {
@@ -1694,33 +1740,24 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const safeIds = safeToDelete.map((m) => m.id);
 
+    // Requirement 2: Execute in Cloud Firestore FIRST!
     try {
       await bulkDeleteGlobalMedicines(safeIds);
+
+      recordAdminActivity({
+        type: 'delete',
+        title: 'বাল্ক টেস্ট ডাটা নিরাপদ অপসারণ',
+        description: `খসড়া কিউ থেকে ${safeIds.length}টি রেকর্ড মুছে ফেলা হয়েছে।`,
+        adminEmail: currentUser?.email || ADMIN_EMAIL,
+      }).catch((e) => console.warn('Activity log error:', e));
+
+      showToast(`${safeIds.length} টি রেকর্ড সফলভাবে ক্লাউড থেকে মুছে ফেলা হয়েছে`, 'info');
+      return true;
     } catch (err: any) {
-      console.warn('Firestore bulk delete error:', err);
-      const isAuthOrPermission =
-        err?.message?.includes('অননুমোদিত') ||
-        err?.message?.includes('নিরাপত্তা') ||
-        err?.message?.includes('permission-denied') ||
-        err?.message?.includes('PERMISSION_DENIED');
-      if (isAuthOrPermission) {
-        showToast(getFriendlyErrorMessage(err), 'alert');
-        return false;
-      }
+      console.error('Firestore bulk delete error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      return false;
     }
-
-    const idSet = new Set(safeIds);
-    setGlobalMedicines((prev) => prev.filter((m) => !idSet.has(m.id)));
-
-    recordAdminActivity({
-      type: 'delete',
-      title: 'একাধিক টেস্ট ডাটা বাল্ক অপসারণ',
-      description: `খসড়া কিউ থেকে একযোগে ${safeIds.length} টি টেস্ট রেকর্ড মুছে ফেলা হয়েছে।`,
-      adminEmail: currentUser?.email || ADMIN_EMAIL,
-    }).catch((e) => console.warn('Activity log error:', e));
-
-    showToast(`${safeIds.length} টি টেস্ট রেকর্ড সফলভাবে মুছে ফেলা হয়েছে`, 'info');
-    return true;
   };
 
   const addCatalogMedToPersonal = (
@@ -1826,6 +1863,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         importBatches,
         isAdmin,
         adminEmail: ADMIN_EMAIL,
+        lastSyncTime,
+        cloudStats,
+        refreshCloudCounts,
         selectedGlobalMedForDetail,
         setSelectedGlobalMedForDetail,
         isAddToPersonalModalOpen,
@@ -1833,6 +1873,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         openAddToPersonalModal,
         closeAddToPersonalModal,
         publishGlobalMedicineAction,
+        bulkPublishGlobalMedicinesAction,
         deleteGlobalMedicineAction,
         bulkDeleteGlobalMedicinesAction,
         executeAdminBatchImport,

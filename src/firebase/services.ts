@@ -22,8 +22,10 @@ import {
   orderBy,
   limit,
   where,
+  getDocsFromServer,
+  getCountFromServer,
 } from 'firebase/firestore';
-import { auth, db } from './config';
+import { auth, db, stripUndefined } from './config';
 import { handleFirestoreError, OperationType } from './errors';
 import {
   Medicine,
@@ -304,7 +306,7 @@ export async function saveGlobalMedicine(medicine: GlobalMedicine): Promise<void
   assertAdminAuth();
   const path = `global_medicines/${medicine.id}`;
   try {
-    await setDoc(doc(db, 'global_medicines', medicine.id), medicine, { merge: true });
+    await setDoc(doc(db, 'global_medicines', medicine.id), stripUndefined(medicine), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -319,16 +321,16 @@ export async function publishGlobalMedicine(medicineOrId: string | GlobalMedicin
       ? {
           status: 'published',
           verifiedByAdmin: true,
-          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও অনুমোদিত',
+          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
         }
       : {
           ...medicineOrId,
           status: 'published',
           verifiedByAdmin: true,
-          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও অনুমোদিত',
+          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
         };
   try {
-    await setDoc(doc(db, 'global_medicines', id), payload, { merge: true });
+    await setDoc(doc(db, 'global_medicines', id), stripUndefined(payload), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -354,17 +356,15 @@ export async function bulkPublishGlobalMedicines(medicines: GlobalMedicine[]): P
             ? 'DGDA Public Gazette / National Formulary'
             : (med.licenseReference || 'DGDA Public Gazette Open Data');
 
-        writeBatchInst.set(
-          medRef,
-          {
-            ...med,
-            status: 'published',
-            verifiedByAdmin: true,
-            verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
-            licenseReference: cleanLicense,
-          },
-          { merge: true }
-        );
+        const cleanMed = stripUndefined({
+          ...med,
+          status: 'published' as const,
+          verifiedByAdmin: true,
+          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
+          licenseReference: cleanLicense,
+        });
+
+        writeBatchInst.set(medRef, cleanMed, { merge: true });
       });
       await writeBatchInst.commit();
     }
@@ -375,7 +375,6 @@ export async function bulkPublishGlobalMedicines(medicines: GlobalMedicine[]): P
   }
 }
 
-
 export async function bulkImportGlobalMedicines(
   batchInfo: ImportBatch,
   medicines: GlobalMedicine[]
@@ -384,7 +383,7 @@ export async function bulkImportGlobalMedicines(
   try {
     // 1. Record Import Batch doc
     const batchDocRef = doc(db, 'import_batches', batchInfo.id);
-    await setDoc(batchDocRef, batchInfo);
+    await setDoc(batchDocRef, stripUndefined(batchInfo));
 
     // 2. Commit medicines in batches of 400
     const CHUNK_SIZE = 400;
@@ -393,12 +392,54 @@ export async function bulkImportGlobalMedicines(
       const writeBatchInst = writeBatch(db);
       chunk.forEach((med) => {
         const medRef = doc(db, 'global_medicines', med.id);
-        writeBatchInst.set(medRef, med, { merge: true });
+        writeBatchInst.set(medRef, stripUndefined(med), { merge: true });
       });
       await writeBatchInst.commit();
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'global_medicines/[bulk_import]');
+  }
+}
+
+/**
+ * Reads directly from the server to verify exactly how many global medicines exist in Cloud Firestore
+ */
+export async function verifyCloudGlobalMedicinesCount(): Promise<number> {
+  try {
+    const coll = collection(db, 'global_medicines');
+    const snapshot = await getCountFromServer(coll);
+    return snapshot.data().count;
+  } catch (error) {
+    console.warn('verifyCloudGlobalMedicinesCount getCountFromServer failed, falling back to getDocsFromServer:', error);
+    const snap = await getDocsFromServer(collection(db, 'global_medicines'));
+    return snap.size;
+  }
+}
+
+/**
+ * Returns exact server counts for total, published, and draft medicines from Cloud Firestore
+ */
+export async function getCloudMedicineCounts(): Promise<{ total: number; published: number; draft: number }> {
+  try {
+    const snap = await getDocsFromServer(collection(db, 'global_medicines'));
+    let published = 0;
+    let draft = 0;
+    snap.docs.forEach((d) => {
+      const data = d.data() as GlobalMedicine;
+      if (data.status === 'published' && data.verifiedByAdmin) {
+        published++;
+      } else {
+        draft++;
+      }
+    });
+    return {
+      total: snap.size,
+      published,
+      draft,
+    };
+  } catch (err) {
+    console.warn('getCloudMedicineCounts error:', err);
+    return { total: 0, published: 0, draft: 0 };
   }
 }
 

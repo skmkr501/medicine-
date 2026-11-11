@@ -42,6 +42,7 @@ export const MedicineLibrary: React.FC = () => {
     closeAddToPersonalModal,
     addCatalogMedToPersonal,
     publishGlobalMedicineAction,
+    bulkPublishGlobalMedicinesAction,
     deleteGlobalMedicineAction,
     bulkDeleteGlobalMedicinesAction,
   } = useMedicine();
@@ -52,6 +53,7 @@ export const MedicineLibrary: React.FC = () => {
   const [selectedSource, setSelectedSource] = useState<string>('all');
   const [adminStatusFilter, setAdminStatusFilter] = useState<'published' | 'pending' | 'all'>('published');
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [isBulkPublishing, setIsBulkPublishing] = useState(false);
 
   // Safe Deletion & Selection States for Draft TEST DATA
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
@@ -376,9 +378,36 @@ export const MedicineLibrary: React.FC = () => {
             </div>
           </div>
 
-          <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-            <Info className="w-3.5 h-3.5 text-teal-600" />
-            <span>অপেক্ষমাণ খসড়া সাধারণ ব্যবহারকারীদের জন্য স্বয়ংক্রিয়ভাবে লুকানো থাকে।</span>
+          <div className="flex items-center gap-2">
+            {pendingCount > 0 && (
+              <button
+                type="button"
+                disabled={isBulkPublishing}
+                onClick={async () => {
+                  const pendingMeds = globalMedicines.filter((m) => m.status !== 'published' || !m.verifiedByAdmin);
+                  if (pendingMeds.length === 0) return;
+                  setIsBulkPublishing(true);
+                  const success = await bulkPublishGlobalMedicinesAction(pendingMeds.map((m) => m.id));
+                  if (success) {
+                    setAdminStatusFilter('published');
+                  }
+                  setIsBulkPublishing(false);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg font-bold text-xs shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                title="সকল অপেক্ষমাণ খসড়া সরাসরি অনুমোদন দিয়ে লাইব্রেরিতে প্রকাশ করুন যাতে অন্য সব ফোনেও তাৎক্ষণিক দেখা যায়"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>
+                  {isBulkPublishing
+                    ? 'প্রকাশ হচ্ছে...'
+                    : `সকল খসড়া (${pendingCount} টি) লাইব্রেরিতে প্রকাশ করুন`}
+                </span>
+              </button>
+            )}
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+              <span className="hidden sm:inline">অপেক্ষমাণ খসড়া সাধারণ ব্যবহারকারীদের জন্য লুকানো থাকে।</span>
+            </div>
           </div>
         </div>
       )}

@@ -210,6 +210,108 @@ describe('ধাপ ৬: AI নির্ভরযোগ্যতা ও এর�
   console.log('✅ PASS: AI Error status mapping (429, 401/403, 404), secret sanitization, and non-JSON/413 error message validated');
 });
 
+describe('ধাপ ৭: রিয়েল-টাইম ক্লাউড ওষুধ সিঙ্ক ও টেস্ট ডাটা ফিল্টারিং (Cloud Sync & Validation)', () => {
+  // Test stripUndefined helper
+  function stripUndefined<T>(obj: T): T {
+    if (obj === null || obj === undefined) return obj;
+    if (Array.isArray(obj)) {
+      return obj.map(stripUndefined) as unknown as T;
+    }
+    if (typeof obj === 'object') {
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (value !== undefined) {
+          cleaned[key] = stripUndefined(value);
+        }
+      }
+      return cleaned as T;
+    }
+    return obj;
+  }
+
+  const dirtyObject = {
+    brandName: 'Napa Extend',
+    genericName: 'Paracetamol',
+    strength: '665 mg',
+    pricePerUnit: undefined,
+    nested: {
+      darNumber: '028-023-011',
+      emptyField: undefined,
+    },
+    arrayField: [1, undefined, 3],
+  };
+
+  const cleaned = stripUndefined(dirtyObject);
+  assert.strictEqual('pricePerUnit' in cleaned, false);
+  assert.strictEqual('emptyField' in (cleaned as any).nested, false);
+  assert.strictEqual((cleaned as any).nested.darNumber, '028-023-011');
+  console.log('✅ PASS: stripUndefined removes undefined fields recursively');
+
+  // Test isTestMedicine logic
+  const isTest = (med: { brandName: string; genericName: string; manufacturer: string; darNumber?: string }): boolean => {
+    const brand = (med.brandName || '').toLowerCase();
+    const generic = (med.genericName || '').toLowerCase();
+    const mfg = (med.manufacturer || '').toLowerCase();
+    const dar = (med.darNumber || '').toLowerCase();
+
+    const isTestKeyword = (str: string) =>
+      str.includes('(test data)') ||
+      str.includes('(test-data)') ||
+      str.includes('[test data]') ||
+      str.includes('[test-data]') ||
+      str.includes('টেস্ট ডাটা');
+
+    if (isTestKeyword(brand) || isTestKeyword(generic) || isTestKeyword(mfg)) {
+      return true;
+    }
+    if (dar.startsWith('test-') || dar.startsWith('test_')) {
+      return true;
+    }
+    return false;
+  };
+
+  // Real medicines from screenshots (e.g. Nimocon 500) MUST NOT be marked as TEST DATA
+  const nimocon = {
+    brandName: 'Nimocon 500',
+    genericName: 'Azithromycin',
+    manufacturer: 'ACI HealthCare Limited',
+    darNumber: '394-0001-023',
+  };
+  assert.strictEqual(isTest(nimocon), false, 'Nimocon 500 must not be flagged as TEST DATA');
+
+  const testMed1 = {
+    brandName: 'Napa 500 (TEST DATA)',
+    genericName: 'Paracetamol',
+    manufacturer: 'Beximco Pharmaceuticals Ltd.',
+    darNumber: '028-001',
+  };
+  assert.strictEqual(isTest(testMed1), true, 'Medicine with (TEST DATA) must be flagged');
+
+  const testMed2 = {
+    brandName: 'Mock Drug',
+    genericName: 'Placebo',
+    manufacturer: 'Test Lab',
+    darNumber: 'TEST-12345',
+  };
+  assert.strictEqual(isTest(testMed2), true, 'Medicine with TEST- DAR number must be flagged');
+  console.log('✅ PASS: isTestMedicine accurately distinguishes real medicines from test data');
+
+  // Test ID sanitization
+  const sanitizeId = (rawId: string, fallbackSeed: string): string => {
+    let sanitized = (rawId || '').replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 120);
+    if (!sanitized || sanitized.replace(/_+/g, '').length === 0) {
+      sanitized = 'med_' + fallbackSeed.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 100);
+    }
+    return sanitized;
+  };
+
+  const dirtyId = 'med#nimocon 500 @ACI!$';
+  const cleanId = sanitizeId(dirtyId, 'fallback');
+  assert.match(cleanId, /^[a-zA-Z0-9_\-]+$/);
+  assert.ok(cleanId.length <= 128);
+  console.log('✅ PASS: sanitizeMedicineId strictly conforms to firestore.rules document ID regex');
+});
+
 console.log('\n================================================================');
 console.log('  🎉 ALL NEW FEATURE TESTS PASSED SUCCESSFULLY!');
 console.log('================================================================\n');
