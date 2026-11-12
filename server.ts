@@ -12,8 +12,8 @@ import {
   formatSafeAiErrorLog,
   UNAUTH_ERROR_MSG,
   FORBIDDEN_ADMIN_MSG,
-  VerifiedFirebaseUser,
-} from './server/aiSecurity';
+  type VerifiedFirebaseUser,
+} from './server/aiSecurity.ts';
 
 dotenv.config();
 
