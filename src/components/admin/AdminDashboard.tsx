@@ -177,14 +177,14 @@ export const AdminDashboard: React.FC = () => {
               অ্যাডমিন অনুমোদন আবশ্যক
             </h2>
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              স্বাস্থ্যবন্ধু অ্যাপের ওভারভিউ ড্যাশবোর্ড ও গ্লোবাল সিস্টেম ব্যবস্থাপনা শুধুমাত্র প্রধান স্বাস্থ্য তথ্য প্রশাসক (<strong className="text-teal-700 dark:text-teal-400 font-semibold">{adminEmail}</strong>) এর জন্য সংরক্ষিত।
+              স্বাস্থ্যবন্ধু অ্যাপের অ্যাডমিন প্যানেল ও গ্লোবাল ব্যবস্থাপনা শুধুমাত্র অনুমোদিত অ্যাডমিনের জন্য সংরক্ষিত।
             </p>
           </div>
 
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
             {currentUser ? (
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                বর্তমান অ্যাকাউন্ট: <span className="font-semibold text-slate-800 dark:text-slate-200">{currentUser.email}</span> (অননুমোদিত)
+                বর্তমান অ্যাকাউন্টে অ্যাডমিন অনুমতি নেই।
               </div>
             ) : (
               <button

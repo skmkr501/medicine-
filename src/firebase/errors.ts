@@ -64,7 +64,7 @@ export function getFriendlyErrorMessage(error: unknown): string {
     msg.includes('PERMISSION_DENIED') ||
     msg.includes('Missing or insufficient permissions')
   ) {
-    return 'নিরাপত্তা অনুমতি নেই (Permission Denied): আপনার এই তথ্য দেখা বা পরিবর্তন করার অনুমতি নেই। শুধুমাত্র অনুমোদিত অ্যাডমিন এই ক্রিয়া সম্পাদন করতে পারেন।';
+    return 'অনুমতি নেই: আপনার এই তথ্য দেখা বা পরিবর্তন করার অনুমতি নেই।';
   }
 
   if (
@@ -72,7 +72,7 @@ export function getFriendlyErrorMessage(error: unknown): string {
     msg.includes('UNAUTHENTICATED') ||
     msg.includes('auth/user-not-found')
   ) {
-    return 'প্রমাণীকরণ আবশ্যক (Unauthenticated): অনুগ্রহ করে প্রথমে সাইন-ইন করুন।';
+    return 'লগইন আবশ্যক: অনুগ্রহ করে প্রথমে আপনার অ্যাকাউন্টে লগইন করুন।';
   }
 
   if (
@@ -81,7 +81,7 @@ export function getFriendlyErrorMessage(error: unknown): string {
     msg.includes('failed-precondition') ||
     msg.includes('client is offline')
   ) {
-    return 'নেটওয়ার্ক বা ফায়ারবেস সংযোগ সমস্যা। অনুগ্রহ করে ইন্টারনেট সংযোগ পরীক্ষা করুন।';
+    return 'নেটওয়ার্ক বা ক্লাউড সংযোগ সমস্যা। অনুগ্রহ করে ইন্টারনেট সংযোগ পরীক্ষা করুন।';
   }
 
   return msg;

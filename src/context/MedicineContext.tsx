@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import {
   Medicine,
   PatientProfile,
@@ -16,6 +16,7 @@ import {
   DoctorAppointment,
 } from '../types';
 import {
+  initialPatients,
   initialMedicines,
   initialDoseLogs,
   initialSettings,
@@ -69,9 +70,24 @@ import {
   recordAdminActivity,
   verifyCloudGlobalMedicinesCount,
   getCloudMedicineCounts,
+  checkUserHasCloudData,
+  clearUserCloudData,
+  cleanupDemoRecordsFromCloud,
 } from '../firebase/services';
 import { handleFirestoreError, OperationType, getFriendlyErrorMessage } from '../firebase/errors';
 import { isTestMedicine, sanitizeMedicineId, generateDuplicateKey } from '../utils/medicineImportParser';
+import {
+  DEMO_CLEANUP_FLAG,
+  isDemoRecordId,
+  filterOutDemoRecords,
+  stripDemoEmergencyContact,
+  cleanDemoDataSnapshot,
+} from '../utils/demoCleanup';
+import {
+  evaluateGlobalCatalogSnapshot,
+  formatLibrarySyncTime,
+  PublishedBaselineState,
+} from '../utils/libraryRealtime';
 
 
 interface ToastState {
@@ -112,7 +128,6 @@ interface MedicineContextType {
   deletePatient: (id: string) => void;
   archivePatient: (id: string) => void;
   unarchivePatient: (id: string) => void;
-  seedFictionalFamilyProfiles: () => void;
   isProfileModalOpen: boolean;
   editingPatient: PatientProfile | null;
   openCreateProfileModal: () => void;
@@ -139,11 +154,31 @@ interface MedicineContextType {
   isAuthLoading: boolean;
   isCloudConnected: boolean;
   isSyncing: boolean;
+  syncStatus: 'synced' | 'syncing' | 'failed' | 'offline';
+  lastSyncedAt: string | null;
+  triggerManualSync: () => Promise<void>;
+  downloadLocalBackup: () => void;
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
   signOutUser: () => Promise<void>;
   syncLocalToCloud: () => Promise<void>;
+
+  // Data Conflict Resolution (লগইনে ফোনের আগের ডেটা vs ক্লাউড ডেটা)
+  isDataConflictModalOpen: boolean;
+  conflictInfo: {
+    localMedicinesCount: number;
+    localPatientsCount: number;
+    cloudMedicinesCount: number;
+    cloudPatientsCount: number;
+  } | null;
+  resolveDataConflict: (action: 'merge' | 'discard') => Promise<void>;
+
+  // 2-Step Reset Confirmation Modal
+  isResetConfirmationModalOpen: boolean;
+  openResetConfirmationModal: () => void;
+  closeResetConfirmationModal: () => void;
+  confirmResetAllData: (deleteFromCloud: boolean) => Promise<void>;
 
   // Global Medicine Catalog & Admin Import
   globalMedicines: GlobalMedicine[];
@@ -151,6 +186,10 @@ interface MedicineContextType {
   isAdmin: boolean;
   adminEmail: string;
   lastSyncTime: string;
+  isOnline: boolean;
+  isGlobalFromCache: boolean;
+  latestLibraryNotice: { count: number; message: string; timestamp: number } | null;
+  dismissLibraryNotice: () => void;
   cloudStats: { total: number; published: number; draft: number };
   refreshCloudCounts: () => Promise<void>;
   selectedGlobalMedForDetail: GlobalMedicine | null;
@@ -208,17 +247,21 @@ const STORAGE_KEYS = {
   SETTINGS: 'shasthobondhu_settings_v2',
   ACTIVE_PATIENT: 'shasthobondhu_active_patient_v2',
   GLOBAL_MEDS: 'shasthobondhu_global_meds_v2',
+  GLOBAL_LAST_SYNC: 'shasthobondhu_global_last_sync_v1',
   IMPORT_BATCHES: 'shasthobondhu_import_batches_v2',
   HEALTH_RECORDS: 'shasthobondhu_health_records_v2',
   APPOINTMENTS: 'shasthobondhu_appointments_v2',
 };
 
 export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Existing medicines preserved (Requirement 10)
+  const needsDemoCleanupOnBoot =
+    typeof window !== 'undefined' && localStorage.getItem(DEMO_CLEANUP_FLAG) !== 'true';
+
   const [medicines, setMedicines] = useState<Medicine[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.MEDICINES);
-      return saved ? JSON.parse(saved) : initialMedicines;
+      const parsed: Medicine[] = saved ? JSON.parse(saved) : initialMedicines;
+      return needsDemoCleanupOnBoot ? filterOutDemoRecords(parsed, 'medicines') : parsed;
     } catch {
       return initialMedicines;
     }
@@ -227,26 +270,30 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [doseLogs, setDoseLogs] = useState<DoseLog[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.LOGS);
-      return saved ? JSON.parse(saved) : initialDoseLogs;
+      const parsed: DoseLog[] = saved ? JSON.parse(saved) : initialDoseLogs;
+      return needsDemoCleanupOnBoot ? filterOutDemoRecords(parsed, 'doseLogs') : parsed;
     } catch {
       return initialDoseLogs;
     }
   });
 
-  // Zero default patient profiles for new users (Requirements 2, 3, 9)
+  // Zero default patient profiles for new users
   const [patients, setPatients] = useState<PatientProfile[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.PATIENTS);
-      return saved ? JSON.parse(saved) : []; // Starts with zero profiles!
+      const parsed: PatientProfile[] = saved ? JSON.parse(saved) : initialPatients;
+      return needsDemoCleanupOnBoot ? filterOutDemoRecords(parsed, 'patients') : parsed;
     } catch {
-      return [];
+      return initialPatients;
     }
   });
 
   const [activePatientId, setActivePatientId] = useState<string | null>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ACTIVE_PATIENT);
-      return saved || null;
+      if (!saved) return null;
+      if (needsDemoCleanupOnBoot && isDemoRecordId(saved, 'patients')) return null;
+      return saved;
     } catch {
       return null;
     }
@@ -255,7 +302,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [settings, setSettings] = useState<ReminderSettings>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-      return saved ? JSON.parse(saved) : initialSettings;
+      const parsed: ReminderSettings = saved ? JSON.parse(saved) : initialSettings;
+      return needsDemoCleanupOnBoot ? stripDemoEmergencyContact(parsed) : parsed;
     } catch {
       return initialSettings;
     }
@@ -278,7 +326,24 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   });
 
-  const [lastSyncTime, setLastSyncTime] = useState<string>('');
+  const [lastSyncTime, setLastSyncTime] = useState<string>(() => {
+    try {
+      return (typeof window !== 'undefined' && localStorage.getItem(STORAGE_KEYS.GLOBAL_LAST_SYNC)) || '';
+    } catch {
+      return '';
+    }
+  });
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [isGlobalFromCache, setIsGlobalFromCache] = useState<boolean>(false);
+  const [latestLibraryNotice, setLatestLibraryNotice] = useState<{
+    count: number;
+    message: string;
+    timestamp: number;
+  } | null>(null);
+  const dismissLibraryNotice = () => setLatestLibraryNotice(null);
+
   const [cloudStats, setCloudStats] = useState<{ total: number; published: number; draft: number }>({
     total: 0,
     published: 0,
@@ -298,7 +363,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [healthRecords, setHealthRecords] = useState<HealthRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.HEALTH_RECORDS);
-      return saved ? JSON.parse(saved) : initialHealthRecords;
+      const parsed: HealthRecord[] = saved ? JSON.parse(saved) : initialHealthRecords;
+      return needsDemoCleanupOnBoot ? filterOutDemoRecords(parsed, 'healthRecords') : parsed;
     } catch {
       return initialHealthRecords;
     }
@@ -307,7 +373,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [appointments, setAppointments] = useState<DoctorAppointment[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.APPOINTMENTS);
-      return saved ? JSON.parse(saved) : initialAppointments;
+      const parsed: DoctorAppointment[] = saved ? JSON.parse(saved) : initialAppointments;
+      return needsDemoCleanupOnBoot ? filterOutDemoRecords(parsed, 'appointments') : parsed;
     } catch {
       return initialAppointments;
     }
@@ -338,9 +405,40 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Firebase Auth & Cloud state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [isCloudConnected, setIsCloudConnected] = useState(false);
+  const [isCloudConnected, setIsCloudConnected] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : false
+  );
   const [isSyncing, setIsSyncing] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'failed' | 'offline'>(
+    typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'synced'
+  );
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+
+  // Migration Gate & Conflict Resolution State
+  // Ensures listeners attach ONLY AFTER one-time demo cleanup & migration/conflict resolution completes (Req গ)
+  const [demoCleanupReadyKey, setDemoCleanupReadyKey] = useState<string | null>(null);
+  const [migrationReadyUid, setMigrationReadyUid] = useState<string | null>(null);
+  const [pendingConflictSnapshot, setPendingConflictSnapshot] = useState<{
+    medicines: Medicine[];
+    patients: PatientProfile[];
+    doseLogs: DoseLog[];
+    settings: ReminderSettings;
+    healthRecords: HealthRecord[];
+    appointments: DoctorAppointment[];
+  } | null>(null);
+  const [isDataConflictModalOpen, setIsDataConflictModalOpen] = useState(false);
+  const [conflictInfo, setConflictInfo] = useState<{
+    localMedicinesCount: number;
+    localPatientsCount: number;
+    cloudMedicinesCount: number;
+    cloudPatientsCount: number;
+  } | null>(null);
+
+  // 2-Step Reset Confirmation Modal state
+  const [isResetConfirmationModalOpen, setIsResetConfirmationModalOpen] = useState(false);
+  const openResetConfirmationModal = () => setIsResetConfirmationModalOpen(true);
+  const closeResetConfirmationModal = () => setIsResetConfirmationModalOpen(false);
 
   const isAdmin = isUserAdmin(currentUser?.email);
 
@@ -406,15 +504,17 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [settings.themeMode]);
 
-  // Apply Elderly Large Font Mode to root document
+  // Apply Elderly Large Font Mode & Easy Mode to root document
   useEffect(() => {
     const root = document.documentElement;
-    if (settings.largeFontMode) {
+    if (settings.easyMode) {
+      root.style.fontSize = '20px';
+    } else if (settings.largeFontMode) {
       root.style.fontSize = '18px';
     } else {
       root.style.fontSize = '';
     }
-  }, [settings.largeFontMode]);
+  }, [settings.easyMode, settings.largeFontMode]);
 
   // Debounced auto-sync to native Android APK bridge (Requirement 3: 500ms debounce)
   useEffect(() => {
@@ -471,10 +571,30 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [appointments]);
 
+  const globalCatalogBaselineRef = useRef<PublishedBaselineState>({
+    hasInitialServerLoad: false,
+    prevPublishedCount: null,
+    skipNextListenerBaseline: false,
+  });
+  const prevIsAdminForGlobalRef = useRef<boolean>(isAdmin);
+  const hasGlobalCatalogRef = useRef<boolean>(globalMedicines.length > 0);
+  hasGlobalCatalogRef.current = globalMedicines.length > 0;
+  const showToastRef = useRef<((message: string, type?: 'success' | 'info' | 'alert') => void) | null>(null);
+
   // Real-time Firestore Listener for Global Medicine Catalog
   // Non-admins listen to published medicines via single-field query (no composite index needed)
   // Admins listen to all catalog records (including drafts and unverified)
   useEffect(() => {
+    if (prevIsAdminForGlobalRef.current !== isAdmin) {
+      prevIsAdminForGlobalRef.current = isAdmin;
+      if (globalCatalogBaselineRef.current.hasInitialServerLoad) {
+        globalCatalogBaselineRef.current = {
+          ...globalCatalogBaselineRef.current,
+          skipNextListenerBaseline: true,
+        };
+      }
+    }
+
     const targetQuery = isAdmin
       ? collection(db, 'global_medicines')
       : query(
@@ -484,21 +604,47 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     const unsubGlobal = onSnapshot(
       targetQuery,
+      { includeMetadataChanges: true },
       (snapshot) => {
         const cloudList: GlobalMedicine[] = [];
         snapshot.forEach((docSnap) => {
           cloudList.push(docSnap.data() as GlobalMedicine);
         });
-        // Single source of truth: replace local catalog directly with cloud results (Requirement 5)
+
+        setIsGlobalFromCache(snapshot.metadata.fromCache);
+
+        const evaluation = evaluateGlobalCatalogSnapshot({
+          medicines: cloudList,
+          fromCache: snapshot.metadata.fromCache,
+          empty: snapshot.empty,
+          hasExistingCatalog: hasGlobalCatalogRef.current,
+          state: globalCatalogBaselineRef.current,
+        });
+
+        globalCatalogBaselineRef.current = evaluation.nextState;
+
+        if (!evaluation.shouldApplyList) {
+          return;
+        }
+
+        // Single source of truth: replace local catalog directly with cloud/cached results
         setGlobalMedicines(cloudList);
         try {
           localStorage.setItem(STORAGE_KEYS.GLOBAL_MEDS, JSON.stringify(cloudList));
         } catch (e) {
           console.warn('Storage sync error', e);
         }
-        const now = new Date();
-        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-        setLastSyncTime(timeStr);
+
+        if (evaluation.shouldUpdateSyncTime && !isDeviceOffline()) {
+          const timeStr = formatLibrarySyncTime();
+          setLastSyncTime(timeStr);
+          try {
+            localStorage.setItem(STORAGE_KEYS.GLOBAL_LAST_SYNC, timeStr);
+          } catch (e) {
+            console.warn('Sync time storage error', e);
+          }
+          setIsCloudConnected(true);
+        }
 
         let published = 0;
         let draft = 0;
@@ -514,8 +660,21 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           published,
           draft,
         });
+
+        if (evaluation.newlyAddedPublishedCount > 0) {
+          const noticeMessage = `লাইব্রেরিতে ${evaluation.newlyAddedPublishedCount} টি নতুন ওষুধ যোগ হয়েছে`;
+          showToastRef.current?.(noticeMessage, 'success');
+          setLatestLibraryNotice({
+            count: evaluation.newlyAddedPublishedCount,
+            message: noticeMessage,
+            timestamp: Date.now(),
+          });
+        }
       },
       (error) => {
+        if (isDeviceOffline()) {
+          setIsGlobalFromCache(true);
+        }
         console.warn('Global medicines snapshot notice:', error.message);
       }
     );
@@ -527,9 +686,15 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       const counts = await getCloudMedicineCounts();
       setCloudStats(counts);
-      const now = new Date();
-      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-      setLastSyncTime(timeStr);
+      if (!isDeviceOffline()) {
+        const timeStr = formatLibrarySyncTime();
+        setLastSyncTime(timeStr);
+        try {
+          localStorage.setItem(STORAGE_KEYS.GLOBAL_LAST_SYNC, timeStr);
+        } catch (e) {
+          console.warn('Sync time storage error', e);
+        }
+      }
     } catch (e) {
       console.warn('refreshCloudCounts error:', e);
     }
@@ -559,12 +724,34 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [isAdmin]);
 
 
-  // Test Firestore connectivity on boot
+  const isDeviceOffline = (): boolean => typeof navigator !== 'undefined' && !navigator.onLine;
+
+  // Test Firestore connectivity on boot & track browser online/offline transitions
   useEffect(() => {
     testFirestoreConnection().then((connected) => {
       setIsCloudConnected(connected);
     });
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOnline = () => {
+      setIsOnline(true);
+      setIsCloudConnected(true);
+      setSyncStatus(currentUser ? 'syncing' : 'synced');
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setIsCloudConnected(false);
+      setSyncStatus('offline');
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [currentUser]);
 
   // Firebase Auth State Listener (Requirement 1 & 11)
   useEffect(() => {
@@ -573,73 +760,354 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setIsAuthLoading(false);
       if (user) {
         showToast(`স্বাগতম, ${user.displayName || user.email?.split('@')[0] || 'ব্যবহারকারী'}!`, 'success');
+      } else {
+        setDemoCleanupReadyKey(null);
+        setMigrationReadyUid(null);
+        setPendingConflictSnapshot(null);
+        setIsDataConflictModalOpen(false);
+        setConflictInfo(null);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Real-time Firestore Listeners for authenticated user
+  const updateLiveSyncTime = (hasPendingWrites: boolean) => {
+    if (isDeviceOffline()) {
+      setSyncStatus('offline');
+    } else {
+      setSyncStatus(hasPendingWrites ? 'syncing' : 'synced');
+    }
+    if (!hasPendingWrites && !isDeviceOffline()) {
+      const now = new Date();
+      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+      setLastSyncedAt(timeStr);
+    }
+  };
+
+  // One-time demo/fictional data cleanup for both local storage and logged-in user's own Firestore subcollections
   useEffect(() => {
-    if (!currentUser) return;
+    if (isAuthLoading) return;
+
+    const uid = currentUser?.uid || null;
+    const sessionKey = uid || 'guest';
+    let cancelled = false;
+
+    const runOneTimeDemoCleanup = async () => {
+      const localCleaned =
+        typeof window !== 'undefined' && localStorage.getItem(DEMO_CLEANUP_FLAG) === 'true';
+      const cloudCleanupKey = uid ? `shasthobondhu_demo_cloud_cleaned_${uid}` : null;
+      const cloudCleaned = cloudCleanupKey
+        ? typeof window !== 'undefined' && localStorage.getItem(cloudCleanupKey) === 'true'
+        : true;
+
+      if (!localCleaned) {
+        const cleaned = cleanDemoDataSnapshot({
+          patients,
+          medicines,
+          doseLogs,
+          healthRecords,
+          appointments,
+          settings,
+        });
+
+        if (cleaned.removedCount > 0) {
+          setPatients(cleaned.patients);
+          setMedicines(cleaned.medicines);
+          setDoseLogs(cleaned.doseLogs);
+          setHealthRecords(cleaned.healthRecords);
+          setAppointments(cleaned.appointments);
+        }
+        if (cleaned.settings !== settings) {
+          setSettings(cleaned.settings);
+        }
+        if (activePatientId && isDemoRecordId(activePatientId, 'patients')) {
+          setActivePatientId(null);
+        }
+
+        try {
+          localStorage.setItem(STORAGE_KEYS.PATIENTS, JSON.stringify(cleaned.patients));
+          localStorage.setItem(STORAGE_KEYS.MEDICINES, JSON.stringify(cleaned.medicines));
+          localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(cleaned.doseLogs));
+          localStorage.setItem(STORAGE_KEYS.HEALTH_RECORDS, JSON.stringify(cleaned.healthRecords));
+          localStorage.setItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(cleaned.appointments));
+          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(cleaned.settings));
+          if (activePatientId && isDemoRecordId(activePatientId, 'patients')) {
+            localStorage.removeItem(STORAGE_KEYS.ACTIVE_PATIENT);
+          }
+        } catch (e) {
+          console.warn('Local demo cleanup storage write error:', e);
+        }
+      }
+
+      let cloudSuccess = true;
+      if (uid && (!localCleaned || !cloudCleaned)) {
+        const res = await cleanupDemoRecordsFromCloud(uid);
+        cloudSuccess = res.completed;
+        if (cloudSuccess && cloudCleanupKey) {
+          try {
+            localStorage.setItem(cloudCleanupKey, 'true');
+          } catch (e) {
+            console.warn('Cloud demo cleanup flag write error:', e);
+          }
+        }
+      }
+
+      if (!localCleaned && (!uid || cloudSuccess)) {
+        try {
+          localStorage.setItem(DEMO_CLEANUP_FLAG, 'true');
+        } catch (e) {
+          console.warn('Demo cleanup flag write error:', e);
+        }
+      }
+
+      if (!cancelled) {
+        setDemoCleanupReadyKey(sessionKey);
+      }
+    };
+
+    runOneTimeDemoCleanup();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthLoading, currentUser]);
+
+  // One-time local data migration check on login (Requirements গ & ছ)
+  // Runs ONLY AFTER demo cleanup AND BEFORE starting onSnapshot listeners so pre-login phone data is never silently wiped
+  useEffect(() => {
+    if (!currentUser || demoCleanupReadyKey !== currentUser.uid) return;
+
+    const uid = currentUser.uid;
+    const migrationKey = `shasthobondhu_migrated_${uid}`;
+    if (typeof window !== 'undefined' && localStorage.getItem(migrationKey) === 'true') {
+      setMigrationReadyUid(uid);
+      return;
+    }
+
+    let cancelled = false;
+
+    const checkMigrationOnLogin = async () => {
+      const cleanSnapshot = cleanDemoDataSnapshot({
+        medicines,
+        patients,
+        doseLogs,
+        settings,
+        healthRecords,
+        appointments,
+      });
+
+      const localSnapshot = {
+        medicines: cleanSnapshot.medicines,
+        patients: cleanSnapshot.patients,
+        doseLogs: cleanSnapshot.doseLogs,
+        settings: cleanSnapshot.settings,
+        healthRecords: cleanSnapshot.healthRecords,
+        appointments: cleanSnapshot.appointments,
+      };
+
+      const hasUserCreatedLocalData =
+        localSnapshot.patients.length > 0 ||
+        localSnapshot.medicines.length > 0 ||
+        localSnapshot.doseLogs.length > 0 ||
+        localSnapshot.healthRecords.length > 0 ||
+        localSnapshot.appointments.length > 0;
+
+      if (!hasUserCreatedLocalData) {
+        try {
+          localStorage.setItem(migrationKey, 'true');
+        } catch (e) {
+          console.warn('Migration flag write error:', e);
+        }
+        if (!cancelled) setMigrationReadyUid(uid);
+        return;
+      }
+
+      try {
+        setIsSyncing(true);
+        setSyncStatus(isDeviceOffline() ? 'offline' : 'syncing');
+        const cloudData = await checkUserHasCloudData(uid);
+        if (cancelled) return;
+
+        if (cloudData.hasData) {
+          // Cloud already has data and phone has user-created local data: prompt user before starting listeners
+          setPendingConflictSnapshot(localSnapshot);
+          setConflictInfo({
+            localMedicinesCount: localSnapshot.medicines.length,
+            localPatientsCount: localSnapshot.patients.length,
+            cloudMedicinesCount: cloudData.medicinesCount,
+            cloudPatientsCount: cloudData.patientsCount,
+          });
+          setIsDataConflictModalOpen(true);
+        } else {
+          // Cloud is completely empty: upload local phone data once, THEN allow listeners
+          const res = await migrateLocalDataToCloud(
+            uid,
+            localSnapshot.medicines,
+            localSnapshot.patients,
+            localSnapshot.doseLogs,
+            localSnapshot.settings,
+            localSnapshot.healthRecords,
+            localSnapshot.appointments
+          );
+          if (cancelled) return;
+          try {
+            localStorage.setItem(migrationKey, 'true');
+          } catch (e) {
+            console.warn('Migration flag write error:', e);
+          }
+          updateLiveSyncTime(false);
+          setMigrationReadyUid(uid);
+          showToast(
+            `ফোনের ডেটা ক্লাউডে সফলভাবে সংরক্ষিত হয়েছে (${res.medicinesCount}টি ওষুধ ও ${res.patientsCount}টি প্রোফাইল)`,
+            'success'
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        }
+      } finally {
+        if (!cancelled) setIsSyncing(false);
+      }
+    };
+
+    checkMigrationOnLogin();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, demoCleanupReadyKey]);
+
+  // Real-time Firestore Listeners for authenticated user (Requirement খ & গ)
+  // Attaches ONLY after migrationReadyUid === currentUser.uid.
+  // All 6 subcollections follow strict rules:
+  // 1) if (snapshot.metadata.fromCache && snapshot.empty) return; (Never wipe local state before server confirms)
+  // 2) Server-confirmed (even empty) replaces state with cloud results.
+  useEffect(() => {
+    if (!currentUser || migrationReadyUid !== currentUser.uid) return;
 
     const userId = currentUser.uid;
 
-    // Listen to medicines for this user
+    // 1. Listen to medicines
     const medPath = `users/${userId}/medicines`;
     const unsubMeds = onSnapshot(
       collection(db, 'users', userId, 'medicines'),
       (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudMeds: Medicine[] = [];
-          snapshot.forEach((doc) => {
-            cloudMeds.push(doc.data() as Medicine);
-          });
-          setMedicines(cloudMeds);
-        }
+        if (snapshot.metadata.fromCache && snapshot.empty) return;
+        const cloudMeds: Medicine[] = [];
+        snapshot.forEach((doc) => {
+          cloudMeds.push(doc.data() as Medicine);
+        });
+        setMedicines(cloudMeds);
+        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
       },
       (error) => {
+        setSyncStatus('failed');
         handleFirestoreError(error, OperationType.LIST, medPath);
       }
     );
 
-    // Listen to patients for this user (starts empty if user has 0 patients)
+    // 2. Listen to patients
     const patientPath = `users/${userId}/patients`;
     const unsubPatients = onSnapshot(
       collection(db, 'users', userId, 'patients'),
       (snapshot) => {
+        if (snapshot.metadata.fromCache && snapshot.empty) return;
         const cloudPatients: PatientProfile[] = [];
         snapshot.forEach((doc) => {
           cloudPatients.push(doc.data() as PatientProfile);
         });
         setPatients(cloudPatients);
         if (cloudPatients.length > 0) {
-          if (!activePatientId || !cloudPatients.some((p) => p.id === activePatientId)) {
-            setActivePatientId(cloudPatients[0].id);
-          }
+          setActivePatientId((prevActive) =>
+            prevActive && cloudPatients.some((p) => p.id === prevActive) ? prevActive : cloudPatients[0].id
+          );
         } else {
           setActivePatientId(null);
         }
+        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
       },
       (error) => {
+        setSyncStatus('failed');
         handleFirestoreError(error, OperationType.LIST, patientPath);
       }
     );
 
-    // Listen to doseLogs for this user
+    // 3. Listen to doseLogs
     const logPath = `users/${userId}/doseLogs`;
     const unsubLogs = onSnapshot(
       collection(db, 'users', userId, 'doseLogs'),
       (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudLogs: DoseLog[] = [];
-          snapshot.forEach((doc) => {
-            cloudLogs.push(doc.data() as DoseLog);
-          });
-          setDoseLogs(cloudLogs);
-        }
+        if (snapshot.metadata.fromCache && snapshot.empty) return;
+        const cloudLogs: DoseLog[] = [];
+        snapshot.forEach((doc) => {
+          cloudLogs.push(doc.data() as DoseLog);
+        });
+        setDoseLogs(cloudLogs);
+        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
       },
       (error) => {
+        setSyncStatus('failed');
         handleFirestoreError(error, OperationType.LIST, logPath);
+      }
+    );
+
+    // 4. Listen to healthRecords
+    const healthPath = `users/${userId}/healthRecords`;
+    const unsubHealth = onSnapshot(
+      collection(db, 'users', userId, 'healthRecords'),
+      (snapshot) => {
+        if (snapshot.metadata.fromCache && snapshot.empty) return;
+        const cloudHR: HealthRecord[] = [];
+        snapshot.forEach((doc) => {
+          cloudHR.push(doc.data() as HealthRecord);
+        });
+        setHealthRecords(cloudHR);
+        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
+      },
+      (error) => {
+        setSyncStatus('failed');
+        handleFirestoreError(error, OperationType.LIST, healthPath);
+      }
+    );
+
+    // 5. Listen to appointments
+    const aptPath = `users/${userId}/appointments`;
+    const unsubApts = onSnapshot(
+      collection(db, 'users', userId, 'appointments'),
+      (snapshot) => {
+        if (snapshot.metadata.fromCache && snapshot.empty) return;
+        const cloudApts: DoctorAppointment[] = [];
+        snapshot.forEach((doc) => {
+          cloudApts.push(doc.data() as DoctorAppointment);
+        });
+        setAppointments(cloudApts);
+        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
+      },
+      (error) => {
+        setSyncStatus('failed');
+        handleFirestoreError(error, OperationType.LIST, aptPath);
+      }
+    );
+
+    // 6. Listen to settings
+    const settingsPath = `users/${userId}/settings`;
+    const unsubSettings = onSnapshot(
+      collection(db, 'users', userId, 'settings'),
+      (snapshot) => {
+        if (snapshot.metadata.fromCache && snapshot.empty) return;
+        snapshot.forEach((doc) => {
+          if (doc.id === 'preferences') {
+            const cloudSettings = doc.data() as ReminderSettings;
+            setSettings((prev) => ({ ...prev, ...cloudSettings }));
+          }
+        });
+        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
+      },
+      (error) => {
+        setSyncStatus('failed');
+        handleFirestoreError(error, OperationType.LIST, settingsPath);
       }
     );
 
@@ -647,8 +1115,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       unsubMeds();
       unsubPatients();
       unsubLogs();
+      unsubHealth();
+      unsubApts();
+      unsubSettings();
     };
-  }, [currentUser]);
+  }, [currentUser, migrationReadyUid]);
 
   const showToast = (message: string, type: 'success' | 'info' | 'alert' = 'success') => {
     const id = Date.now().toString();
@@ -657,6 +1128,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setToast((prev) => (prev?.id === id ? null : prev));
     }, 3500);
   };
+  showToastRef.current = showToast;
 
   const openAuthModal = () => setIsAuthModalOpen(true);
   const closeAuthModal = () => setIsAuthModalOpen(false);
@@ -679,48 +1151,152 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const signOutUser = async () => {
     clearAllNativeReminders();
     await logOut();
+    setDemoCleanupReadyKey(null);
+    setMigrationReadyUid(null);
+    setPendingConflictSnapshot(null);
+    setIsDataConflictModalOpen(false);
+    setConflictInfo(null);
     setActivePatientId(null);
+    setSyncStatus(isDeviceOffline() ? 'offline' : 'synced');
     showToast('অ্যাকাউন্ট থেকে সফলভাবে লগআউট হয়েছে', 'info');
   };
 
-  const syncLocalToCloud = async () => {
-    if (!currentUser) {
-      openAuthModal();
-      return;
-    }
+  const downloadLocalBackup = () => {
+    const source = pendingConflictSnapshot || {
+      patients,
+      medicines,
+      doseLogs,
+      settings,
+      healthRecords,
+      appointments,
+    };
+    const data = {
+      ...source,
+      exportDate: new Date().toISOString(),
+      appName: 'স্বাস্থ্যবন্ধু (Shasthobondhu)',
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `shasthobondhu-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('সকল ওষুধ ও প্রোফাইল ব্যাকআপ ডাউনলোড সম্পন্ন হয়েছে', 'success');
+  };
+
+  const resolveDataConflict = async (action: 'merge' | 'discard') => {
+    if (!currentUser) return;
+    const uid = currentUser.uid;
+    const migrationKey = `shasthobondhu_migrated_${uid}`;
+    const source = pendingConflictSnapshot || {
+      medicines,
+      patients,
+      doseLogs,
+      settings,
+      healthRecords,
+      appointments,
+    };
+    setIsSyncing(true);
+    setSyncStatus(isDeviceOffline() ? 'offline' : 'syncing');
     try {
-      setIsSyncing(true);
-      const res = await migrateLocalDataToCloud(
-        currentUser.uid,
-        medicines,
-        patients,
-        doseLogs,
-        settings
-      );
-      showToast(
-        `ক্লাউড সিঙ্ক সফল! ${res.medicinesCount}টি ওষুধ ও ${res.patientsCount}টি প্রোফাইল ফায়ারবেসে সংরক্ষিত`,
-        'success'
-      );
-    } catch {
-      showToast('ক্লাউড সিঙ্ক করতে সমস্যা হয়েছে', 'alert');
+      if (action === 'merge') {
+        const res = await migrateLocalDataToCloud(
+          uid,
+          source.medicines,
+          source.patients,
+          source.doseLogs,
+          source.settings,
+          source.healthRecords,
+          source.appointments
+        );
+        localStorage.setItem(migrationKey, 'true');
+        updateLiveSyncTime(false);
+        showToast(`ফোনের আগের ডেটা ক্লাউডে সফলভাবে যোগ (Merge) হয়েছে (${res.medicinesCount}টি ওষুধ)`, 'success');
+      } else {
+        localStorage.setItem(migrationKey, 'true');
+        showToast('ফোনের স্থানীয় ডেটা বাদ দেওয়া হয়েছে, ক্লাউড থেকে লোড হচ্ছে...', 'info');
+      }
+      setPendingConflictSnapshot(null);
+      setIsDataConflictModalOpen(false);
+      setConflictInfo(null);
+      setMigrationReadyUid(uid);
+    } catch (err) {
+      setSyncStatus('failed');
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
     } finally {
       setIsSyncing(false);
     }
   };
+
+  const triggerManualSync = async () => {
+    if (!currentUser) {
+      openAuthModal();
+      return;
+    }
+    const uid = currentUser.uid;
+    try {
+      setIsSyncing(true);
+      setSyncStatus(isDeviceOffline() ? 'offline' : 'syncing');
+      const res = await migrateLocalDataToCloud(
+        uid,
+        medicines,
+        patients,
+        doseLogs,
+        settings,
+        healthRecords,
+        appointments
+      );
+      try {
+        localStorage.setItem(`shasthobondhu_migrated_${uid}`, 'true');
+      } catch (e) {
+        console.warn('Migration flag write error:', e);
+      }
+      setMigrationReadyUid(uid);
+      updateLiveSyncTime(false);
+      showToast(
+        `ক্লাউড সিঙ্ক সফল! ${res.medicinesCount}টি ওষুধ ও ${res.patientsCount}টি প্রোফাইল ক্লাউডে সংরক্ষিত`,
+        'success'
+      );
+    } catch (err) {
+      setSyncStatus('failed');
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const syncLocalToCloud = triggerManualSync;
 
   const activePatient: PatientProfile | null =
     (activePatientId ? patients.find((p) => p.id === activePatientId) : null) ||
     (patients.filter((p) => !p.isArchived).length > 0 ? patients.filter((p) => !p.isArchived)[0] : (patients.length > 0 ? patients[0] : null));
 
   const updateSettings = (newSettings: Partial<ReminderSettings>) => {
+    const prevSettings = settings;
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
     if (currentUser) {
-      saveSettingsToCloud(currentUser.uid, updated).catch((err) =>
-        console.warn('Settings cloud sync error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('সেটিংস অফলাইনে সংরক্ষিত (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+      }
+      saveSettingsToCloud(currentUser.uid, updated)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast('সেটিংস ক্লাউডে হালনাগাদ করা হয়েছে', 'success');
+          }
+        })
+        .catch((err) => {
+          setSettings(prevSettings);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast('সেটিংস সফলভাবে হালনাগাদ করা হয়েছে', 'success');
     }
-    showToast('সেটিংস সফলভাবে হালনাগাদ করা হয়েছে', 'success');
   };
 
   // Smart Medicine Stock Predictor - Computed Predictions for active patient medicines
@@ -780,6 +1356,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const prevStatus = prevLog ? prevLog.status : null;
     const unitsToUse = parseDosageUnits(schedule?.dosage);
 
+    const prevLogs = doseLogs;
+    const prevMeds = medicines;
+
     const newLog: DoseLog = {
       id: `log-${Date.now()}`,
       medicineId,
@@ -804,9 +1383,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     let updatedMed: Medicine | undefined;
+    let feedbackMsg = '';
+    let feedbackType: 'success' | 'info' = 'success';
 
     if (med) {
-      // 1. Taken: deduct scheduled units if not previously marked taken
       if (status === 'taken' && prevStatus !== 'taken') {
         const nextStock = Math.max(0, med.stock - unitsToUse);
         updatedMed = {
@@ -820,14 +1400,12 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (settings.soundEnabled) {
           playAlertTone(settings.selectedTone);
         }
-        showToast(`${med.brandName} গ্রহণ সম্পন্ন (${toBengaliNumber(unitsToUse)} ${med.unit} স্টক কমেছে)`, 'success');
-      }
-      // 2. Already taken: prevent duplicate deductions
-      else if (status === 'taken' && prevStatus === 'taken') {
-        showToast(`${med.brandName} ইতিমধ্যে গ্রহণ করা হয়েছে (স্টক অপরিবর্তিত)`, 'info');
-      }
-      // 3. Changing from taken to skipped: restore stock
-      else if (status === 'skipped' && prevStatus === 'taken') {
+        feedbackMsg = `${med.brandName} গ্রহণ সম্পন্ন (${toBengaliNumber(unitsToUse)} ${med.unit} স্টক কমেছে)`;
+        feedbackType = 'success';
+      } else if (status === 'taken' && prevStatus === 'taken') {
+        feedbackMsg = `${med.brandName} ইতিমধ্যে গ্রহণ করা হয়েছে (স্টক অপরিবর্তিত)`;
+        feedbackType = 'info';
+      } else if (status === 'skipped' && prevStatus === 'taken') {
         const nextStock = med.stock + unitsToUse;
         updatedMed = {
           ...med,
@@ -837,23 +1415,41 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setMedicines((prev) =>
           prev.map((item) => (item.id === medicineId ? (updatedMed as Medicine) : item))
         );
-        showToast(`${med.brandName} গ্রহণ বাদ দেওয়া হয়েছে (${toBengaliNumber(unitsToUse)} ${med.unit} স্টকে ফেরত যোগ হয়েছে)`, 'info');
-      }
-      // 4. Regular skipped (not previously taken): no stock deduction
-      else if (status === 'skipped') {
-        showToast(`${med.brandName} গ্রহণ বাদ দেওয়া হয়েছে (স্টক অপরিবর্তিত)`, 'info');
+        feedbackMsg = `${med.brandName} গ্রহণ বাদ দেওয়া হয়েছে (${toBengaliNumber(unitsToUse)} ${med.unit} স্টকে ফেরত যোগ হয়েছে)`;
+        feedbackType = 'info';
+      } else if (status === 'skipped') {
+        feedbackMsg = `${med.brandName} গ্রহণ বাদ দেওয়া হয়েছে (স্টক অপরিবর্তিত)`;
+        feedbackType = 'info';
       }
     }
 
     if (currentUser) {
-      saveDoseLogToCloud(currentUser.uid, newLog).catch((err) =>
-        console.warn('Cloud doseLog error', err)
-      );
-      if (updatedMed) {
-        saveMedicineToCloud(currentUser.uid, updatedMed).catch((err) =>
-          console.warn('Cloud stock error', err)
-        );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline && feedbackMsg) {
+        showToast(`${feedbackMsg} (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
       }
+
+      const writePromises: Promise<void>[] = [saveDoseLogToCloud(currentUser.uid, newLog)];
+      if (updatedMed) {
+        writePromises.push(saveMedicineToCloud(currentUser.uid, updatedMed));
+      }
+
+      Promise.all(writePromises)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline && feedbackMsg) {
+            showToast(feedbackMsg, feedbackType);
+          }
+        })
+        .catch((err) => {
+          setDoseLogs(prevLogs);
+          setMedicines(prevMeds);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else if (feedbackMsg) {
+      showToast(feedbackMsg, feedbackType);
     }
   };
 
@@ -863,50 +1459,90 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       ...medicineData,
       id: newId,
     };
+    const prevMeds = medicines;
     setMedicines((prev) => [newMedicine, ...prev]);
 
     if (currentUser) {
-      saveMedicineToCloud(currentUser.uid, newMedicine).catch((err) =>
-        console.warn('Cloud add medicine error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`"${newMedicine.brandName}" অফলাইনে সংরক্ষিত (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      saveMedicineToCloud(currentUser.uid, newMedicine)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`"${newMedicine.brandName}" ক্লাউডে সংরক্ষিত হয়েছে`, 'success');
+          }
+        })
+        .catch((err) => {
+          setMedicines(prevMeds);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`"${newMedicine.brandName}" সফলভাবে তালিকায় যুক্ত হয়েছে`, 'success');
     }
 
-    showToast(`"${newMedicine.brandName}" সফলভাবে তালিকায় যুক্ত হয়েছে`, 'success');
     return newId;
   };
 
   const updateMedicine = (id: string, updates: Partial<Medicine>) => {
-    let updatedObj: Medicine | undefined;
-    setMedicines((prev) =>
-      prev.map((m) => {
-        if (m.id === id) {
-          updatedObj = { ...m, ...updates };
-          return updatedObj;
-        }
-        return m;
-      })
-    );
+    const prevMeds = medicines;
+    const target = medicines.find((m) => m.id === id);
+    if (!target) return;
+    const updatedObj: Medicine = { ...target, ...updates };
+    setMedicines((prev) => prev.map((m) => (m.id === id ? updatedObj : m)));
 
-    if (currentUser && updatedObj) {
-      saveMedicineToCloud(currentUser.uid, updatedObj).catch((err) =>
-        console.warn('Cloud update medicine error', err)
-      );
+    if (currentUser) {
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('ওষুধের তথ্য অফলাইনে হালনাগাদ (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+      }
+      saveMedicineToCloud(currentUser.uid, updatedObj)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast('ওষুধের তথ্য ক্লাউডে হালনাগাদ হয়েছে', 'success');
+          }
+        })
+        .catch((err) => {
+          setMedicines(prevMeds);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast('ওষুধের তথ্য সফলভাবে হালনাগাদ করা হয়েছে', 'success');
     }
-
-    showToast('ওষুধের তথ্য সফলভাবে হালনাগাদ করা হয়েছে', 'success');
   };
 
   const deleteMedicine = (id: string) => {
+    const prevMeds = medicines;
     const med = medicines.find((m) => m.id === id);
     setMedicines((prev) => prev.filter((m) => m.id !== id));
 
     if (currentUser) {
-      deleteMedicineFromCloud(currentUser.uid, id).catch((err) =>
-        console.warn('Cloud delete medicine error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`"${med?.brandName || 'ওষুধ'}" অফলাইনে সরানো হয়েছে (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      deleteMedicineFromCloud(currentUser.uid, id)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`"${med?.brandName || 'ওষুধ'}" ক্লাউড থেকে সরানো হয়েছে`, 'info');
+          }
+        })
+        .catch((err) => {
+          setMedicines(prevMeds);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`"${med?.brandName || 'ওষুধ'}" সরানো হয়েছে`, 'info');
     }
-
-    showToast(`"${med?.brandName || 'ওষুধ'}" সরানো হয়েছে`, 'info');
   };
 
   /**
@@ -921,6 +1557,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const med = medicines.find((m) => m.id === medicineId);
     if (!med) return false;
 
+    const prevMeds = medicines;
     const previousStock = med.stock;
     const sanitizedStock = Math.max(0, Number(newStock) || 0);
 
@@ -945,12 +1582,27 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
 
     if (currentUser) {
-      saveMedicineToCloud(currentUser.uid, updatedMed).catch((err) =>
-        console.warn('Cloud stock adjustment error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`"${med.brandName}" স্টক অফলাইনে হালনাগাদ (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      saveMedicineToCloud(currentUser.uid, updatedMed)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`"${med.brandName}" এর স্টক ${toBengaliNumber(sanitizedStock)} ${med.unit} এ ক্লাউডে হালনাগাদ করা হয়েছে`, 'success');
+          }
+        })
+        .catch((err) => {
+          setMedicines(prevMeds);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`"${med.brandName}" এর স্টক ${toBengaliNumber(sanitizedStock)} ${med.unit} এ হালনাগাদ করা হয়েছে`, 'success');
     }
 
-    showToast(`"${med.brandName}" এর স্টক ${toBengaliNumber(sanitizedStock)} ${med.unit} এ হালনাগাদ করা হয়েছে`, 'success');
     return true;
   };
 
@@ -966,28 +1618,42 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const assignMedicineToPatient = (medicineId: string, patientId?: string) => {
-    let updatedMed: Medicine | undefined;
-    setMedicines((prev) =>
-      prev.map((m) => {
-        if (m.id === medicineId) {
-          updatedMed = { ...m, assignedPatientId: patientId || undefined };
-          return updatedMed;
-        }
-        return m;
-      })
-    );
-
-    if (currentUser && updatedMed) {
-      saveMedicineToCloud(currentUser.uid, updatedMed).catch((err) =>
-        console.warn('Cloud assign medicine error', err)
-      );
-    }
+    const prevMeds = medicines;
+    const target = medicines.find((m) => m.id === medicineId);
+    if (!target) return;
+    const updatedMed: Medicine = { ...target, assignedPatientId: patientId || undefined };
+    setMedicines((prev) => prev.map((m) => (m.id === medicineId ? updatedMed : m)));
 
     const patient = patients.find((p) => p.id === patientId);
-    if (patient) {
-      showToast(`ওষুধটি "${patient.name}" এর প্রোফাইলে বরাদ্দ করা হয়েছে`, 'success');
+
+    if (currentUser) {
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('বরাদ্দ অফলাইনে সংরক্ষিত (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+      }
+      saveMedicineToCloud(currentUser.uid, updatedMed)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            if (patient) {
+              showToast(`ওষুধটি "${patient.name}" এর প্রোফাইলে ক্লাউডে বরাদ্দ করা হয়েছে`, 'success');
+            } else {
+              showToast('ওষুধটি সাধারণ তালিকায় ক্লাউডে রাখা হয়েছে', 'info');
+            }
+          }
+        })
+        .catch((err) => {
+          setMedicines(prevMeds);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
     } else {
-      showToast('ওষুধটি যেকোনো রোগীর সাধারণ তালিকায় রাখা হয়েছে', 'info');
+      if (patient) {
+        showToast(`ওষুধটি "${patient.name}" এর প্রোফাইলে বরাদ্দ করা হয়েছে`, 'success');
+      } else {
+        showToast('ওষুধটি যেকোনো রোগীর সাধারণ তালিকায় রাখা হয়েছে', 'info');
+      }
     }
   };
 
@@ -995,376 +1661,232 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const addPatient = (patientData: Omit<PatientProfile, 'id'>) => {
     const newId = `patient-${Date.now()}`;
     const newPatient: PatientProfile = { ...patientData, id: newId };
+    const prevPatients = patients;
+    const prevActive = activePatientId;
     setPatients((prev) => [...prev, newPatient]);
     setActivePatientId(newId);
 
     if (currentUser) {
-      savePatientToCloud(currentUser.uid, newPatient).catch((err) =>
-        console.warn('Cloud patient add error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`"${newPatient.name}" প্রোফাইল অফলাইনে সংরক্ষিত (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      savePatientToCloud(currentUser.uid, newPatient)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`"${newPatient.name}" এর প্রোফাইল ক্লাউডে সংরক্ষিত হয়েছে`, 'success');
+          }
+        })
+        .catch((err) => {
+          setPatients(prevPatients);
+          setActivePatientId(prevActive);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`"${newPatient.name}" এর প্রোফাইল সফলভাবে তৈরি হয়েছে`, 'success');
     }
-
-    showToast(`"${newPatient.name}" এর প্রোফাইল সফলভাবে তৈরি হয়েছে`, 'success');
   };
 
   const updatePatient = (id: string, updates: Partial<PatientProfile>) => {
-    let targetPatient: PatientProfile | undefined;
-    setPatients((prev) =>
-      prev.map((p) => {
-        if (p.id === id) {
-          targetPatient = { ...p, ...updates };
-          return targetPatient;
-        }
-        return p;
-      })
-    );
+    const prevPatients = patients;
+    const target = patients.find((p) => p.id === id);
+    if (!target) return;
+    const targetPatient: PatientProfile = { ...target, ...updates };
+    setPatients((prev) => prev.map((p) => (p.id === id ? targetPatient : p)));
 
-    if (currentUser && targetPatient) {
-      savePatientToCloud(currentUser.uid, targetPatient).catch((err) =>
-        console.warn('Cloud patient update error', err)
-      );
+    if (currentUser) {
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('প্রোফাইল অফলাইনে হালনাগাদ (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+      }
+      savePatientToCloud(currentUser.uid, targetPatient)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast('প্রোফাইলের তথ্য ক্লাউডে সংরক্ষিত হয়েছে', 'success');
+          }
+        })
+        .catch((err) => {
+          setPatients(prevPatients);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast('প্রোফাইলের তথ্য সংরক্ষিত হয়েছে', 'success');
     }
-
-    showToast('প্রোফাইলের তথ্য সংরক্ষিত হয়েছে', 'success');
   };
 
   const deletePatient = (id: string) => {
+    const prevPatients = patients;
+    const prevMeds = medicines;
+    const prevActive = activePatientId;
     const target = patients.find((p) => p.id === id);
     setPatients((prev) => prev.filter((p) => p.id !== id));
-    
-    // If active was deleted, point to another or null
+
     if (activePatientId === id) {
       const remaining = patients.filter((p) => p.id !== id);
       setActivePatientId(remaining.length > 0 ? remaining[0].id : null);
     }
 
-    // Preserve medicines! (Requirement 10) - unassign them instead of deleting
+    const unassignedMeds: Medicine[] = [];
     setMedicines((prev) =>
-      prev.map((m) => (m.assignedPatientId === id ? { ...m, assignedPatientId: undefined } : m))
+      prev.map((m) => {
+        if (m.assignedPatientId === id) {
+          const updated = { ...m, assignedPatientId: undefined };
+          unassignedMeds.push(updated);
+          return updated;
+        }
+        return m;
+      })
     );
 
     if (currentUser) {
-      deletePatientFromCloud(currentUser.uid, id).catch((err) =>
-        console.warn('Cloud delete patient error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`"${target?.name || 'প্রোফাইল'}" অফলাইনে মুছে ফেলা হয়েছে (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      Promise.all([
+        deletePatientFromCloud(currentUser.uid, id),
+        ...unassignedMeds.map((m) => saveMedicineToCloud(currentUser.uid, m)),
+      ])
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`"${target?.name || 'প্রোফাইল'}" ক্লাউড থেকে মুছে ফেলা হয়েছে`, 'info');
+          }
+        })
+        .catch((err) => {
+          setPatients(prevPatients);
+          setMedicines(prevMeds);
+          setActivePatientId(prevActive);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`"${target?.name || 'প্রোফাইল'}" সফলভাবে মুছে ফেলা হয়েছে`, 'info');
     }
-
-    showToast(`"${target?.name || 'প্রোফাইল'}" সফলভাবে মুছে ফেলা হয়েছে`, 'info');
   };
 
   const archivePatient = (id: string) => {
     const target = patients.find((p) => p.id === id);
     if (!target) return;
+    const prevPatients = patients;
+    const prevActive = activePatientId;
     const nowIso = new Date().toISOString();
     const updated: PatientProfile = { ...target, isArchived: true, archivedAt: nowIso };
 
     setPatients((prev) => prev.map((p) => (p.id === id ? updated : p)));
 
-    // If active was archived, switch activePatientId to first non-archived patient or null
     if (activePatientId === id) {
       const remainingActive = patients.filter((p) => p.id !== id && !p.isArchived);
       setActivePatientId(remainingActive.length > 0 ? remainingActive[0].id : null);
     }
 
     if (currentUser) {
-      savePatientToCloud(currentUser.uid, updated).catch((err) =>
-        console.warn('Cloud archive patient error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`"${target.name}" অফলাইনে আর্কাইভ হয়েছে (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      savePatientToCloud(currentUser.uid, updated)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`"${target.name}" এর প্রোফাইল ক্লাউডে আর্কাইভ করা হয়েছে`, 'info');
+          }
+        })
+        .catch((err) => {
+          setPatients(prevPatients);
+          setActivePatientId(prevActive);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`"${target.name}" এর প্রোফাইল সফলভাবে আর্কাইভ করা হয়েছে (ইতিহাস ও ডেটা অক্ষত আছে)`, 'info');
     }
-
-    showToast(`"${target.name}" এর প্রোফাইল সফলভাবে আর্কাইভ করা হয়েছে (ইতিহাস ও ডেটা অক্ষত আছে)`, 'info');
   };
 
   const unarchivePatient = (id: string) => {
     const target = patients.find((p) => p.id === id);
     if (!target) return;
+    const prevPatients = patients;
+    const prevActive = activePatientId;
     const updated: PatientProfile = { ...target, isArchived: false, archivedAt: undefined };
 
     setPatients((prev) => prev.map((p) => (p.id === id ? updated : p)));
     setActivePatientId(id);
 
     if (currentUser) {
-      savePatientToCloud(currentUser.uid, updated).catch((err) =>
-        console.warn('Cloud unarchive patient error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`"${target.name}" অফলাইনে পুনরায় সক্রিয় হয়েছে (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      savePatientToCloud(currentUser.uid, updated)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`"${target.name}" এর প্রোফাইল ক্লাউডে পুনরায় সক্রিয় করা হয়েছে`, 'success');
+          }
+        })
+        .catch((err) => {
+          setPatients(prevPatients);
+          setActivePatientId(prevActive);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`"${target.name}" এর প্রোফাইল পুনরায় সক্রিয় করা হয়েছে`, 'success');
     }
-
-    showToast(`"${target.name}" এর প্রোফাইল পুনরায় সক্রিয় করা হয়েছে`, 'success');
   };
 
-  const seedFictionalFamilyProfiles = () => {
-    const fictionalPatients: PatientProfile[] = [
-      {
-        id: 'patient-fictional-father',
-        name: 'আব্দুর রহমান',
-        relation: 'বাবা',
-        age: 68,
-        gender: 'পুরুষ',
-        bloodGroup: 'O+',
-        chronicConditions: ['উচ্চ রক্তচাপ (Hypertension)', 'টাইপ-২ ডায়াবেটিস'],
-        allergies: ['সালফা ড্রাগ অ্যালার্জি'],
-        emergencyContact: '+৮৮০ ১৭ ১১২২ ৩৩৪৪',
-        isArchived: false,
-      },
-      {
-        id: 'patient-fictional-mother',
-        name: 'ফাতেমা বেগম',
-        relation: 'মা',
-        age: 62,
-        gender: 'মহিলা',
-        bloodGroup: 'B+',
-        chronicConditions: ['অস্টিওআর্থ্রাইটিস', 'ক্রনিক গ্যাস্ট্রাইটিস'],
-        allergies: ['পেনিসিলিন'],
-        emergencyContact: '+৮৮০ ১৮ ২২৩৩ ৪৪৫৫',
-        isArchived: false,
-      },
-      {
-        id: 'patient-fictional-child',
-        name: 'রায়ান আহমেদ',
-        relation: 'ছেলে',
-        age: 8,
-        gender: 'পুরুষ',
-        bloodGroup: 'A+',
-        chronicConditions: ['সিজনাল অ্যালার্জি ও ডাস্ট কোল্ড'],
-        allergies: ['কোনো ড্রাগ অ্যালার্জি নেই'],
-        emergencyContact: '+৮৮০ ১৯ ৩৩৪৪ ৫৫৬৬',
-        isArchived: false,
-      },
-    ];
-
-    const fictionalMedicines: Medicine[] = [
-      // আব্দুর রহমান (বাবা) medicines
-      {
-        id: 'med-fic-father-1',
-        brandName: 'টেলমিভাস ৪০ (Telmivas 40)',
-        genericName: 'Telmisartan 40mg (Square Pharmaceuticals)',
-        type: 'ট্যাবলেট',
-        strength: '40 mg',
-        mealTiming: 'খাওয়ার পরে',
-        schedules: [
-          { id: 'sch-fic-f1', timeSlot: 'সকাল', time: '08:30 AM', dosage: '১টি' },
-        ],
-        stock: 30,
-        minStockAlert: 7,
-        unit: 'টি',
-        startDate: '2026-10-01',
-        isChronic: true,
-        doctorName: 'ডা. এ কে এম সামসুল হক (কার্ডিওলজিস্ট)',
-        purpose: 'উচ্চ রক্তচাপ নিয়ন্ত্রণ',
-        instructions: 'প্রতিদিন সকালের নাস্তার পর সেব্য।',
-        assignedPatientId: 'patient-fictional-father',
-        status: 'active',
-        colorTag: 'teal',
-      },
-      {
-        id: 'med-fic-father-2',
-        brandName: 'মেটফোর ৫০০ (Metfor 500)',
-        genericName: 'Metformin Hydrochloride 500mg (Beximco)',
-        type: 'ট্যাবলেট',
-        strength: '500 mg',
-        mealTiming: 'খাওয়ার পরে',
-        schedules: [
-          { id: 'sch-fic-f2', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
-          { id: 'sch-fic-f3', timeSlot: 'রাত', time: '08:00 PM', dosage: '১টি' },
-        ],
-        stock: 45,
-        minStockAlert: 10,
-        unit: 'টি',
-        startDate: '2026-09-15',
-        isChronic: true,
-        doctorName: 'ডা. ফাহমিদা সুলতানা (এন্ডোক্রাইনোলজিস্ট)',
-        purpose: 'ডায়াবেটিস ও ব্লাড সুগার নিয়ন্ত্রণ',
-        instructions: 'খাবারের ঠিক পরপরই সেবন করুন।',
-        assignedPatientId: 'patient-fictional-father',
-        status: 'active',
-        colorTag: 'blue',
-      },
-      // ফাতেমা বেগম (মা) medicines
-      {
-        id: 'med-fic-mother-1',
-        brandName: 'সেক্লো ২০ (Seclo 20)',
-        genericName: 'Omeprazole 20mg (Square Pharmaceuticals)',
-        type: 'ক্যাপসুল',
-        strength: '20 mg',
-        mealTiming: 'খাওয়ার আগে',
-        schedules: [
-          { id: 'sch-fic-m1', timeSlot: 'সকাল', time: '07:30 AM', dosage: '১টি' },
-          { id: 'sch-fic-m2', timeSlot: 'রাত', time: '08:30 PM', dosage: '১টি' },
-        ],
-        stock: 24,
-        minStockAlert: 8,
-        unit: 'টি',
-        startDate: '2026-10-10',
-        isChronic: true,
-        doctorName: 'ডা. রাশেদুল হাসান (গ্যাস্ট্রো)',
-        purpose: 'গ্যাস্ট্রিক ও বুকজ্বালা উপশম',
-        instructions: 'খাবারের ৩০ মিনিট পূর্বে এক গ্লাস পানি সহ সেব্য।',
-        assignedPatientId: 'patient-fictional-mother',
-        status: 'active',
-        colorTag: 'emerald',
-      },
-      {
-        id: 'med-fic-mother-2',
-        brandName: 'ক্যালবো-ডি (Calbo-D)',
-        genericName: 'Calcium Carbonate 500mg + Vitamin D3 (Square)',
-        type: 'ট্যাবলেট',
-        strength: '500 mg + 200 IU',
-        mealTiming: 'খাওয়ার পরে',
-        schedules: [
-          { id: 'sch-fic-m3', timeSlot: 'দুপুর', time: '02:00 PM', dosage: '১টি' },
-        ],
-        stock: 28,
-        minStockAlert: 7,
-        unit: 'টি',
-        startDate: '2026-10-05',
-        isChronic: true,
-        doctorName: 'ডা. নাজমুল ইসলাম (অর্থোপেডিকস)',
-        purpose: 'হাড়ের ক্ষয়রোধ ও জয়েন্টের যত্ন',
-        instructions: 'দুপুরের ভরা পেটে সেবন করুন।',
-        assignedPatientId: 'patient-fictional-mother',
-        status: 'active',
-        colorTag: 'indigo',
-      },
-      // রায়ান আহমেদ (ছেলে) medicines
-      {
-        id: 'med-fic-child-1',
-        brandName: 'অ্যালার্ট্রল সিরাপ (Alertrol Syrup)',
-        genericName: 'Cetirizine Dihydrochloride 5mg/5ml (Acme)',
-        type: 'সিরাপ',
-        strength: '5 mg / 5 ml',
-        mealTiming: 'ঘুমানোর আগে',
-        schedules: [
-          { id: 'sch-fic-c1', timeSlot: 'রাত', time: '09:00 PM', dosage: '১ চামচ (৫ মিলি)' },
-        ],
-        stock: 100,
-        minStockAlert: 20,
-        unit: 'মিলি',
-        startDate: '2026-11-01',
-        durationDays: 7,
-        isChronic: false,
-        doctorName: 'ডা. তাহমিনা আনোয়ার (শিশু বিশেষজ্ঞ)',
-        purpose: 'সর্দি, হাঁচি ও নাক বন্ধ উপশম',
-        instructions: 'রাতে ঘুমানোর পূর্বে ৫ মিলি চামচ দিয়ে মাপুন।',
-        assignedPatientId: 'patient-fictional-child',
-        status: 'active',
-        colorTag: 'rose',
-      },
-      {
-        id: 'med-fic-child-2',
-        brandName: 'টাসপেল সিরাপ (Tuspel Syrup)',
-        genericName: 'Guaifenesin + Bromhexine (Incepta)',
-        type: 'সিরাপ',
-        strength: '100mg + 4mg / 5ml',
-        mealTiming: 'খাওয়ার পরে',
-        schedules: [
-          { id: 'sch-fic-c2', timeSlot: 'সকাল', time: '09:00 AM', dosage: '১ চামচ (৫ মিলি)' },
-          { id: 'sch-fic-c3', timeSlot: 'দুপুর', time: '02:30 PM', dosage: '১ চামচ (৫ মিলি)' },
-        ],
-        stock: 80,
-        minStockAlert: 25,
-        unit: 'মিলি',
-        startDate: '2026-11-01',
-        durationDays: 5,
-        isChronic: false,
-        doctorName: 'ডা. তাহমিনা আনোয়ার (শিশু বিশেষজ্ঞ)',
-        purpose: 'শ্লেষ্মাযুক্ত কাশি উপশম',
-        instructions: 'খাবারের পর কুসুম গরম পানি সহ সেব্য।',
-        assignedPatientId: 'patient-fictional-child',
-        status: 'active',
-        colorTag: 'amber',
-      },
-    ];
-
-    const todayStr = '2026-11-02';
-    const fictionalLogs: DoseLog[] = [
-      // Father's taken doses
-      {
-        id: 'log-fic-f1',
-        medicineId: 'med-fic-father-1',
-        medicineName: 'টেলমিভাস ৪০ (Telmivas 40)',
-        genericName: 'Telmisartan 40mg',
-        patientId: 'patient-fictional-father',
-        scheduledDate: todayStr,
-        scheduledTime: '08:30 AM',
-        timeSlot: 'সকাল',
-        dosage: '১টি',
-        status: 'taken',
-        loggedAt: '2026-11-02T08:32:00Z',
-        notes: 'প্রেসার পরিমাপের পর সকালে গৃহীত',
-      },
-      // Mother's taken dose
-      {
-        id: 'log-fic-m1',
-        medicineId: 'med-fic-mother-1',
-        medicineName: 'সেক্লো ২০ (Seclo 20)',
-        genericName: 'Omeprazole 20mg',
-        patientId: 'patient-fictional-mother',
-        scheduledDate: todayStr,
-        scheduledTime: '07:30 AM',
-        timeSlot: 'সকাল',
-        dosage: '১টি',
-        status: 'taken',
-        loggedAt: '2026-11-02T07:35:00Z',
-        notes: 'সকালে নাস্তার পূর্বে গৃহীত',
-      },
-      // Child's taken dose
-      {
-        id: 'log-fic-c1',
-        medicineId: 'med-fic-child-2',
-        medicineName: 'টাসপেল সিরাপ (Tuspel Syrup)',
-        genericName: 'Guaifenesin + Bromhexine',
-        patientId: 'patient-fictional-child',
-        scheduledDate: todayStr,
-        scheduledTime: '09:00 AM',
-        timeSlot: 'সকাল',
-        dosage: '১ চামচ (৫ মিলি)',
-        status: 'taken',
-        loggedAt: '2026-11-02T09:05:00Z',
-        notes: 'নাস্তার পর কুসুম গরম পানি দিয়ে সেবন করানো হয়েছে',
-      },
-    ];
-
-    // Merge fictional data
-    setPatients((prev) => {
-      const existingIds = new Set(prev.map((p) => p.id));
-      const filteredFictional = fictionalPatients.filter((p) => !existingIds.has(p.id));
-      return [...filteredFictional, ...prev];
-    });
-
-    setMedicines((prev) => {
-      const existingIds = new Set(prev.map((m) => m.id));
-      const filteredFictional = fictionalMedicines.filter((m) => !existingIds.has(m.id));
-      return [...filteredFictional, ...prev];
-    });
-
-    setDoseLogs((prev) => {
-      const existingIds = new Set(prev.map((l) => l.id));
-      const filteredFictional = fictionalLogs.filter((l) => !existingIds.has(l.id));
-      return [...filteredFictional, ...prev];
-    });
-
-    setActivePatientId('patient-fictional-father');
-
-    // Cloud sync if signed in
-    if (currentUser) {
-      fictionalPatients.forEach((p) => savePatientToCloud(currentUser.uid, p));
-      fictionalMedicines.forEach((m) => saveMedicineToCloud(currentUser.uid, m));
-      fictionalLogs.forEach((l) => saveDoseLogToCloud(currentUser.uid, l));
+  const confirmResetAllData = async (deleteFromCloud: boolean) => {
+    if (deleteFromCloud && currentUser) {
+      try {
+        setSyncStatus(isDeviceOffline() ? 'offline' : 'syncing');
+        await clearUserCloudData(currentUser.uid);
+        updateLiveSyncTime(false);
+      } catch (err) {
+        setSyncStatus('failed');
+        showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        return;
+      }
     }
-
-    showToast('৩টি কাল্পনিক ফ্যামিলি প্রোফাইল এবং ভিন্ন ভিন্ন ওষুধ সফলভাবে লোড হয়েছে!', 'success');
-  };
-
-  const resetAllData = () => {
     setMedicines(initialMedicines);
     setDoseLogs(initialDoseLogs);
-    setPatients([]);
+    setPatients(initialPatients);
     setActivePatientId(null);
     setSettings(initialSettings);
     setHealthRecords(initialHealthRecords);
     setAppointments(initialAppointments);
-    localStorage.clear();
-    showToast('সকল ডেটা রিসেট করা হয়েছে', 'info');
+
+    try {
+      localStorage.removeItem(STORAGE_KEYS.MEDICINES);
+      localStorage.removeItem(STORAGE_KEYS.LOGS);
+      localStorage.removeItem(STORAGE_KEYS.PATIENTS);
+      localStorage.removeItem(STORAGE_KEYS.SETTINGS);
+      localStorage.removeItem(STORAGE_KEYS.ACTIVE_PATIENT);
+      localStorage.removeItem(STORAGE_KEYS.HEALTH_RECORDS);
+      localStorage.removeItem(STORAGE_KEYS.APPOINTMENTS);
+    } catch (e) {
+      console.warn('Storage clear notice', e);
+    }
+
+    showToast(
+      deleteFromCloud && currentUser
+        ? 'আপনার ক্লাউড ও স্থানীয় সমস্ত ব্যক্তিগত ডেটা সফলভাবে মুছে নতুন করে শুরু করা হয়েছে'
+        : 'স্থানীয় সমস্ত ডেটা সফলভাবে রিসেট করা হয়েছে',
+      'info'
+    );
+  };
+
+  const resetAllData = () => {
+    openResetConfirmationModal();
   };
 
   // Health Records CRUD (ধাপ ১)
@@ -1375,25 +1897,57 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       id: newId,
       createdAt: new Date().toISOString(),
     };
+    const prevHR = healthRecords;
     setHealthRecords((prev) => [newRecord, ...prev]);
 
     if (currentUser) {
-      saveHealthRecordToCloud(currentUser.uid, newRecord).catch((err) =>
-        console.warn('Cloud health record save error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('স্বাস্থ্য পরিমাপ রেকর্ড অফলাইনে সংরক্ষিত (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+      }
+      saveHealthRecordToCloud(currentUser.uid, newRecord)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast('স্বাস্থ্য পরিমাপ রেকর্ড ক্লাউডে সংরক্ষিত হয়েছে', 'success');
+          }
+        })
+        .catch((err) => {
+          setHealthRecords(prevHR);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast('স্বাস্থ্য পরিমাপ রেকর্ড সফলভাবে সংরক্ষিত হয়েছে', 'success');
     }
-    showToast('স্বাস্থ্য পরিমাপ রেকর্ড সফলভাবে সংরক্ষিত হয়েছে', 'success');
     return newId;
   };
 
   const deleteHealthRecord = (id: string) => {
+    const prevHR = healthRecords;
     setHealthRecords((prev) => prev.filter((r) => r.id !== id));
     if (currentUser) {
-      deleteHealthRecordFromCloud(currentUser.uid, id).catch((err) =>
-        console.warn('Cloud health record delete error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('স্বাস্থ্য রেকর্ড অফলাইনে মুছে ফেলা হয়েছে (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+      }
+      deleteHealthRecordFromCloud(currentUser.uid, id)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast('স্বাস্থ্য রেকর্ড ক্লাউড থেকে মুছে ফেলা হয়েছে', 'info');
+          }
+        })
+        .catch((err) => {
+          setHealthRecords(prevHR);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast('স্বাস্থ্য রেকর্ড মুছে ফেলা হয়েছে', 'info');
     }
-    showToast('স্বাস্থ্য রেকর্ড মুছে ফেলা হয়েছে', 'info');
   };
 
   // Doctor Appointments CRUD (ধাপ ২)
@@ -1404,45 +1958,87 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       id: newId,
       createdAt: new Date().toISOString(),
     };
+    const prevApts = appointments;
     setAppointments((prev) => [newApt, ...prev]);
 
     if (currentUser) {
-      saveAppointmentToCloud(currentUser.uid, newApt).catch((err) =>
-        console.warn('Cloud appointment save error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`ডা. ${newApt.doctorName}-এর অ্যাপয়েন্টমেন্ট অফলাইনে সংরক্ষিত (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      saveAppointmentToCloud(currentUser.uid, newApt)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`ডা. ${newApt.doctorName}-এর অ্যাপয়েন্টমেন্ট ক্লাউডে সংরক্ষিত হয়েছে`, 'success');
+          }
+        })
+        .catch((err) => {
+          setAppointments(prevApts);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`ডা. ${newApt.doctorName}-এর সাথে অ্যাপয়েন্টমেন্ট নির্ধারিত হয়েছে`, 'success');
     }
-    showToast(`ডা. ${newApt.doctorName}-এর সাথে অ্যাপয়েন্টমেন্ট নির্ধারিত হয়েছে`, 'success');
     return newId;
   };
 
   const updateAppointment = (id: string, updates: Partial<DoctorAppointment>) => {
-    let updatedApt: DoctorAppointment | undefined;
-    setAppointments((prev) =>
-      prev.map((a) => {
-        if (a.id === id) {
-          updatedApt = { ...a, ...updates };
-          return updatedApt;
-        }
-        return a;
-      })
-    );
+    const prevApts = appointments;
+    const target = appointments.find((a) => a.id === id);
+    if (!target) return;
+    const updatedApt: DoctorAppointment = { ...target, ...updates };
+    setAppointments((prev) => prev.map((a) => (a.id === id ? updatedApt : a)));
 
-    if (currentUser && updatedApt) {
-      saveAppointmentToCloud(currentUser.uid, updatedApt).catch((err) =>
-        console.warn('Cloud appointment update error', err)
-      );
+    if (currentUser) {
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('অ্যাপয়েন্টমেন্ট তথ্য অফলাইনে হালনাগাদ (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+      }
+      saveAppointmentToCloud(currentUser.uid, updatedApt)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast('অ্যাপয়েন্টমেন্ট তথ্য ক্লাউডে হালনাগাদ হয়েছে', 'info');
+          }
+        })
+        .catch((err) => {
+          setAppointments(prevApts);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast('অ্যাপয়েন্টমেন্ট তথ্য হালনাগাদ করা হয়েছে', 'info');
     }
-    showToast('অ্যাপয়েন্টমেন্ট তথ্য হালনাগাদ করা হয়েছে', 'info');
   };
 
   const deleteAppointment = (id: string) => {
+    const prevApts = appointments;
     setAppointments((prev) => prev.filter((a) => a.id !== id));
     if (currentUser) {
-      deleteAppointmentFromCloud(currentUser.uid, id).catch((err) =>
-        console.warn('Cloud appointment delete error', err)
-      );
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('অ্যাপয়েন্টমেন্ট অফলাইনে মুছে ফেলা হয়েছে (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+      }
+      deleteAppointmentFromCloud(currentUser.uid, id)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast('অ্যাপয়েন্টমেন্ট ক্লাউড থেকে মুছে ফেলা হয়েছে', 'info');
+          }
+        })
+        .catch((err) => {
+          setAppointments(prevApts);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast('অ্যাপয়েন্টমেন্ট মুছে ফেলা হয়েছে', 'info');
     }
-    showToast('অ্যাপয়েন্টমেন্ট মুছে ফেলা হয়েছে', 'info');
   };
 
   const openAddToPersonalModal = (med: GlobalMedicine) => {
@@ -1914,7 +2510,6 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       colorTag: 'teal',
     });
 
-    showToast(`"${med.brandName}" আপনার ব্যক্তিগত ওষুধ তালিকায় যোগ করা হয়েছে`, 'success');
     closeAddToPersonalModal();
     return newMedId;
   };
@@ -1945,7 +2540,6 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         deletePatient,
         archivePatient,
         unarchivePatient,
-        seedFictionalFamilyProfiles,
         isProfileModalOpen,
         editingPatient,
         openCreateProfileModal,
@@ -1958,16 +2552,31 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         isAuthLoading,
         isCloudConnected,
         isSyncing,
+        syncStatus,
+        lastSyncedAt,
+        triggerManualSync,
+        downloadLocalBackup,
         isAuthModalOpen,
         openAuthModal,
         closeAuthModal,
         signOutUser,
         syncLocalToCloud,
+        isDataConflictModalOpen,
+        conflictInfo,
+        resolveDataConflict,
+        isResetConfirmationModalOpen,
+        openResetConfirmationModal,
+        closeResetConfirmationModal,
+        confirmResetAllData,
         globalMedicines,
         importBatches,
         isAdmin,
         adminEmail: ADMIN_EMAIL,
         lastSyncTime,
+        isOnline,
+        isGlobalFromCache,
+        latestLibraryNotice,
+        dismissLibraryNotice,
         cloudStats,
         refreshCloudCounts,
         selectedGlobalMedForDetail,

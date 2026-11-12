@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { MedicineType, MealTiming, TimeSlot, DoseSchedule } from '../../types';
 import { commonMedicinePresets } from '../../data/mockData';
-import { toBengaliNumber } from '../../utils/bengaliUtils';
+import { toBengaliNumber, formatBengaliTime } from '../../utils/bengaliUtils';
 import { PrescriptionScannerModal } from './PrescriptionScannerModal';
 import { MedicineInfoModal } from '../ai/MedicineInfoModal';
 import { PrescriptionScanResult, checkDrugInteractions, DrugInteractionResponse } from '../../services/aiService';
@@ -13,6 +13,7 @@ import {
   Trash2,
   Check,
   ArrowLeft,
+  ArrowRight,
   Clock,
   ShieldAlert,
   Camera,
@@ -21,13 +22,31 @@ import {
   ShieldCheck,
   Loader2,
   HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  Sun,
+  Moon,
+  Sunrise,
+  Sunset,
 } from 'lucide-react';
 
-export const AddMedicine: React.FC = () => {
-  const { addMedicine, medicines, patients, activePatientId, setCurrentPage, openCreateProfileModal, settings } = useMedicine();
-  const isBn = settings.language !== 'en';
+const DEFAULT_SLOT_TIMES: Record<TimeSlot, string> = {
+  'সকাল': '08:00 AM',
+  'দুপুর': '01:30 PM',
+  'সন্ধ্যা': '06:00 PM',
+  'রাত': '09:30 PM',
+};
 
-  // Form State
+const SLOT_ORDER: TimeSlot[] = ['সকাল', 'দুপুর', 'সন্ধ্যা', 'রাত'];
+
+export const AddMedicine: React.FC = () => {
+  const { addMedicine, medicines, patients, activePatientId, setCurrentPage, openCreateProfileModal } = useMedicine();
+
+  // Wizard Step (1 to 4)
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
+
+  // Core Form State with Elderly-Friendly Smart Defaults (খাওয়ার পরে, ১টি, ৭ দিন)
   const [brandName, setBrandName] = useState('');
   const [genericName, setGenericName] = useState('');
   const [type, setType] = useState<MedicineType>('ট্যাবলেট');
@@ -42,13 +61,12 @@ export const AddMedicine: React.FC = () => {
   const [stock, setStock] = useState<number>(30);
   const [minStockAlert, setMinStockAlert] = useState<number>(7);
   const [unit, setUnit] = useState('টি');
-  const [isChronic, setIsChronic] = useState(true);
+  const [isChronic, setIsChronic] = useState(false);
   const [durationDays, setDurationDays] = useState<number>(7);
-  
-  // Schedules state
+
+  // Schedules state (Default: সকাল ১টি)
   const [schedules, setSchedules] = useState<DoseSchedule[]>([
-    { id: '1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
-    { id: '2', timeSlot: 'রাত', time: '08:30 PM', dosage: '১টি' },
+    { id: 'slot-morning', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
   ]);
 
   const [formError, setFormError] = useState('');
@@ -63,14 +81,13 @@ export const AddMedicine: React.FC = () => {
 
   const handleCheckDrugInteractions = async () => {
     if (!brandName.trim()) {
-      setInteractionError(isBn ? 'দয়া করে প্রথমে ওষুধের নাম লিখুন।' : 'Please enter the medicine brand name first.');
+      setInteractionError('দয়া করে প্রথমে ওষুধের নাম লিখুন।');
       return;
     }
     setInteractionError(null);
     setIsCheckingInteractions(true);
 
     try {
-      // Find active medicines for this patient
       const currentActiveMeds = medicines
         .filter((m) => (assignedPatientId ? m.assignedPatientId === assignedPatientId : true) && m.status === 'active')
         .map((m) => m.brandName + (m.genericName ? ` (${m.genericName})` : ''));
@@ -88,9 +105,7 @@ export const AddMedicine: React.FC = () => {
       setInteractionError(
         err instanceof Error
           ? err.message
-          : isBn
-          ? 'মিথস্ক্রিয়া যাচাই করতে ব্যর্থ হয়েছে। ইন্টারনেট সংযোগ পরীক্ষা করুন।'
-          : 'Failed to verify interactions. Check connection.'
+          : 'যাচাই করতে ব্যর্থ হয়েছে। ইন্টারনেট সংযোগ পরীক্ষা করুন।'
       );
     } finally {
       setIsCheckingInteractions(false);
@@ -116,15 +131,14 @@ export const AddMedicine: React.FC = () => {
           id: String(idx + 1),
           timeSlot: s.timeSlot,
           time: s.time,
-          dosage: s.dosage,
+          dosage: s.dosage || '১টি',
         }))
       );
     }
     setFormError('');
-    setAiSuccessBanner(`"${data.brandName || 'প্রেসক্রিপশন'}" এর বিবরণ AI দ্বারা ফর্মটিতে পূরণ করা হয়েছে। অনুগ্রহ করে যাচাই করে সংরক্ষণ করুন।`);
+    setAiSuccessBanner(`"${data.brandName || 'প্রেসক্রিপশন'}" এর তথ্য পূরণ করা হয়েছে — এখন যাচাই করুন।`);
   };
 
-  // Check if routed from AI Assistant with pending medicine
   useEffect(() => {
     try {
       const saved = localStorage.getItem('shasthobondhu_pending_ai_med');
@@ -138,7 +152,6 @@ export const AddMedicine: React.FC = () => {
     }
   }, []);
 
-  // Handle Preset quick-fill
   const handleApplyPreset = (preset: typeof commonMedicinePresets[0]) => {
     setBrandName(preset.brandName);
     setGenericName(preset.genericName);
@@ -150,7 +163,7 @@ export const AddMedicine: React.FC = () => {
     setMinStockAlert(preset.minStockAlert);
     setUnit(preset.unit);
     setIsChronic(preset.isChronic);
-    if (preset.durationDays) setDurationDays(preset.durationDays);
+    setDurationDays(preset.durationDays || 7);
     setSchedules(
       preset.defaultSchedules.map((s, idx) => ({
         id: String(idx + 1),
@@ -162,22 +175,39 @@ export const AddMedicine: React.FC = () => {
     setFormError('');
   };
 
-  const addScheduleSlot = () => {
-    const slots: TimeSlot[] = ['সকাল', 'দুপুর', 'সন্ধ্যা', 'রাত'];
-    const currentSlots = schedules.map((s) => s.timeSlot);
-    const availableSlot = slots.find((s) => !currentSlots.includes(s)) || 'দুপুর';
-    
-    let defaultTime = '01:30 PM';
-    if (availableSlot === 'সকাল') defaultTime = '08:00 AM';
-    if (availableSlot === 'সন্ধ্যা') defaultTime = '06:00 PM';
-    if (availableSlot === 'রাত') defaultTime = '09:00 PM';
+  const toggleTimeSlot = (slot: TimeSlot) => {
+    setFormError('');
+    const exists = schedules.some((s) => s.timeSlot === slot);
+    if (exists) {
+      if (schedules.length <= 1) {
+        setFormError('কমপক্ষে একটি সময় বেছে নিন');
+        return;
+      }
+      setSchedules((prev) => prev.filter((s) => s.timeSlot !== slot));
+    } else {
+      const next = [
+        ...schedules,
+        {
+          id: `slot-${slot}-${Date.now()}`,
+          timeSlot: slot,
+          time: DEFAULT_SLOT_TIMES[slot],
+          dosage: '১টি',
+        },
+      ];
+      next.sort((a, b) => SLOT_ORDER.indexOf(a.timeSlot) - SLOT_ORDER.indexOf(b.timeSlot));
+      setSchedules(next);
+    }
+  };
 
+  const addScheduleSlot = () => {
+    const currentSlots = schedules.map((s) => s.timeSlot);
+    const availableSlot = SLOT_ORDER.find((s) => !currentSlots.includes(s)) || 'দুপুর';
     setSchedules([
       ...schedules,
       {
         id: Date.now().toString(),
         timeSlot: availableSlot,
-        time: defaultTime,
+        time: DEFAULT_SLOT_TIMES[availableSlot],
         dosage: '১টি',
       },
     ]);
@@ -185,26 +215,47 @@ export const AddMedicine: React.FC = () => {
 
   const removeScheduleSlot = (id: string) => {
     if (schedules.length <= 1) {
-      setFormError('কমপক্ষে একটি সময়সূচি থাকা প্রয়োজন');
+      setFormError('কমপক্ষে একটি সময় থাকা প্রয়োজন');
       return;
     }
     setSchedules(schedules.filter((s) => s.id !== id));
   };
 
   const updateSchedule = (id: string, updates: Partial<DoseSchedule>) => {
-    setSchedules(
-      schedules.map((s) => (s.id === id ? { ...s, ...updates } : s))
-    );
+    setSchedules(schedules.map((s) => (s.id === id ? { ...s, ...updates } : s)));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleNextStep = () => {
+    setFormError('');
+    if (step === 1 && !brandName.trim()) {
+      setFormError('দয়া করে ওষুধের নাম লিখুন');
+      return;
+    }
+    if (step === 2 && schedules.length === 0) {
+      setFormError('কমপক্ষে একটি সময় বেছে নিন');
+      return;
+    }
+    setStep((prev) => (prev < 4 ? ((prev + 1) as 1 | 2 | 3 | 4) : prev));
+  };
+
+  const handlePrevStep = () => {
+    setFormError('');
+    if (step === 1) {
+      setCurrentPage('medicines');
+      return;
+    }
+    setStep((prev) => (prev > 1 ? ((prev - 1) as 1 | 2 | 3 | 4) : prev));
+  };
+
+  const handleSaveMedicine = () => {
     if (!brandName.trim()) {
-      setFormError('দয়া করে ওষুধের নাম লিখুন');
+      setFormError('দয়া করে ওষুধের নাম লিখুন');
+      setStep(1);
       return;
     }
     if (schedules.length === 0) {
-      setFormError('কমপক্ষে একটি সেবনের সময়সূচি যোগ করুন');
+      setFormError('কমপক্ষে একটি সময় বেছে নিন');
+      setStep(2);
       return;
     }
 
@@ -221,7 +272,7 @@ export const AddMedicine: React.FC = () => {
       unit,
       startDate: new Date().toISOString().split('T')[0],
       isChronic,
-      durationDays: isChronic ? undefined : Number(durationDays),
+      durationDays: isChronic ? undefined : Number(durationDays) || 7,
       purpose: purpose.trim(),
       doctorName: doctorName.trim(),
       instructions: instructions.trim(),
@@ -232,608 +283,700 @@ export const AddMedicine: React.FC = () => {
     setCurrentPage('medicines');
   };
 
+  const mainSlotCards: {
+    slot: TimeSlot;
+    label: string;
+    timeHint: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }[] = [
+    { slot: 'সকাল', label: 'সকাল', timeHint: 'সকাল ৮টা', icon: Sunrise },
+    { slot: 'দুপুর', label: 'দুপুর', timeHint: 'দুপুর ১:৩০টা', icon: Sun },
+    { slot: 'রাত', label: 'রাত', timeHint: 'রাত ৯:৩০টা', icon: Moon },
+    { slot: 'সন্ধ্যা', label: 'সন্ধ্যা', timeHint: 'সন্ধ্যা ৬টা', icon: Sunset },
+  ];
+
+  const durationOptions: { label: string; days?: number; chronic: boolean }[] = [
+    { label: '৭ দিন', days: 7, chronic: false },
+    { label: '১৫ দিন', days: 15, chronic: false },
+    { label: '৩০ দিন', days: 30, chronic: false },
+    { label: 'চলমান (নিয়মিত)', chronic: true },
+  ];
+
   return (
-    <div className="space-y-6 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-      
-      {/* Top Navigation Row */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 max-w-2xl mx-auto px-4 sm:px-6 py-6">
+
+      {/* Top Navigation & Progress Header */}
+      <div className="flex items-center justify-between gap-3">
         <button
           type="button"
-          onClick={() => setCurrentPage('medicines')}
-          className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+          onClick={handlePrevStep}
+          className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2 text-base font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
-          <span>ওষুধের তালিকায় ফিরে যান</span>
+          <ArrowLeft className="w-5 h-5" />
+          <span>{step === 1 ? 'ফিরে যান' : 'আগের ধাপ'}</span>
         </button>
 
-        <span className="text-xs text-slate-400">
-          নতুন প্রেসক্রিপশন এন্ট্রি
+        <span className="text-base font-bold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-4 py-2 rounded-xl border border-teal-200 dark:border-teal-800">
+          ধাপ {toBengaliNumber(step)} / {toBengaliNumber(4)}
         </span>
       </div>
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-            নতুন ওষুধ যুক্ত করুন
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            প্রেসক্রিপশন অনুযায়ী সঠিক তথ্য ও ডোজ সময়সূচি নির্ধারণ করুন
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setIsScannerOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-teal-700 to-teal-800 text-white rounded-xl text-xs font-semibold hover:from-teal-800 hover:to-teal-900 shadow-xs transition-colors cursor-pointer shrink-0"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>প্রেসক্রিপশন / পাতার ছবি তুলুন (AI)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsInfoModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
-          >
-            <BookOpen className="w-3.5 h-3.5 text-teal-600" />
-            <span>AI ওষুধ তথ্য</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setCurrentPage('library')}
-            className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-900 border border-teal-300 dark:border-teal-700/60 text-teal-800 dark:text-teal-300 rounded-xl text-xs font-semibold hover:bg-teal-50 dark:hover:bg-teal-950/40 shadow-xs transition-colors cursor-pointer shrink-0"
-          >
-            <Pill className="w-3.5 h-3.5 text-teal-600" />
-            <span>লাইব্রেরি</span>
-          </button>
-        </div>
+      {/* 4-Step Progress Bar */}
+      <div className="grid grid-cols-4 gap-2" aria-label="ওষুধ যোগ করার ধাপ">
+        {[1, 2, 3, 4].map((num) => (
+          <div
+            key={num}
+            className={`h-2.5 rounded-full transition-colors ${
+              num <= step ? 'bg-teal-600' : 'bg-slate-200 dark:bg-slate-800'
+            }`}
+          />
+        ))}
       </div>
 
-      {/* AI Pre-fill Success Alert */}
+      {/* AI Pre-fill Banner */}
       {aiSuccessBanner && (
-        <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-xs text-emerald-900 dark:text-emerald-200 flex items-start justify-between gap-2 shadow-2xs">
-          <div className="flex items-start gap-2">
-            <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+        <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl text-base text-emerald-950 dark:text-emerald-100 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2.5">
+            <Check className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
             <div>
-              <p className="font-semibold">{aiSuccessBanner}</p>
-              <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5">
-                এটি সাধারণ তথ্য, ডাক্তারের পরামর্শের বিকল্প নয়। AI কখনো নির্ধারিত ডোজ পরিবর্তনের পরামর্শ দেয় না।
+              <p className="font-bold">{aiSuccessBanner}</p>
+              <p className="text-sm text-emerald-800 dark:text-emerald-300 mt-0.5">
+                সবকিছু ঠিক থাকলে "পরবর্তী" বা শেষ ধাপে গিয়ে সংরক্ষণ করুন।
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={() => setAiSuccessBanner(null)}
-            className="text-emerald-700 dark:text-emerald-400 hover:text-emerald-900 cursor-pointer text-xs"
+            className="min-h-[48px] min-w-[48px] flex items-center justify-center text-emerald-800 dark:text-emerald-200 font-bold cursor-pointer"
           >
             ✕
           </button>
         </div>
       )}
 
-
-      {/* Quick Presets Bar */}
-      <div className="bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200/80 dark:border-teal-800/50 rounded-xl p-4">
-        <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-teal-900 dark:text-teal-200">
-          <Sparkles className="w-4 h-4 text-teal-600" />
-          <span>সাধারণ ওষুধ প্রিসেট (এক ক্লিকে পূরণ করুন):</span>
+      {formError && (
+        <div className="p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-2xl text-base font-bold text-rose-800 dark:text-rose-200 flex items-center gap-2.5">
+          <ShieldAlert className="w-5 h-5 shrink-0" />
+          <span>{formError}</span>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {commonMedicinePresets.map((preset, idx) => (
+      )}
+
+      {/* ==================================================
+          STEP 1: ওষুধের নাম (লিখে বা ছবি তুলে)
+         ================================================== */}
+      {step === 1 && (
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-7 shadow-xs space-y-6">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
+              ওষুধের নাম কী?
+            </h1>
+            <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
+              নাম লিখুন অথবা প্রেসক্রিপশনের ছবি তুলুন
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="med-brand-input" className="block text-base font-bold text-slate-800 dark:text-slate-200 mb-2">
+              ওষুধের নাম *
+            </label>
+            <input
+              id="med-brand-input"
+              type="text"
+              value={brandName}
+              onChange={(e) => {
+                setBrandName(e.target.value);
+                setFormError('');
+              }}
+              placeholder="যেমন: নাপা এক্সট্রা, সেক্লো ২০, কনকর"
+              className="min-h-[56px] w-full px-4 py-3 text-lg bg-slate-50 dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 rounded-2xl text-slate-900 dark:text-white focus:outline-hidden focus:border-teal-600"
+            />
+          </div>
+
+          {/* Photo Scan & Library Shortcuts */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button
-              key={idx}
               type="button"
-              onClick={() => handleApplyPreset(preset)}
-              className="px-2.5 py-1 text-xs bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300 rounded-md hover:bg-teal-100 dark:hover:bg-teal-900/40 transition-colors cursor-pointer"
+              onClick={() => setIsScannerOpen(true)}
+              className="min-h-[52px] flex items-center justify-center gap-2 px-4 py-3 bg-teal-700 hover:bg-teal-800 text-white rounded-2xl text-base font-bold shadow-xs transition-colors cursor-pointer"
             >
-              + {preset.brandName}
+              <Camera className="w-5 h-5" />
+              <span>ছবি তুলে পূরণ করুন</span>
             </button>
-          ))}
-        </div>
-      </div>
 
-      {/* Main Form */}
-      <form onSubmit={handleSubmit} className="space-y-6">
-        
-        {formError && (
-          <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
-            <ShieldAlert className="w-4 h-4 shrink-0" />
-            <span>{formError}</span>
-          </div>
-        )}
-
-        {/* Section 1: Basic Information */}
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
-            ১. ওষুধের মৌলিক বিবরণ
-          </h2>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                ওষুধের নাম (ব্র্যান্ড) *
-              </label>
-              <input
-                type="text"
-                required
-                value={brandName}
-                onChange={(e) => setBrandName(e.target.value)}
-                placeholder="যেমন: নাপা এক্সট্রা, সেক্লো ২০, কনকর"
-                className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                জেনেরিক নাম ও কোম্পানি
-              </label>
-              <input
-                type="text"
-                value={genericName}
-                onChange={(e) => setGenericName(e.target.value)}
-                placeholder="যেমন: Paracetamol 500mg, Square Pharma"
-                className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('library')}
+              className="min-h-[52px] flex items-center justify-center gap-2 px-4 py-3 bg-teal-50 dark:bg-teal-950/60 border border-teal-300 dark:border-teal-800 text-teal-900 dark:text-teal-200 rounded-2xl text-base font-bold hover:bg-teal-100 transition-colors cursor-pointer"
+            >
+              <BookOpen className="w-5 h-5" />
+              <span>ওষুধ লাইব্রেরি থেকে খুঁজুন</span>
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                ওষুধের ধরন
-              </label>
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as MedicineType)}
-                className="w-full px-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden cursor-pointer"
-              >
-                <option value="ট্যাবলেট">ট্যাবলেট</option>
-                <option value="ক্যাপসুল">ক্যাপসুল</option>
-                <option value="সিরাপ">সিরাপ</option>
-                <option value="ইনসুলিন/ইনজেকশন">ইনসুলিন/ইনজেকশন</option>
-                <option value="চোখের ড্রপ">চোখের ড্রপ</option>
-                <option value="ইনহেলার">ইনহেলার</option>
-                <option value="মলম/জেল">মলম/জেল</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                মাত্রা বা শক্তি (Strength)
-              </label>
-              <input
-                type="text"
-                value={strength}
-                onChange={(e) => setStrength(e.target.value)}
-                placeholder="যেমন: 500 mg, 20 mg, 100 IU"
-                className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  কার জন্য নির্ধারিত রোগী? (ঐচ্ছিক)
-                </label>
+          {/* Common Presets */}
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+            <span className="block text-sm font-bold text-slate-700 dark:text-slate-300">
+              বেশি ব্যবহৃত ওষুধ (এক ট্যাপে বেছে নিন):
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {commonMedicinePresets.map((preset, idx) => (
                 <button
+                  key={idx}
                   type="button"
-                  onClick={openCreateProfileModal}
-                  className="text-[11px] text-teal-700 dark:text-teal-400 hover:underline font-medium cursor-pointer"
+                  onClick={() => handleApplyPreset(preset)}
+                  className="min-h-[48px] px-4 py-2 text-sm font-semibold bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl hover:border-teal-500 hover:bg-teal-50 dark:hover:bg-teal-950/40 transition-colors cursor-pointer"
                 >
-                  + নতুন প্রোফাইল
+                  + {preset.brandName}
                 </button>
-              </div>
-              <select
-                value={assignedPatientId || ''}
-                onChange={(e) => setAssignedPatientId(e.target.value || undefined)}
-                className="w-full px-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden cursor-pointer"
-              >
-                <option value="">কোনো নির্দিষ্ট প্রোফাইল নেই (পরে অ্যাসাইন করুন)</option>
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.relation})
-                  </option>
-                ))}
-              </select>
-              {patients.length === 0 && (
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                  বর্তমানে কোনো রোগী প্রোফাইল নেই। ওষুধটি সংরক্ষণ করুন এবং পরে প্রোফাইলে যুক্ত করুন।
-                </p>
-              )}
+              ))}
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={handleNextStep}
+            className="min-h-[56px] w-full flex items-center justify-center gap-2 px-6 py-4 bg-teal-700 hover:bg-teal-800 text-white font-bold text-lg rounded-2xl shadow-sm transition-colors cursor-pointer"
+          >
+            <span>পরবর্তী ধাপ</span>
+            <ArrowRight className="w-5 h-5" />
+          </button>
         </section>
+      )}
 
-        {/* Drug Interaction Verification (Gemini AI) */}
-        <section className="bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-900/60 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-                <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                  {isBn ? 'ওষুধের পারস্পরিক ক্রিয়া (Drug Interaction) সতর্কতা' : 'Drug Interaction Safety Check'}
-                </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 dark:bg-teal-900/60 text-teal-700 dark:text-teal-300">
-                  Gemini AI
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {isBn
-                  ? 'এই রোগীর বর্তমান সক্রিয় ওষুধের সাথে এই নতুন ওষুধের কোনো ক্ষতিকর মিথস্ক্রিয়া আছে কি না যাচাই করুন'
-                  : 'Check for potential interactions between this medicine and the member’s active medicines'}
-              </p>
-            </div>
-
-            <button
-              type="button"
-              disabled={isCheckingInteractions}
-              onClick={handleCheckDrugInteractions}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer shrink-0"
-            >
-              {isCheckingInteractions ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>{isBn ? 'যাচাই করা হচ্ছে...' : 'Checking...'}</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                  <span>{isBn ? 'মিথস্ক্রিয়া যাচাই করুন' : 'Check Interactions'}</span>
-                </>
-              )}
-            </button>
+      {/* ==================================================
+          STEP 2: কখন খাবেন (সকাল / দুপুর / রাত / সন্ধ্যা)
+         ================================================== */}
+      {step === 2 && (
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-7 shadow-xs space-y-6">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
+              কখন খাবেন?
+            </h1>
+            <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
+              এক বা একাধিক সময় বেছে নিন (ডিফল্ট: ১টি করে, {mealTiming})
+            </p>
           </div>
 
-          {interactionError && (
-            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-lg text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
-              <span>{interactionError}</span>
-            </div>
-          )}
-
-          {interactionResult && (
-            <div className="space-y-3 pt-2">
-              {/* Interaction Status Banner */}
-              <div
-                className={`p-4 rounded-xl border flex items-start gap-3 ${
-                  interactionResult.hasInteraction
-                    ? interactionResult.severity === 'severe'
-                      ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200'
-                      : interactionResult.severity === 'moderate'
-                      ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
-                      : 'bg-yellow-50 dark:bg-yellow-950/40 border-yellow-300 dark:border-yellow-800 text-yellow-900 dark:text-yellow-200'
-                    : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
-                }`}
-              >
-                {interactionResult.hasInteraction ? (
-                  <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
-                ) : (
-                  <ShieldCheck className="w-5 h-5 shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" />
-                )}
-
-                <div className="flex-1 text-xs">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="font-bold text-sm">
-                      {interactionResult.hasInteraction
-                        ? isBn
-                          ? 'পারস্পরিক ক্রিয়া সতর্কবার্তা পাওয়া গেছে'
-                          : 'Potential Interaction Detected'
-                        : isBn
-                        ? 'কোনো উল্লেখযোগ্য মিথস্ক্রিয়া পাওয়া যায়নি'
-                        : 'No Known Severe Interactions Found'}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                        interactionResult.severity === 'severe'
-                          ? 'bg-rose-200 text-rose-800 dark:bg-rose-900 dark:text-rose-200'
-                          : interactionResult.severity === 'moderate'
-                          ? 'bg-amber-200 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
-                          : 'bg-emerald-200 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {mainSlotCards.map((item) => {
+              const Icon = item.icon;
+              const isSelected = schedules.some((s) => s.timeSlot === item.slot);
+              return (
+                <button
+                  key={item.slot}
+                  type="button"
+                  onClick={() => toggleTimeSlot(item.slot)}
+                  aria-pressed={isSelected}
+                  className={`min-h-[76px] p-4 rounded-2xl border-2 flex items-center justify-between gap-3 transition-all cursor-pointer text-left ${
+                    isSelected
+                      ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-950 dark:text-teal-100 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 hover:border-teal-400'
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5">
+                    <div
+                      className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
+                        isSelected
+                          ? 'bg-teal-700 text-white'
+                          : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300'
                       }`}
                     >
-                      {interactionResult.severity}
-                    </span>
+                      <Icon className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="text-xl font-bold">{item.label}</div>
+                      <div className="text-sm text-slate-600 dark:text-slate-300">
+                        {item.timeHint}
+                      </div>
+                    </div>
                   </div>
 
-                  <p className="leading-relaxed">{interactionResult.summary}</p>
-                </div>
-              </div>
-
-              {/* Details list */}
-              {interactionResult.details && interactionResult.details.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    {isBn ? 'শনাক্তকৃত মিথস্ক্রিয়ার বিবরণ:' : 'Detected Interaction Details:'}
-                  </h4>
-                  <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-300 list-disc list-inside">
-                    {interactionResult.details.map((item: string, idx: number) => (
-                      <li key={idx} className="leading-relaxed">{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Recommendation */}
-              {interactionResult.recommendation && (
-                <div className="p-3 rounded-lg bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-xs text-teal-800 dark:text-teal-200 flex items-start gap-2">
-                  <HelpCircle className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-semibold block">{isBn ? 'পরামর্শ:' : 'Recommendation:'}</span>
-                    <span>{interactionResult.recommendation}</span>
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center border-2 shrink-0 ${
+                      isSelected
+                        ? 'bg-teal-700 border-teal-700 text-white'
+                        : 'border-slate-300 dark:border-slate-600'
+                    }`}
+                  >
+                    {isSelected && <Check className="w-5 h-5" />}
                   </div>
-                </div>
-              )}
+                </button>
+              );
+            })}
+          </div>
 
-              {/* Mandatory Statutory Disclaimer */}
-              <div className="p-3 bg-slate-100 dark:bg-slate-800/60 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-400">
-                <p className="font-semibold text-slate-700 dark:text-slate-300 mb-0.5">
-                  {isBn ? '⚠️ সংবিধিবদ্ধ সতর্কীকরণ:' : '⚠️ Statutory Medical Disclaimer:'}
-                </p>
-                <p>
-                  {interactionResult.disclaimer ||
-                    (isBn
-                      ? 'এটি শুধুমাত্র সাধারণ তথ্যের জন্য, চিকিৎসার বিকল্প নয়। যেকোনো ওষুধ পরিবর্তন, বন্ধ বা শুরু করার আগে সর্বদা আপনার চিকিৎসকের সাথে পরামর্শ করুন।'
-                      : 'This is for informational purposes only and not a substitute for professional medical advice. Always consult your doctor or pharmacist.')}
-                </p>
-              </div>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={handleNextStep}
+            className="min-h-[56px] w-full flex items-center justify-center gap-2 px-6 py-4 bg-teal-700 hover:bg-teal-800 text-white font-bold text-lg rounded-2xl shadow-sm transition-colors cursor-pointer"
+          >
+            <span>পরবর্তী ধাপ</span>
+            <ArrowRight className="w-5 h-5" />
+          </button>
         </section>
+      )}
 
-        {/* Section 2: Schedules & Timings */}
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+      {/* ==================================================
+          STEP 3: কত দিন খাবেন?
+         ================================================== */}
+      {step === 3 && (
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-7 shadow-xs space-y-6">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
+              কত দিন খাবেন?
+            </h1>
+            <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
+              নিচের যেকোনো একটি সময়সীমা বেছে নিন
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {durationOptions.map((opt) => {
+              const isSelected = opt.chronic
+                ? isChronic
+                : !isChronic && durationDays === opt.days;
+
+              return (
+                <button
+                  key={opt.label}
+                  type="button"
+                  onClick={() => {
+                    if (opt.chronic) {
+                      setIsChronic(true);
+                    } else {
+                      setIsChronic(false);
+                      setDurationDays(opt.days || 7);
+                    }
+                  }}
+                  aria-pressed={isSelected}
+                  className={`min-h-[72px] p-4 rounded-2xl border-2 flex items-center justify-between gap-3 transition-all cursor-pointer text-left ${
+                    isSelected
+                      ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-950 dark:text-teal-100 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 hover:border-teal-400'
+                  }`}
+                >
+                  <span className="text-xl font-bold">{opt.label}</span>
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center border-2 shrink-0 ${
+                      isSelected
+                        ? 'bg-teal-700 border-teal-700 text-white'
+                        : 'border-slate-300 dark:border-slate-600'
+                    }`}
+                  >
+                    {isSelected && <Check className="w-5 h-5" />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleNextStep}
+            className="min-h-[56px] w-full flex items-center justify-center gap-2 px-6 py-4 bg-teal-700 hover:bg-teal-800 text-white font-bold text-lg rounded-2xl shadow-sm transition-colors cursor-pointer"
+          >
+            <span>পরবর্তী ধাপ</span>
+            <ArrowRight className="w-5 h-5" />
+          </button>
+        </section>
+      )}
+
+      {/* ==================================================
+          STEP 4: যাচাই করে সেভ + "আরও অপশন" ভাঁজ
+         ================================================== */}
+      {step === 4 && (
+        <section className="space-y-5">
+          <div className="bg-white dark:bg-slate-900 border-2 border-teal-500 dark:border-teal-600 rounded-2xl p-6 sm:p-7 shadow-sm space-y-5">
             <div>
-              <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                ২. সেবনের নিয়ম ও দৈনিক সময়সূচি
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                প্রতিদিনের নির্ধারিত সময় ও ডোজ উল্লেখ করুন
+              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
+                তথ্য যাচাই করে সেভ করুন
+              </h1>
+              <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
+                সব ঠিক থাকলে নিচের সবুজ বোতামে চাপ দিন
               </p>
             </div>
 
+            {/* Easy Summary Box */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-3 text-base">
+              <div className="flex flex-wrap justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-700">
+                <span className="text-slate-600 dark:text-slate-300">ওষুধের নাম:</span>
+                <strong className="text-lg text-slate-900 dark:text-white">{brandName}</strong>
+              </div>
+
+              <div className="flex flex-wrap justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-700">
+                <span className="text-slate-600 dark:text-slate-300">কখন খাবেন:</span>
+                <strong className="text-slate-900 dark:text-white">
+                  {schedules.map((s) => `${s.timeSlot} (${s.dosage})`).join(', ')}
+                </strong>
+              </div>
+
+              <div className="flex flex-wrap justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-700">
+                <span className="text-slate-600 dark:text-slate-300">খাবারের নিয়ম:</span>
+                <strong className="text-slate-900 dark:text-white">{mealTiming}</strong>
+              </div>
+
+              <div className="flex flex-wrap justify-between gap-2">
+                <span className="text-slate-600 dark:text-slate-300">মেয়াদ:</span>
+                <strong className="text-slate-900 dark:text-white">
+                  {isChronic ? 'চলমান (নিয়মিত)' : `${toBengaliNumber(durationDays)} দিন`}
+                </strong>
+              </div>
+            </div>
+
+            {/* Big Primary Save CTA */}
             <button
               type="button"
-              onClick={addScheduleSlot}
-              className="flex items-center gap-1 px-3 py-1 text-xs font-semibold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-lg hover:bg-teal-100 cursor-pointer"
+              onClick={handleSaveMedicine}
+              className="min-h-[60px] w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold text-xl rounded-2xl shadow-md transition-colors cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>সময় যোগ করুন</span>
+              <Check className="w-6 h-6" />
+              <span>ওষুধ সংরক্ষণ করুন</span>
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                খাবারের সাথে সময়
-              </label>
-              <select
-                value={mealTiming}
-                onChange={(e) => setMealTiming(e.target.value as MealTiming)}
-                className="w-full px-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden cursor-pointer"
-              >
-                <option value="খাওয়ার আগে">খাওয়ার আগে (৩০ মিনিট পূর্বে)</option>
-                <option value="খাওয়ার পরে">খাওয়ার পরে (ভরা পেটে)</option>
-                <option value="খালি পেটে">খালি পেটে</option>
-                <option value="ঘুমানোর আগে">ঘুমানোর আগে</option>
-                <option value="প্রয়োজনমতো">প্রয়োজনমতো (ব্যথা বা জ্বর হলে)</option>
-              </select>
-            </div>
+          {/* Collapsible "আরও অপশন" Section for Advanced Fields */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-2xs">
+            <button
+              type="button"
+              onClick={() => setShowMoreOptions((prev) => !prev)}
+              aria-expanded={showMoreOptions}
+              className="min-h-[56px] w-full px-5 py-4 flex items-center justify-between gap-3 text-left text-base font-bold text-slate-900 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+            >
+              <span>আরও অপশন (খাবারের সময়, স্টক, ধরন, ডাক্তারের নাম ও AI যাচাই)</span>
+              {showMoreOptions ? (
+                <ChevronUp className="w-5 h-5 text-teal-700 dark:text-teal-400 shrink-0" />
+              ) : (
+                <ChevronDown className="w-5 h-5 text-teal-700 dark:text-teal-400 shrink-0" />
+              )}
+            </button>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                রোগ বা সেবনের কারণ
-              </label>
-              <input
-                type="text"
-                value={purpose}
-                onChange={(e) => setPurpose(e.target.value)}
-                placeholder="যেমন: ডায়াবেটিস, প্রেসার, গ্যাস্ট্রিক, জ্বর"
-                className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-          </div>
+            {showMoreOptions && (
+              <div className="p-5 sm:p-6 pt-2 border-t border-slate-100 dark:border-slate-800 space-y-6">
+                {/* Meal Timing & Patient & Strength */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      খাবারের নিয়ম
+                    </label>
+                    <select
+                      value={mealTiming}
+                      onChange={(e) => setMealTiming(e.target.value as MealTiming)}
+                      className="min-h-[48px] w-full px-3.5 py-2.5 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    >
+                      <option value="খাওয়ার পরে">খাওয়ার পরে</option>
+                      <option value="খাওয়ার আগে">খাওয়ার আগে (৩০ মিনিট পূর্বে)</option>
+                      <option value="খালি পেটে">খালি পেটে</option>
+                      <option value="ঘুমানোর আগে">ঘুমানোর আগে</option>
+                      <option value="প্রয়োজনমতো">প্রয়োজনমতো</option>
+                    </select>
+                  </div>
 
-          {/* Schedule Slots Rows */}
-          <div className="space-y-3 pt-2">
-            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-              নির্ধারিত দৈনিক স্লট সমূহ:
-            </span>
-
-            {schedules.map((schedule) => (
-              <div
-                key={schedule.id}
-                className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-              >
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-teal-600 shrink-0" />
-                  <select
-                    value={schedule.timeSlot}
-                    onChange={(e) => updateSchedule(schedule.id, { timeSlot: e.target.value as TimeSlot })}
-                    className="text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-2.5 py-1.5 text-slate-800 dark:text-slate-200 focus:outline-hidden"
-                  >
-                    <option value="সকাল">সকাল</option>
-                    <option value="দুপুর">দুপুর</option>
-                    <option value="সন্ধ্যা">সন্ধ্যা</option>
-                    <option value="রাত">রাত</option>
-                  </select>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-base font-semibold text-slate-800 dark:text-slate-200">
+                        কার জন্য ওষুধ?
+                      </label>
+                      <button
+                        type="button"
+                        onClick={openCreateProfileModal}
+                        className="text-sm font-bold text-teal-700 dark:text-teal-400 hover:underline cursor-pointer"
+                      >
+                        + নতুন প্রোফাইল
+                      </button>
+                    </div>
+                    <select
+                      value={assignedPatientId || ''}
+                      onChange={(e) => setAssignedPatientId(e.target.value || undefined)}
+                      className="min-h-[48px] w-full px-3.5 py-2.5 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    >
+                      <option value="">নির্দিষ্ট প্রোফাইল নেই</option>
+                      {patients.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.relation})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-slate-500">সময়:</span>
+                {/* Generic, Type, Strength */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      জেনেরিক / উপাদান
+                    </label>
                     <input
                       type="text"
-                      value={schedule.time}
-                      onChange={(e) => updateSchedule(schedule.id, { time: e.target.value })}
-                      placeholder="08:00 AM"
-                      className="w-24 px-2 py-1 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md text-slate-800 dark:text-slate-200 focus:outline-hidden"
+                      value={genericName}
+                      onChange={(e) => setGenericName(e.target.value)}
+                      placeholder="যেমন: প্যারাসিটামল"
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                     />
                   </div>
 
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-slate-500">ডোজ:</span>
-                    <input
-                      type="text"
-                      value={schedule.dosage}
-                      onChange={(e) => updateSchedule(schedule.id, { dosage: e.target.value })}
-                      placeholder="১টি / ৫ মিলি"
-                      className="w-24 px-2 py-1 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md text-slate-800 dark:text-slate-200 focus:outline-hidden"
-                    />
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      ওষুধের ধরন
+                    </label>
+                    <select
+                      value={type}
+                      onChange={(e) => setType(e.target.value as MedicineType)}
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    >
+                      <option value="ট্যাবলেট">ট্যাবলেট</option>
+                      <option value="ক্যাপসুল">ক্যাপসুল</option>
+                      <option value="সিরাপ">সিরাপ</option>
+                      <option value="ইনসুলিন/ইনজেকশন">ইনসুলিন/ইনজেকশন</option>
+                      <option value="চোখের ড্রপ">চোখের ড্রপ</option>
+                      <option value="ইনহেলার">ইনহেলার</option>
+                      <option value="মলম/জেল">মলম/জেল</option>
+                    </select>
                   </div>
 
-                  {schedules.length > 1 && (
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      মাত্রা (শক্তি)
+                    </label>
+                    <input
+                      type="text"
+                      value={strength}
+                      onChange={(e) => setStrength(e.target.value)}
+                      placeholder="যেমন: ৫০০ মি.গ্রা."
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Custom Times & Dosage per Slot */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-base font-bold text-slate-800 dark:text-slate-200">
+                      নির্ধারিত সময় ও পরিমাণ বদলান
+                    </span>
                     <button
                       type="button"
-                      onClick={() => removeScheduleSlot(schedule.id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
-                      title="স্লট সরান"
+                      onClick={addScheduleSlot}
+                      className="min-h-[48px] px-3.5 py-2 text-sm font-bold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl hover:bg-teal-100 flex items-center gap-1 cursor-pointer"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Plus className="w-4 h-4" />
+                      <span>সময় যোগ</span>
                     </button>
+                  </div>
+
+                  {schedules.map((schedule) => (
+                    <div
+                      key={schedule.id}
+                      className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-wrap items-center gap-3"
+                    >
+                      <select
+                        value={schedule.timeSlot}
+                        onChange={(e) => updateSchedule(schedule.id, { timeSlot: e.target.value as TimeSlot })}
+                        className="min-h-[48px] text-base bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-900 dark:text-white"
+                      >
+                        <option value="সকাল">সকাল</option>
+                        <option value="দুপুর">দুপুর</option>
+                        <option value="সন্ধ্যা">সন্ধ্যা</option>
+                        <option value="রাত">রাত</option>
+                      </select>
+
+                      <input
+                        type="text"
+                        value={schedule.time}
+                        onChange={(e) => updateSchedule(schedule.id, { time: e.target.value })}
+                        placeholder="08:00 AM"
+                        aria-label="সময়"
+                        className="min-h-[48px] w-32 px-3 py-2 text-base bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                      />
+
+                      <input
+                        type="text"
+                        value={schedule.dosage}
+                        onChange={(e) => updateSchedule(schedule.id, { dosage: e.target.value })}
+                        placeholder="১টি"
+                        aria-label="ডোজ"
+                        className="min-h-[48px] w-28 px-3 py-2 text-base bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                      />
+
+                      {schedules.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeScheduleSlot(schedule.id)}
+                          className="min-h-[48px] min-w-[48px] flex items-center justify-center text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl cursor-pointer"
+                          title="স্লট সরান"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Stock, Min Alert, Unit */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      হাতে মজুত আছে
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={stock}
+                      onChange={(e) => setStock(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      কম হলে সতর্ক সীমা
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={minStockAlert}
+                      onChange={(e) => setMinStockAlert(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      একক
+                    </label>
+                    <select
+                      value={unit}
+                      onChange={(e) => setUnit(e.target.value)}
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    >
+                      <option value="টি">টি</option>
+                      <option value="বোতল">বোতল</option>
+                      <option value="পেন">পেন</option>
+                      <option value="ড্রপ">ড্রপ</option>
+                      <option value="পাফ">পাফ</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Purpose, Doctor, Instructions */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      কী কারণে খাচ্ছেন
+                    </label>
+                    <input
+                      type="text"
+                      value={purpose}
+                      onChange={(e) => setPurpose(e.target.value)}
+                      placeholder="যেমন: প্রেসার, সুগার, জ্বর"
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      ডাক্তারের নাম
+                    </label>
+                    <input
+                      type="text"
+                      value={doctorName}
+                      onChange={(e) => setDoctorName(e.target.value)}
+                      placeholder="যেমন: ডা. করিম"
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                    বিশেষ নির্দেশনা
+                  </label>
+                  <input
+                    type="text"
+                    value={instructions}
+                    onChange={(e) => setInstructions(e.target.value)}
+                    placeholder="যেমন: বেশি করে পানি খাবেন"
+                    className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                {/* AI Info & Drug Interaction Check */}
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-700 space-y-3">
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      disabled={isCheckingInteractions}
+                      onClick={handleCheckDrugInteractions}
+                      className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-sm font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {isCheckingInteractions ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>যাচাই হচ্ছে...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4 text-amber-300" />
+                          <span>অন্য ওষুধের সাথে মানাবে কিনা দেখুন</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setIsInfoModalOpen(true)}
+                      className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl text-sm font-bold cursor-pointer"
+                    >
+                      <BookOpen className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+                      <span>ওষুধ সম্পর্কে জানুন</span>
+                    </button>
+                  </div>
+
+                  {interactionError && (
+                    <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-sm text-amber-900 dark:text-amber-200 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{interactionError}</span>
+                    </div>
+                  )}
+
+                  {interactionResult && (
+                    <div className="space-y-3">
+                      <div
+                        className={`p-4 rounded-xl border flex items-start gap-3 ${
+                          interactionResult.hasInteraction
+                            ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100'
+                            : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-950 dark:text-emerald-100'
+                        }`}
+                      >
+                        {interactionResult.hasInteraction ? (
+                          <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                        ) : (
+                          <ShieldCheck className="w-5 h-5 shrink-0 mt-0.5" />
+                        )}
+                        <div className="text-sm space-y-1">
+                          <p className="font-bold text-base">
+                            {interactionResult.hasInteraction
+                              ? 'সতর্কতা: ডাক্তারের পরামর্শ নিয়ে খান'
+                              : 'কোনো সমস্যা পাওয়া যায়নি'}
+                          </p>
+                          <p>{interactionResult.summary}</p>
+                        </div>
+                      </div>
+
+                      {interactionResult.recommendation && (
+                        <div className="p-3 rounded-xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-sm text-teal-900 dark:text-teal-200 flex items-start gap-2">
+                          <HelpCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                          <span>{interactionResult.recommendation}</span>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Section 3: Stock & Course Duration */}
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
-            ৩. মজুত (Stock) ও কোর্সের মেয়াদ
-          </h2>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                বর্তমান মজুত সংখ্যা
-              </label>
-              <input
-                type="number"
-                min="0"
-                value={stock}
-                onChange={(e) => setStock(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                কম মজুত সতর্কবার্তা সীমা
-              </label>
-              <input
-                type="number"
-                min="1"
-                value={minStockAlert}
-                onChange={(e) => setMinStockAlert(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                একক (Unit)
-              </label>
-              <select
-                value={unit}
-                onChange={(e) => setUnit(e.target.value)}
-                className="w-full px-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden cursor-pointer"
-              >
-                <option value="টি">টি (Tablets/Capsules)</option>
-                <option value="বোতল">বোতল (Bottle)</option>
-                <option value="পেন">পেন (Insulin Pen)</option>
-                <option value="ড্রপ">ড্রপ (Eye Drop)</option>
-                <option value="পাফ">পাফ (Inhaler Puff)</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="pt-2 flex items-center gap-6">
-            <label className="flex items-center gap-2 cursor-pointer text-xs font-medium text-slate-800 dark:text-slate-200">
-              <input
-                type="checkbox"
-                checked={isChronic}
-                onChange={(e) => setIsChronic(e.target.checked)}
-                className="w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500"
-              />
-              <span>এটি নিয়মিত / দীর্ঘমেয়াদী ওষুধ (প্রেসার, সুগার ইত্যাদি)</span>
-            </label>
-
-            {!isChronic && (
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-slate-500">কোর্সের মেয়াদ:</span>
-                <input
-                  type="number"
-                  min="1"
-                  value={durationDays}
-                  onChange={(e) => setDurationDays(parseInt(e.target.value, 10) || 7)}
-                  className="w-16 px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded text-center text-xs"
-                />
-                <span className="text-slate-500">দিন</span>
               </div>
             )}
           </div>
         </section>
-
-        {/* Section 4: Doctor & Instructions */}
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-          <h2 className="text-sm font-bold text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
-            ৪. প্রেসক্রিপশন ডাক্তার ও বিশেষ নির্দেশিকা
-          </h2>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                ডাক্তারের নাম ও ডিগ্রি
-              </label>
-              <input
-                type="text"
-                value={doctorName}
-                onChange={(e) => setDoctorName(e.target.value)}
-                placeholder="যেমন: ডা. সুব্রত পাল (NICVD)"
-                className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                বিশেষ সতর্কতা ও নির্দেশনা
-              </label>
-              <input
-                type="text"
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                placeholder="যেমন: পর্যাপ্ত পানি পান করবেন, ড্রপ দেওয়ার পর চোখ বন্ধ রাখুন"
-                className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-          </div>
-        </section>
-
-        {/* Form Action Buttons */}
-        <div className="flex items-center justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onClick={() => setCurrentPage('medicines')}
-            className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-          >
-            বাতিল
-          </button>
-
-          <button
-            type="submit"
-            className="px-6 py-2.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 active:bg-teal-900 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-          >
-            <Check className="w-4 h-4" />
-            <span>ওষুধ সংরক্ষণ করুন</span>
-          </button>
-        </div>
-
-      </form>
+      )}
 
       {/* AI Prescription OCR Scanner Modal */}
       <PrescriptionScannerModal

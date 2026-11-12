@@ -6,6 +6,12 @@ import {
   clearAllNativeReminders,
   getNativePermissionStatus,
   isNativeRemindersAvailable,
+  getNativeAlarmTone,
+  pickNativeAlarmTone,
+  pickNativeAlarmToneFromFiles,
+  previewNativeAlarmTone,
+  stopNativeAlarmTonePreview,
+  resetNativeAlarmTone,
   AndroidRemindersBridge,
 } from '../src/services/nativeReminders';
 import { Medicine, PatientProfile } from '../src/types';
@@ -274,7 +280,29 @@ const mockBridge: AndroidRemindersBridge = {
     testAlarmScheduled = true;
     return true;
   },
+  getAlarmTone: () => JSON.stringify({ name: 'ভোরের সুর', isDefault: false }),
+  pickAlarmTone: () => {
+    alarmTonePicked = true;
+  },
+  pickAlarmToneFromFiles: () => {
+    alarmToneFilePicked = true;
+  },
+  previewAlarmTone: () => {
+    alarmPreviewStarted = true;
+  },
+  stopPreview: () => {
+    alarmPreviewStopped = true;
+  },
+  resetAlarmTone: () => {
+    alarmToneReset = true;
+  },
 };
+
+let alarmTonePicked = false;
+let alarmToneFilePicked = false;
+let alarmPreviewStarted = false;
+let alarmPreviewStopped = false;
+let alarmToneReset = false;
 
 (globalThis as unknown as { window: { AndroidReminders: AndroidRemindersBridge } }).window = {
   AndroidReminders: mockBridge,
@@ -308,6 +336,35 @@ if (permStatus && permStatus.exactAlarm === true && permStatus.batteryUnrestrict
   console.log('✅ PASS: getNativePermissionStatus successfully parsed permission JSON:', permStatus);
 } else {
   console.error('❌ FAIL: getNativePermissionStatus failed:', permStatus);
+  process.exit(1);
+}
+
+const toneInfo = getNativeAlarmTone();
+if (toneInfo && toneInfo.name === 'ভোরের সুর' && toneInfo.isDefault === false) {
+  console.log('✅ PASS: getNativeAlarmTone parsed JSON:', toneInfo);
+} else {
+  console.error('❌ FAIL: getNativeAlarmTone failed:', toneInfo);
+  process.exit(1);
+}
+
+if (
+  pickNativeAlarmTone() &&
+  alarmTonePicked &&
+  pickNativeAlarmToneFromFiles() &&
+  alarmToneFilePicked &&
+  previewNativeAlarmTone() &&
+  alarmPreviewStarted
+) {
+  stopNativeAlarmTonePreview();
+  resetNativeAlarmTone();
+  if (alarmPreviewStopped && alarmToneReset) {
+    console.log('✅ PASS: Alarm tone picker, preview, stopPreview, and resetAlarmTone bridge methods verified');
+  } else {
+    console.error('❌ FAIL: stopPreview or resetAlarmTone failed');
+    process.exit(1);
+  }
+} else {
+  console.error('❌ FAIL: Alarm tone picker/preview bridge methods failed');
   process.exit(1);
 }
 

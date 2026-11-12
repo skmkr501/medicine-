@@ -36,8 +36,7 @@ export const AdherenceAnalytics: React.FC = () => {
       const dayLogs = patientLogs.filter((l) => l.scheduledDate === date);
       const taken = dayLogs.filter((l) => l.status === 'taken').length;
       const total = dayLogs.length;
-      // Default to 100% if mocked taken, or calculate
-      const percent = total > 0 ? Math.round((taken / total) * 100) : 100;
+      const percent = total > 0 ? Math.round((taken / total) * 100) : 0;
 
       return {
         date,
@@ -49,24 +48,27 @@ export const AdherenceAnalytics: React.FC = () => {
     });
   }, [patientLogs]);
 
-  // Calculate Streak (consecutive days with >= 80% adherence)
+  // Calculate Streak (consecutive logged days with >= 80% adherence)
   const currentStreak = useMemo(() => {
     let streak = 0;
     for (let i = last7DaysData.length - 1; i >= 0; i--) {
-      if (last7DaysData[i].percent >= 80) {
+      if (last7DaysData[i].total > 0 && last7DaysData[i].percent >= 80) {
         streak++;
-      } else {
+      } else if (last7DaysData[i].total > 0 || streak > 0) {
         break;
       }
     }
-    return Math.max(1, streak);
+    return streak;
   }, [last7DaysData]);
 
-  // Overall 30-day metrics
+  // Overall metrics
   const totalLogsCount = patientLogs.length;
   const totalTaken = patientLogs.filter((l) => l.status === 'taken').length;
-  const totalSkipped = patientLogs.filter((l) => l.status === 'skipped').length;
-  const averageAdherence = totalLogsCount > 0 ? Math.round((totalTaken / totalLogsCount) * 100) : 95;
+  const averageAdherence = totalLogsCount > 0 ? Math.round((totalTaken / totalLogsCount) * 100) : 0;
+
+  if (medicines.length === 0 && patientLogs.length === 0) {
+    return null;
+  }
 
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-6">
@@ -82,16 +84,24 @@ export const AdherenceAnalytics: React.FC = () => {
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">
                 নিয়মিততার স্ট্রিক (Adherence Streak)
               </h2>
-              <span className="px-2 py-0.5 rounded-full text-2xs font-extrabold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
-                সক্রিয়
-              </span>
+              {currentStreak > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-2xs font-extrabold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                  সক্রিয়
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {activePatient?.name || 'ব্যবহারকারী'} টানা{' '}
-              <strong className="text-amber-600 dark:text-amber-400">
-                {toBengaliNumber(currentStreak)} দিন
-              </strong>{' '}
-              সঠিক সময়ে ওষুধ গ্রহণ করছেন!
+              {totalLogsCount === 0 ? (
+                'ওষুধ সেবন শুরু করলে এখানে আপনার নিয়মিততার হিসাব দেখা যাবে।'
+              ) : (
+                <>
+                  {activePatient?.name || 'ব্যবহারকারী'} টানা{' '}
+                  <strong className="text-amber-600 dark:text-amber-400">
+                    {toBengaliNumber(currentStreak)} দিন
+                  </strong>{' '}
+                  সঠিক সময়ে ওষুধ গ্রহণ করছেন!
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -126,16 +136,20 @@ export const AdherenceAnalytics: React.FC = () => {
         <div className="grid grid-cols-7 gap-2 sm:gap-4 items-end h-36 pt-4 pb-2 px-2 bg-slate-50/70 dark:bg-slate-800/30 rounded-xl border border-slate-100 dark:border-slate-800">
           {last7DaysData.map((d, idx) => {
             const isToday = idx === last7DaysData.length - 1;
-            const barHeight = Math.max(15, d.percent);
+            const hasLogs = d.total > 0;
+            const barHeight = hasLogs ? Math.max(15, d.percent) : 8;
 
-            let barColor = 'bg-teal-600';
-            if (d.percent === 100) barColor = 'bg-emerald-600';
-            else if (d.percent < 70) barColor = 'bg-amber-500';
+            let barColor = 'bg-slate-300 dark:bg-slate-600';
+            if (hasLogs) {
+              if (d.percent === 100) barColor = 'bg-emerald-600';
+              else if (d.percent < 70) barColor = 'bg-amber-500';
+              else barColor = 'bg-teal-600';
+            }
 
             return (
               <div key={d.date} className="flex flex-col items-center h-full justify-end gap-1.5">
                 <span className="text-2xs font-bold text-slate-600 dark:text-slate-300 tabular-nums">
-                  {toBengaliNumber(d.percent)}%
+                  {hasLogs ? `${toBengaliNumber(d.percent)}%` : '–'}
                 </span>
                 <div className="w-full max-w-[28px] bg-slate-200 dark:bg-slate-700 rounded-t-lg h-24 flex items-end overflow-hidden">
                   <div

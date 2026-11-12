@@ -58,7 +58,7 @@ export const AiAssistantPage: React.FC = () => {
     // Store in localStorage or session so AddMedicine can pre-fill
     try {
       localStorage.setItem('shasthobondhu_pending_ai_med', JSON.stringify(data));
-      showToast('ছবি থেকে তথ্য শনাক্ত হয়েছে! AddMedicine ফর্মে বসানো হচ্ছে...', 'success');
+      showToast('ছবি থেকে তথ্য শনাক্ত হয়েছে! নতুন ওষুধ ফর্মে বসানো হচ্ছে...', 'success');
       setCurrentPage('add-medicine');
     } catch {
       showToast('স্ক্যান ডেটা লোড করতে সমস্যা হয়েছে', 'alert');
@@ -74,10 +74,10 @@ export const AiAssistantPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
               <Sparkles className="w-6 h-6 text-teal-600 dark:text-teal-400" />
-              Gemini AI স্বাস্থ্য ও ওষুধ সহায়ক
+              AI সহায়ক
             </h1>
             <span className="text-2xs px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 font-bold">
-              বাংলা AI
+              স্বাস্থ্য ও ওষুধ সহায়ক
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -218,7 +218,7 @@ export const AiAssistantPage: React.FC = () => {
               প্রেসক্রিপশন ও পাতা স্ক্যানার
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              প্রেসক্রিপশন বা পাতার ছবি তুলে দিন, AI নিজে পড়ে নাম, মাত্রা ও সময়সূচি AddMedicine ফর্মে বসিয়ে দেবে।
+              প্রেসক্রিপশন বা পাতার ছবি তুলে দিন, AI সহায়ক নিজে পড়ে নাম, মাত্রা ও সময়সূচি নতুন ওষুধ ফর্মে বসিয়ে দেবে।
             </p>
           </div>
           <span className="text-xs font-semibold text-teal-700 dark:text-teal-400 mt-4 flex items-center gap-1">
@@ -241,7 +241,7 @@ export const AiAssistantPage: React.FC = () => {
             </p>
           </div>
           <span className="text-2xs text-slate-400 mt-4">
-            সার্ভার-সাইড সুরক্ষিত জেমিনাই মডেল দ্বারা পরিচালিত
+            নিরাপদ AI সহায়ক দ্বারা পরিচালিত
           </span>
         </div>
       </div>

@@ -1,17 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
-import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
+import { toBengaliNumber, formatBengaliDate, formatBengaliTime } from '../../utils/bengaliUtils';
 import { TimeSlot } from '../../types';
 import {
   CheckCircle2,
   Clock,
   AlertTriangle,
   Plus,
-  ArrowRight,
   ShieldCheck,
   Package,
-  CalendarCheck,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   HeartPulse,
   Cloud,
   RefreshCw,
@@ -19,13 +19,17 @@ import {
   UserPlus,
   Edit2,
   ShoppingCart,
-  Sparkles,
   Calendar,
   Bell,
   PhoneCall,
   Share2,
-  Activity,
-  Stethoscope,
+  AlertCircle,
+  CloudOff,
+  Pill,
+  BookOpen,
+  ListChecks,
+  X,
+  Volume2,
 } from 'lucide-react';
 
 import { ExpiringStockSection } from './ExpiringStockSection';
@@ -38,9 +42,33 @@ import {
   getNativePermissionStatus,
   NativePermissionStatus,
 } from '../../services/nativeReminders';
+import { buildDoseSpeechText, useBengaliSpeech } from '../../utils/speechUtils';
+
+function parseScheduleMinutes(timeStr: string): number {
+  const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  let normalized = (timeStr || '').trim();
+  bengaliDigits.forEach((d, idx) => {
+    normalized = normalized.split(d).join(String(idx));
+  });
+  const match = normalized.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?/i);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const meridiem = (match[3] || '').toUpperCase();
+  if (meridiem === 'PM' && hours < 12) hours += 12;
+  if (meridiem === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+}
 
 export const Dashboard: React.FC = () => {
   const [isBuyListOpen, setIsBuyListOpen] = useState(false);
+  const [showMoreWidgets, setShowMoreWidgets] = useState(false);
+  const [showTakenDoses, setShowTakenDoses] = useState(false);
+  const [deferredDoseKeys, setDeferredDoseKeys] = useState<string[]>([]);
+  const [showEasyDosesModal, setShowEasyDosesModal] = useState(false);
+  const [showEasyEmergencyModal, setShowEasyEmergencyModal] = useState(false);
+
+  const { hasBengaliVoice, speak } = useBengaliSpeech();
   const isNative = isNativeRemindersAvailable();
   const [nativePerms, setNativePerms] = useState<NativePermissionStatus | null>(() =>
     getNativePermissionStatus()
@@ -67,21 +95,21 @@ export const Dashboard: React.FC = () => {
     setActivePatientId,
     setCurrentPage,
     markDose,
-    adjustStock,
     openStockAdjustmentModal,
-    setSelectedMedicineIdForDetail,
     currentUser,
     openAuthModal,
     syncLocalToCloud,
+    triggerManualSync,
+    syncStatus,
+    lastSyncedAt,
     isSyncing,
-    isCloudConnected,
     openCreateProfileModal,
     openEditProfileModal,
     appointments,
     settings,
+    showToast,
   } = useMedicine();
 
-  const isBn = settings.language !== 'en';
   const todayStr = '2026-11-02';
 
   // Urgent Appointments (Today or Tomorrow)
@@ -124,39 +152,34 @@ export const Dashboard: React.FC = () => {
   };
 
   const handleNotifyFamily = (dose: { brandName: string; dosage: string; time: string }, method: 'whatsapp' | 'sms') => {
-    const patientName = activePatient?.name || (isBn ? 'সদস্য' : 'Member');
+    const patientName = activePatient?.name || 'সদস্য';
     const contactPhone = settings.emergencyContactPhone || '';
 
-    const message = isBn
-      ? `জরুরি স্বাস্থ্যবার্তা: ${patientName}-এর "${dose.brandName}" (${dose.dosage}) নির্ধারিত সময় (${dose.time})-এর ডোজ ৩০ মিনিটের বেশি পার হলেও এখনও গ্রহণ করা হয়নি। অনুগ্রহ করে খোঁজ নিন। - স্বাস্থ্যবন্ধু`
-      : `Health Alert: ${patientName}'s dose of "${dose.brandName}" (${dose.dosage}) scheduled for ${dose.time} is over 30 minutes overdue. Please check in. - Shasthobondhu`;
+    const message = `জরুরি স্বাস্থ্যবার্তা: ${patientName}-এর "${dose.brandName}" (${dose.dosage}) নির্ধারিত সময় (${dose.time})-এর ডোজ ৩০ মিনিটের বেশি পার হলেও এখনও গ্রহণ করা হয়নি। অনুগ্রহ করে খোঁজ নিন। - স্বাস্থ্যবন্ধু`;
 
     if (!contactPhone) {
-      if (confirm(isBn
-        ? 'সেটিংস-এ পরিবারের জরুরি যোগাযোগের ফোন নম্বর যোগ করা নেই। আপনি কি সেটিংস পৃষ্ঠায় যেতে চান?'
-        : 'No family emergency contact number set in Settings. Would you like to go to Settings?')) {
-        setCurrentPage('settings');
-      }
+      showToast('প্রথমে পরিবারের জরুরি নম্বর যোগ করুন — সেটিংসে যাওয়া হচ্ছে', 'info');
+      setCurrentPage('settings');
       return;
     }
 
     const cleanPhone = contactPhone.replace(/[^0-9+]/g, '');
     if (method === 'whatsapp') {
-      window.open(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`, '_blank');
+      window.location.href = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
     } else {
       window.location.href = `sms:${cleanPhone}?body=${encodeURIComponent(message)}`;
     }
   };
 
-  // Filter medicines for current active patient strictly (Requirement 3 & 5)
+  // Filter medicines for current active patient strictly
   const patientMedicines = activePatient
     ? medicines.filter(
         (m) => m.assignedPatientId === activePatient.id && m.status === 'active'
       )
     : medicines.filter((m) => m.status === 'active');
 
-  // Compile today's schedule items from patient medicines
   interface TodayDoseItem {
+    key: string;
     medicineId: string;
     brandName: string;
     genericName: string;
@@ -172,84 +195,466 @@ export const Dashboard: React.FC = () => {
     isOverdue?: boolean;
   }
 
-  const todayDoses: TodayDoseItem[] = [];
+  const todayDoses = useMemo(() => {
+    const items: TodayDoseItem[] = [];
 
-  patientMedicines.forEach((med) => {
-    med.schedules.forEach((sch) => {
-      const log = doseLogs.find(
-        (l) =>
-          l.medicineId === med.id &&
-          l.scheduledDate === todayStr &&
-          l.timeSlot === sch.timeSlot
-      );
-      const overdue = !log?.status && isDoseOverdueBy30Min(sch.time);
+    patientMedicines.forEach((med) => {
+      med.schedules.forEach((sch) => {
+        const log = doseLogs.find(
+          (l) =>
+            l.medicineId === med.id &&
+            l.scheduledDate === todayStr &&
+            l.timeSlot === sch.timeSlot
+        );
+        const overdue = !log?.status && isDoseOverdueBy30Min(sch.time);
 
-      todayDoses.push({
-        medicineId: med.id,
-        brandName: med.brandName,
-        genericName: med.genericName,
-        type: med.type,
-        timeSlot: sch.timeSlot,
-        time: sch.time,
-        dosage: sch.dosage,
-        mealTiming: med.mealTiming,
-        colorTag: med.colorTag,
-        stock: med.stock,
-        logStatus: log?.status,
-        loggedAt: log?.loggedAt,
-        isOverdue: overdue,
+        items.push({
+          key: `${med.id}-${sch.timeSlot}`,
+          medicineId: med.id,
+          brandName: med.brandName,
+          genericName: med.genericName,
+          type: med.type,
+          timeSlot: sch.timeSlot,
+          time: sch.time,
+          dosage: sch.dosage,
+          mealTiming: med.mealTiming,
+          colorTag: med.colorTag,
+          stock: med.stock,
+          logStatus: log?.status,
+          loggedAt: log?.loggedAt,
+          isOverdue: overdue,
+        });
       });
     });
-  });
 
-  // Sort today's doses by timeSlot order
-  const slotOrder: Record<TimeSlot, number> = {
-    'সকাল': 1,
-    'দুপুর': 2,
-    'সন্ধ্যা': 3,
-    'রাত': 4,
-  };
-  todayDoses.sort((a, b) => slotOrder[a.timeSlot] - slotOrder[b.timeSlot]);
+    const slotOrder: Record<TimeSlot, number> = {
+      'সকাল': 1,
+      'দুপুর': 2,
+      'সন্ধ্যা': 3,
+      'রাত': 4,
+    };
+
+    items.sort((a, b) => {
+      const slotDiff = slotOrder[a.timeSlot] - slotOrder[b.timeSlot];
+      if (slotDiff !== 0) return slotDiff;
+      return parseScheduleMinutes(a.time) - parseScheduleMinutes(b.time);
+    });
+
+    return items;
+  }, [patientMedicines, doseLogs, todayStr]);
 
   const totalToday = todayDoses.length;
-  const takenCount = todayDoses.filter((d) => d.logStatus === 'taken').length;
-  const remainingCount = totalToday - takenCount;
+  const takenDoses = todayDoses.filter((d) => d.logStatus === 'taken');
+  const pendingDoses = todayDoses.filter((d) => d.logStatus !== 'taken' && d.logStatus !== 'skipped');
+  const remainingDoses = todayDoses.filter((d) => d.logStatus !== 'taken');
+  const takenCount = takenDoses.length;
   const adherencePercent = totalToday > 0 ? Math.round((takenCount / totalToday) * 100) : 0;
-  const overdueDoses = todayDoses.filter((d) => d.logStatus !== 'taken' && d.isOverdue);
-
-  // Low stock medicines
+  const overdueDoses = pendingDoses.filter((d) => d.isOverdue);
   const lowStockMedicines = patientMedicines.filter((m) => m.stock <= m.minStockAlert);
 
+  // Next due dose spotlight: non-deferred pending first, or fall back to first pending if user deferred all
+  const nonDeferredPending = pendingDoses.filter((d) => !deferredDoseKeys.includes(d.key));
+  const nextDueDose = nonDeferredPending[0] || pendingDoses[0] || null;
+  const remainingListDoses = remainingDoses.filter((d) => !nextDueDose || d.key !== nextDueDose.key);
+
+  const handleDeferDose = (dose: TodayDoseItem) => {
+    setDeferredDoseKeys((prev) => (prev.includes(dose.key) ? prev : [...prev, dose.key]));
+    showToast(`"${dose.brandName}" পরের তালিকায় রাখা হয়েছে`, 'info');
+  };
+
+  const handleTakeDose = (dose: TodayDoseItem) => {
+    setDeferredDoseKeys((prev) => prev.filter((k) => k !== dose.key));
+    markDose(dose.medicineId, dose.timeSlot, dose.time, 'taken');
+  };
+
+  const canSpeakDose = hasBengaliVoice && settings.voiceReadoutEnabled !== false;
+
+  const handleSpeakDose = (dose: TodayDoseItem) => {
+    const text = buildDoseSpeechText({
+      timeSlot: dose.timeSlot,
+      brandName: dose.brandName,
+      dosage: dose.dosage,
+      mealTiming: dose.mealTiming,
+    });
+    speak(text);
+  };
+
+  if (settings.easyMode) {
+    const emergencyPhone =
+      (settings.emergencyContactPhone || activePatient?.emergencyContact || '').trim();
+    const cleanEmergencyPhone = emergencyPhone.replace(/[^0-9+]/g, '');
+
+    return (
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
+        <div className="grid grid-cols-1 gap-5">
+          {/* 1. আজকের ওষুধ */}
+          <button
+            type="button"
+            onClick={() => setShowEasyDosesModal(true)}
+            className="min-h-[120px] w-full p-6 rounded-3xl bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
+                <Pill className="w-9 h-9 text-white" />
+              </div>
+              <div>
+                <span className="block text-2xl sm:text-3xl font-bold leading-tight">
+                  আজকের ওষুধ
+                </span>
+                <span className="block text-base sm:text-lg text-teal-100 mt-1 font-medium">
+                  {totalToday === 0
+                    ? 'কোনো ওষুধ যোগ করা হয়নি'
+                    : pendingDoses.length > 0
+                    ? `${toBengaliNumber(pendingDoses.length)}টি ডোজ বাকি আছে`
+                    : 'আজকের সব ওষুধ খাওয়া হয়েছে ✓'}
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-8 h-8 text-teal-100 shrink-0" />
+          </button>
+
+          {/* 2. ওষুধ যোগ */}
+          <button
+            type="button"
+            onClick={() => setCurrentPage('add-medicine')}
+            className="min-h-[120px] w-full p-6 rounded-3xl bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
+                <Plus className="w-10 h-10 text-white" />
+              </div>
+              <div>
+                <span className="block text-2xl sm:text-3xl font-bold leading-tight">
+                  ওষুধ যোগ
+                </span>
+                <span className="block text-base sm:text-lg text-emerald-100 mt-1 font-medium">
+                  নতুন ওষুধ বা ছবি থেকে যোগ করুন
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-8 h-8 text-emerald-100 shrink-0" />
+          </button>
+
+          {/* 3. জরুরি কল */}
+          <button
+            type="button"
+            onClick={() => setShowEasyEmergencyModal(true)}
+            className="min-h-[120px] w-full p-6 rounded-3xl bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
+                <PhoneCall className="w-9 h-9 text-white" />
+              </div>
+              <div>
+                <span className="block text-2xl sm:text-3xl font-bold leading-tight">
+                  জরুরি কল
+                </span>
+                <span className="block text-base sm:text-lg text-rose-100 mt-1 font-medium">
+                  পরিবার, ১৬২৬৩ বা ৯৯৯ নম্বরে কল করুন
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-8 h-8 text-rose-100 shrink-0" />
+          </button>
+        </div>
+
+        {/* Easy Mode: আজকের ওষুধ Modal */}
+        {showEasyDosesModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+                  আজকের ওষুধ
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowEasyDosesModal(false)}
+                  aria-label="বন্ধ করুন"
+                  className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto space-y-4">
+                {todayDoses.length === 0 ? (
+                  <div className="text-center py-8 space-y-4">
+                    <p className="text-xl font-bold text-slate-800 dark:text-slate-100">
+                      আজকের কোনো ওষুধ নেই
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowEasyDosesModal(false);
+                        setCurrentPage('add-medicine');
+                      }}
+                      className="min-h-[56px] px-7 py-3 bg-teal-700 hover:bg-teal-800 text-white font-bold text-lg rounded-2xl cursor-pointer inline-flex items-center gap-2"
+                    >
+                      <Plus className="w-6 h-6" />
+                      <span>ওষুধ যোগ করুন</span>
+                    </button>
+                  </div>
+                ) : pendingDoses.length === 0 ? (
+                  <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-6 text-center space-y-2">
+                    <CheckCircle2 className="w-12 h-12 text-emerald-700 dark:text-emerald-400 mx-auto" />
+                    <p className="text-2xl font-bold text-emerald-950 dark:text-emerald-100">
+                      আজকের সব ওষুধ খাওয়া হয়েছে ✓
+                    </p>
+                  </div>
+                ) : (
+                  pendingDoses.map((dose) => (
+                    <div
+                      key={dose.key}
+                      className="p-5 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 space-y-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-base font-bold text-teal-800 dark:text-teal-300">
+                          {dose.timeSlot} · {formatBengaliTime(dose.time)}
+                        </div>
+                        {canSpeakDose && (
+                          <button
+                            type="button"
+                            onClick={() => handleSpeakDose(dose)}
+                            className="min-h-[48px] px-4 py-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-200 font-bold text-base inline-flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Volume2 className="w-5 h-5" />
+                            <span>শুনুন</span>
+                          </button>
+                        )}
+                      </div>
+                      <div className="text-2xl font-bold text-slate-900 dark:text-white">
+                        {dose.brandName}
+                      </div>
+                      <div className="text-lg font-semibold text-slate-700 dark:text-slate-200">
+                        ডোজ: {dose.dosage} · {dose.mealTiming}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleTakeDose(dose)}
+                        className="min-h-[56px] w-full flex items-center justify-center gap-2 px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xl rounded-2xl cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-6 h-6" />
+                        <span>খেয়েছি</span>
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Easy Mode: জরুরি কল Modal */}
+        {showEasyEmergencyModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
+              <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+                <h2 className="text-2xl font-bold text-rose-700 dark:text-rose-400">
+                  জরুরি কল
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowEasyEmergencyModal(false)}
+                  aria-label="বন্ধ করুন"
+                  className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {cleanEmergencyPhone ? (
+                  <a
+                    href={`tel:${cleanEmergencyPhone}`}
+                    className="min-h-[64px] w-full p-4 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xl flex items-center justify-between gap-3"
+                  >
+                    <span className="flex items-center gap-3">
+                      <PhoneCall className="w-6 h-6 shrink-0" />
+                      <span>
+                        {settings.emergencyContactName || 'পরিবারের জরুরি নম্বর'} ({emergencyPhone})
+                      </span>
+                    </span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEasyEmergencyModal(false);
+                      setCurrentPage('settings');
+                    }}
+                    className="min-h-[56px] w-full p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100 font-bold text-lg text-center cursor-pointer"
+                  >
+                    পরিবারের জরুরি নম্বর সেটিংস থেকে যোগ করুন
+                  </button>
+                )}
+
+                <a
+                  href="tel:16263"
+                  className="min-h-[64px] w-full p-4 rounded-2xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xl flex items-center gap-3"
+                >
+                  <PhoneCall className="w-6 h-6 shrink-0" />
+                  <span>স্বাস্থ্য বাতায়ন (১৬২৬৩)</span>
+                </a>
+
+                <a
+                  href="tel:999"
+                  className="min-h-[64px] w-full p-4 rounded-2xl bg-rose-700 hover:bg-rose-800 text-white font-bold text-xl flex items-center gap-3"
+                >
+                  <PhoneCall className="w-6 h-6 shrink-0" />
+                  <span>জাতীয় জরুরি সেবা (৯৯৯)</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-      
-      {/* Doctor Appointment Reminder Alert (Step 2: আগের দিন ও দিনের শুরুতে ড্যাশবোর্ডে সতর্কতা) */}
+    <div className="space-y-6 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+
+      {/* Compact Top Context Row: Date + Active Patient Switcher + Sync */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-base font-bold text-slate-900 dark:text-white">
+            {formatBengaliDate(todayStr)}
+          </p>
+          {activePatient && (
+            <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
+              {activePatient.name} ({activePatient.relation})
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {patients.length > 1 && activePatient && (
+            <select
+              value={activePatient.id}
+              onChange={(e) => {
+                if (e.target.value === '__add_new__') {
+                  openCreateProfileModal();
+                } else {
+                  setActivePatientId(e.target.value);
+                }
+              }}
+              aria-label="সদস্য পরিবর্তন"
+              className="min-h-[48px] text-base font-semibold text-teal-900 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl px-3.5 py-2 focus:outline-hidden cursor-pointer"
+            >
+              {patients.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.relation})
+                </option>
+              ))}
+              <option value="__add_new__">+ নতুন সদস্য</option>
+            </select>
+          )}
+
+          {currentUser ? (
+            <button
+              type="button"
+              onClick={triggerManualSync}
+              disabled={syncStatus === 'syncing' || isSyncing}
+              className={`min-h-[48px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors cursor-pointer ${
+                syncStatus === 'synced'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60'
+                  : syncStatus === 'syncing' || isSyncing
+                  ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 border-teal-200 dark:border-teal-800/60'
+                  : syncStatus === 'offline'
+                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800/60'
+                  : 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800/60'
+              }`}
+              title={lastSyncedAt ? `শেষ সিঙ্ক: ${lastSyncedAt}` : 'সিঙ্ক অবস্থা'}
+            >
+              {syncStatus === 'synced' ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+                  <span>সিঙ্ক করা</span>
+                </>
+              ) : syncStatus === 'syncing' || isSyncing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-teal-700 dark:text-teal-400" />
+                  <span>সিঙ্ক হচ্ছে</span>
+                </>
+              ) : syncStatus === 'offline' ? (
+                <>
+                  <CloudOff className="w-4 h-4 text-amber-700 dark:text-amber-400" />
+                  <span>অফলাইন</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="w-4 h-4 text-rose-700 dark:text-rose-400" />
+                  <span>আবার চেষ্টা</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={openAuthModal}
+              className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <Lock className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+              <span>লগইন করুন</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Native Alarm Permission Alert Banner */}
+      {hasMissingPermissions && (
+        <section className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-6 h-6 text-amber-700 dark:text-amber-300 shrink-0 mt-0.5" />
+            <div>
+              <h3 className="text-base font-bold text-amber-950 dark:text-amber-100">
+                ঠিক সময়ে অ্যালার্ম বাজতে এই অনুমতিগুলো দিন
+              </h3>
+              <div className="flex flex-wrap items-center gap-2 mt-1.5 text-sm text-amber-900 dark:text-amber-200 font-medium">
+                <span className={nativePerms.exactAlarm ? 'text-emerald-800 dark:text-emerald-300 font-semibold' : 'text-rose-700 dark:text-rose-300 font-bold'}>
+                  সঠিক সময়ে অ্যালার্ম {nativePerms.exactAlarm ? '✓' : '✕'}
+                </span>
+                <span>·</span>
+                <span className={nativePerms.notifications ? 'text-emerald-800 dark:text-emerald-300 font-semibold' : 'text-rose-700 dark:text-rose-300 font-bold'}>
+                  নোটিফিকেশন {nativePerms.notifications ? '✓' : '✕'}
+                </span>
+                <span>·</span>
+                <span className={nativePerms.batteryUnrestricted ? 'text-emerald-800 dark:text-emerald-300 font-semibold' : 'text-rose-700 dark:text-rose-300 font-bold'}>
+                  ব্যাটারি সেভার থেকে ছাড় {nativePerms.batteryUnrestricted ? '✓' : '✕'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setCurrentPage('settings')}
+            className="min-h-[48px] px-5 py-2.5 bg-amber-700 hover:bg-amber-800 text-white font-bold text-base rounded-xl transition-colors shrink-0 cursor-pointer"
+          >
+            অনুমতি ঠিক করুন
+          </button>
+        </section>
+      )}
+
+      {/* Upcoming Doctor Appointments Alert */}
       {urgentAppointments.length > 0 && (
-        <section className="bg-teal-50 dark:bg-teal-950/40 border border-teal-300 dark:border-teal-700 rounded-2xl p-4 sm:p-5 shadow-2xs">
+        <section className="bg-teal-50 dark:bg-teal-950/40 border border-teal-300 dark:border-teal-700 rounded-2xl p-4 sm:p-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-teal-600 text-white shrink-0 mt-0.5">
+              <div className="p-2.5 rounded-xl bg-teal-700 text-white shrink-0">
                 <Calendar className="w-5 h-5" />
               </div>
               <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-sm font-bold text-teal-950 dark:text-teal-100">
-                    {isBn ? 'আসন্ন ডাক্তারের অ্যাপয়েন্টমেন্ট সতর্কতা' : 'Upcoming Doctor Appointment Alert'}
-                  </h3>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-200 dark:bg-teal-900 text-teal-900 dark:text-teal-200">
-                    {urgentAppointments.length}টি সাক্ষাৎ
-                  </span>
-                </div>
+                <h3 className="text-base font-bold text-teal-950 dark:text-teal-100">
+                  ডাক্তারের সাথে দেখা ({toBengaliNumber(urgentAppointments.length)}টি)
+                </h3>
                 <div className="mt-1 space-y-1">
                   {urgentAppointments.map((app) => {
                     const isToday = app.appointmentDate === realTodayStr;
                     return (
-                      <p key={app.id} className="text-xs text-teal-800 dark:text-teal-200 font-medium flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-teal-600" />
-                        <span>
-                          <strong>{app.doctorName}</strong> ({app.specialty || (isBn ? 'ডাক্তার' : 'Doctor')}) — {isToday ? (isBn ? 'আজ' : 'Today') : (isBn ? 'আগামীকাল' : 'Tomorrow')} {app.appointmentTime}
-                          {app.location && ` [${app.location}]`}
-                        </span>
+                      <p key={app.id} className="text-sm text-teal-900 dark:text-teal-200 font-medium">
+                        <strong>{app.doctorName}</strong> — {isToday ? 'আজ' : 'আগামীকাল'} {toBengaliNumber(app.appointmentTime)}
+                        {app.location ? ` (${app.location})` : ''}
                       </p>
                     );
                   })}
@@ -260,622 +665,538 @@ export const Dashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => setCurrentPage('appointments')}
-              className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors shrink-0 self-start sm:self-center cursor-pointer"
+              className="min-h-[48px] px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-base rounded-xl transition-colors shrink-0 cursor-pointer"
             >
-              {isBn ? 'অ্যাপয়েন্টমেন্ট দেখুন' : 'View Appointments'}
+              দেখুন
             </button>
           </div>
         </section>
       )}
 
-      {/* Missed Dose Family Notification Alert (Step 4: ৩০ মিনিট পার হলেও Taken না হলে পরিবারকে জানান) */}
+      {/* Overdue Dose Family Alert */}
       {overdueDoses.length > 0 && (
-        <section className="bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 rounded-2xl p-4 sm:p-5 shadow-xs animate-pulse-subtle">
+        <section className="bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 rounded-2xl p-4 sm:p-5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-rose-600 text-white shrink-0 mt-0.5">
-                <Bell className="w-5 h-5 animate-bounce" />
+              <div className="p-2.5 rounded-xl bg-rose-700 text-white shrink-0">
+                <Bell className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-rose-950 dark:text-rose-100 flex items-center gap-2">
-                  <span>{isBn ? 'ওষুধ সেবনের সময় পার হয়ে গেছে (বিলম্বিত ডোজ)' : 'Overdue Dose Warning'}</span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-200 dark:bg-rose-900 text-rose-900 dark:text-rose-200">
-                    {toBengaliNumber(overdueDoses.length)}টি ডোজ বাকি
-                  </span>
+                <h3 className="text-base font-bold text-rose-950 dark:text-rose-100">
+                  ওষুধ খাওয়ার সময় পার হয়েছে ({toBengaliNumber(overdueDoses.length)}টি)
                 </h3>
-                <p className="text-xs text-rose-800 dark:text-rose-300 mt-1">
-                  <strong>{overdueDoses.map((d) => `${d.brandName} (${d.time})`).join(', ')}</strong> {isBn ? 'নির্ধারিত সময় পেরিয়ে ৩০ মিনিটের বেশি হয়েছে কিন্তু এখনো খাওয়া হয়নি।' : 'scheduled time is past 30 minutes and not taken yet.'}
+                <p className="text-sm text-rose-900 dark:text-rose-200 mt-1">
+                  <strong>{overdueDoses.map((d) => `${d.brandName} (${toBengaliNumber(d.time)})`).join(', ')}</strong> — নির্ধারিত সময়ের ৩০ মিনিট পার হয়েছে।
                 </p>
-                {settings.emergencyContactName && (
-                  <p className="text-[11px] text-rose-700 dark:text-rose-400 mt-0.5">
-                    {isBn ? 'জরুরি পারিবারিক যোগাযোগ:' : 'Emergency Family Contact:'} {settings.emergencyContactName} ({settings.emergencyContactPhone || 'নম্বর নেই'})
-                  </p>
-                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start md:self-center shrink-0 flex-wrap">
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
               <button
                 type="button"
                 onClick={() => handleNotifyFamily(overdueDoses[0], 'whatsapp')}
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                className="min-h-[48px] px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
               >
-                <Share2 className="w-3.5 h-3.5" />
-                <span>{isBn ? 'পরিবারকে জানান (WhatsApp)' : 'Alert Family (WhatsApp)'}</span>
+                <Share2 className="w-4 h-4" />
+                <span>পরিবারকে জানান</span>
               </button>
               <button
                 type="button"
                 onClick={() => handleNotifyFamily(overdueDoses[0], 'sms')}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                className="min-h-[48px] px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
               >
-                <PhoneCall className="w-3.5 h-3.5" />
-                <span>{isBn ? 'SMS পাঠান' : 'Send SMS'}</span>
+                <PhoneCall className="w-4 h-4" />
+                <span>মেসেজ পাঠান</span>
               </button>
             </div>
           </div>
         </section>
       )}
 
-      {/* Native Alarm Permission Alert Banner (Requirement 4: পারমিশন বন্ধ থাকলে ড্যাশবোর্ডে সতর্কতা) */}
-      {hasMissingPermissions && (
-        <section className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/80 rounded-2xl p-4 sm:p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 shrink-0 mt-0.5">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
-                ফোন অ্যালার্মের কিছু পারমিশন বন্ধ রয়েছে
-              </h3>
-              <p className="text-xs text-amber-800/90 dark:text-amber-300/90 mt-0.5 leading-relaxed">
-                অ্যান্ড্রয়েড ফোনে স্ক্রিন বন্ধ বা স্লিপ মোডেও সঠিক সময়ে ওষুধের অ্যালার্ম বাজার জন্য Exact Alarm, Notifications ও Battery পারমিশন নিশ্চিত করা প্রয়োজন।
-              </p>
-              <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-amber-900 dark:text-amber-200 font-medium">
-                <span className="text-slate-500 dark:text-slate-400">বর্তমান অবস্থা:</span>
-                <span className={nativePerms.exactAlarm ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
-                  অ্যালার্ম {nativePerms.exactAlarm ? '✓ সক্রিয়' : '✕ বন্ধ'}
-                </span>
-                <span>·</span>
-                <span className={nativePerms.notifications ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
-                  নোটিফিকেশন {nativePerms.notifications ? '✓ সক্রিয়' : '✕ বন্ধ'}
-                </span>
-                <span>·</span>
-                <span className={nativePerms.batteryUnrestricted ? 'text-emerald-700 dark:text-emerald-400 font-semibold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
-                  ব্যাটারি {nativePerms.batteryUnrestricted ? '✓ সক্রিয়' : '✕ সীমাবদ্ধ'}
-                </span>
-              </div>
-            </div>
+      {/* ========================================================
+          STEP 1 MAIN FOCUS: "এখন খাবেন" / EMPTY / ALL DONE CARD
+         ======================================================== */}
+      {patientMedicines.length === 0 ? (
+        <section className="bg-white dark:bg-slate-900 border-2 border-teal-200 dark:border-teal-800 rounded-2xl p-6 sm:p-10 text-center shadow-sm space-y-5">
+          <div className="w-16 h-16 rounded-2xl bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 flex items-center justify-center mx-auto">
+            <Pill className="w-9 h-9" />
           </div>
 
-          <button
-            type="button"
-            onClick={() => setCurrentPage('settings')}
-            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors shrink-0 self-start sm:self-center cursor-pointer"
-          >
-            অনুমতি ঠিক করুন
-          </button>
-        </section>
-      )}
-      {!activePatient ? (
-        <section className="bg-gradient-to-br from-teal-50/90 via-white to-slate-50 dark:from-teal-950/40 dark:via-slate-900 dark:to-slate-950 border border-teal-200/90 dark:border-teal-800/70 rounded-2xl p-6 sm:p-8 text-center shadow-xs">
-          <div className="w-16 h-16 rounded-2xl bg-teal-100 dark:bg-teal-900/60 text-teal-700 dark:text-teal-300 flex items-center justify-center mx-auto mb-4 shadow-2xs">
-            <UserPlus className="w-8 h-8" />
+          <div className="space-y-2 max-w-lg mx-auto">
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
+              {medicines.length === 0
+                ? 'আপনার প্রথম ওষুধ যোগ করুন'
+                : 'এই সদস্যের কোনো চলমান ওষুধ নেই'}
+            </h1>
+            <p className="text-base text-slate-600 dark:text-slate-300 leading-relaxed">
+              সহজ ৪ ধাপে ওষুধের নাম ও খাওয়ার সময় যোগ করলে ঠিক সময়ে অ্যালার্ম পাবেন।
+            </p>
           </div>
 
-          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-            স্বাস্থ্যবন্ধুতে স্বাগতম! এখনও কোনো প্রোফাইল তৈরি করা হয়নি
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 max-w-xl mx-auto mt-2 mb-6 leading-relaxed">
-            আপনার নিজের বা পরিবারের সদস্যদের (যেমন: বাবা, মা, সন্তান) ওষুধ ও প্রেসক্রিপশন সুশৃঙ্খলভাবে ট্র্যাক করতে প্রথমে একটি রোগীর প্রোফাইল তৈরি করুন। আপনি প্রয়োজনমতো আনলিমিটেড প্রোফাইল তৈরি ও পরিচালনা করতে পারবেন।
-          </p>
-
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={openCreateProfileModal}
-              className="flex items-center gap-2 px-5 py-2.5 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold text-xs sm:text-sm rounded-xl shadow-xs transition-colors cursor-pointer"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>নতুন প্রোফাইল তৈরি করুন</span>
-            </button>
-
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 pt-2">
             <button
               type="button"
               onClick={() => setCurrentPage('add-medicine')}
-              className="flex items-center gap-1.5 px-4 py-2.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-medium text-xs sm:text-sm rounded-xl transition-colors cursor-pointer"
+              className="min-h-[56px] inline-flex items-center justify-center gap-2.5 px-8 py-4 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-bold text-lg rounded-2xl shadow-sm transition-colors cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
-              <span>ওষুধ যুক্ত করুন (প্রোফাইল ছাড়া)</span>
+              <Plus className="w-6 h-6" />
+              <span>ওষুধ যোগ করুন</span>
             </button>
-          </div>
-        </section>
-      ) : (
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 transition-colors shadow-xs">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="flex items-start sm:items-center gap-4">
-              <div className="relative shrink-0">
-                <img
-                  src={activePatient.avatarUrl || '/src/assets/images/avatar_patient_bengali_1793655801544.jpg'}
-                  alt={activePatient.name}
-                  referrerPolicy="no-referrer"
-                  className="w-14 h-14 sm:w-16 sm:h-16 rounded-full object-cover border-2 border-teal-600/30 shadow-xs"
-                />
-                <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-teal-600 border-2 border-white dark:border-slate-900" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-                    {activePatient.name}
-                  </h1>
-                  <span className="text-xs text-slate-500 dark:text-slate-400">
-                    {activePatient.relation} · {toBengaliNumber(activePatient.age)} বছর · রক্ত: {activePatient.bloodGroup}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => openEditProfileModal(activePatient)}
-                    className="p-1 text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                    title="প্রোফাইল সম্পাদনা করুন"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  {formatBengaliDate(todayStr)} · আজ নির্ধারিত মোট {toBengaliNumber(totalToday)}টি ডোজ রয়েছে
-                </p>
-              </div>
-            </div>
 
-            <div className="flex items-center gap-2.5 self-end md:self-auto flex-wrap">
-              <div className="text-right">
-                <div className="text-xs text-slate-500 dark:text-slate-400">রোগী পরিবর্তন</div>
-                <select
-                  value={activePatient.id}
-                  onChange={(e) => {
-                    if (e.target.value === '__add_new__') {
-                      openCreateProfileModal();
-                    } else {
-                      setActivePatientId(e.target.value);
-                    }
-                  }}
-                  aria-label="রোগী নির্বাচন"
-                  className="text-xs font-semibold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 rounded-md px-3 py-1.5 focus:outline-hidden cursor-pointer"
-                >
-                  {patients.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.relation})
-                    </option>
-                  ))}
-                  <option value="__add_new__">+ নতুন প্রোফাইল তৈরি করুন</option>
-                </select>
-              </div>
-
+            {patients.length === 0 && (
               <button
                 type="button"
                 onClick={openCreateProfileModal}
-                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-lg hover:bg-teal-100 cursor-pointer"
-                title="নতুন সদস্য যোগ করুন"
+                className="min-h-[56px] inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 font-semibold text-base rounded-2xl transition-colors cursor-pointer"
               >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">নতুন প্রোফাইল</span>
+                <UserPlus className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+                <span>সদস্য প্রোফাইল তৈরি করুন</span>
               </button>
+            )}
+          </div>
+        </section>
+      ) : todayDoses.length === 0 ? (
+        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center shadow-xs space-y-4">
+          <CheckCircle2 className="w-12 h-12 text-teal-700 dark:text-teal-400 mx-auto" />
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+            আজকের কোনো ওষুধের সময়সূচি নেই
+          </h2>
+          <button
+            type="button"
+            onClick={() => setCurrentPage('add-medicine')}
+            className="min-h-[52px] inline-flex items-center justify-center gap-2 px-7 py-3 bg-teal-700 hover:bg-teal-800 text-white font-bold text-base rounded-2xl shadow-xs transition-colors cursor-pointer"
+          >
+            <Plus className="w-5 h-5" />
+            <span>ওষুধ যোগ করুন</span>
+          </button>
+        </section>
+      ) : !nextDueDose ? (
+        <section className="bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-300 dark:border-emerald-800 rounded-2xl p-7 sm:p-9 text-center shadow-xs space-y-3">
+          <div className="w-16 h-16 rounded-full bg-emerald-700 text-white flex items-center justify-center mx-auto">
+            <CheckCircle2 className="w-9 h-9" />
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-emerald-950 dark:text-emerald-100">
+            আজকের সব ওষুধ খাওয়া হয়েছে ✓
+          </h1>
+          <p className="text-base text-emerald-800 dark:text-emerald-200">
+            মোট {toBengaliNumber(totalToday)}টি ডোজের মধ্যে {toBengaliNumber(takenCount)}টি সম্পন্ন হয়েছে।
+          </p>
+        </section>
+      ) : (
+        <section className="bg-white dark:bg-slate-900 border-2 border-teal-500 dark:border-teal-600 rounded-2xl p-5 sm:p-7 shadow-md space-y-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="inline-flex items-center gap-2 text-base font-bold text-teal-800 dark:text-teal-300">
+              <Clock className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+              <span>এখন খাবেন</span>
+            </span>
 
-              <button
-                type="button"
-                onClick={() => setCurrentPage('add-medicine')}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-xs transition-colors cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>নতুন ওষুধ</span>
-              </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {canSpeakDose && (
+                <button
+                  type="button"
+                  onClick={() => handleSpeakDose(nextDueDose)}
+                  className="min-h-[48px] px-4 py-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 text-teal-800 dark:text-teal-200 font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Volume2 className="w-4 h-4" />
+                  <span>শুনুন</span>
+                </button>
+              )}
+              <span className="text-sm font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-xl">
+                {nextDueDose.timeSlot} · {formatBengaliTime(nextDueDose.time)}
+              </span>
             </div>
           </div>
 
-        {/* Adherence Progress Bar */}
-        <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-4 gap-4 items-center">
-          <div className="sm:col-span-3">
-            <div className="flex justify-between items-center text-xs font-medium text-slate-600 dark:text-slate-300 mb-1.5">
-              <span>আজকের ওষুধ সেবনের অগ্রগতি</span>
-              <span className="tabular-nums font-semibold text-teal-700 dark:text-teal-400">
-                {toBengaliNumber(adherencePercent)}% সম্পন্ন ({toBengaliNumber(takenCount)}/{toBengaliNumber(totalToday)})
-              </span>
+          <div className="space-y-2">
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white leading-snug">
+              {nextDueDose.brandName}
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-lg font-semibold text-slate-700 dark:text-slate-200">
+              <span>ডোজ: {nextDueDose.dosage}</span>
+              <span className="text-slate-300 dark:text-slate-600">·</span>
+              <span>{nextDueDose.mealTiming}</span>
             </div>
-            <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-              <div
-                className="bg-teal-600 h-full rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${adherencePercent}%` }}
-              />
-            </div>
+            {deferredDoseKeys.includes(nextDueDose.key) && (
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                পরে খাওয়ার জন্য রাখা হয়েছিল
+              </p>
+            )}
           </div>
-          <div className="flex justify-around sm:justify-end gap-6 text-xs text-slate-500 dark:text-slate-400">
-            <div>
-              <span className="block text-slate-400 text-[11px]">বাকি ডোজ</span>
-              <span className="font-semibold text-slate-800 dark:text-slate-200 tabular-nums text-sm">
-                {toBengaliNumber(remainingCount)}টি
-              </span>
-            </div>
-            <div>
-              <span className="block text-slate-400 text-[11px]">চলমান ওষুধ</span>
-              <span className="font-semibold text-slate-800 dark:text-slate-200 tabular-nums text-sm">
-                {toBengaliNumber(patientMedicines.length)}টি
-              </span>
-            </div>
-          </div>
-        </div>
 
-        {/* Cloud Sync Status Strip */}
-        {currentUser ? (
-          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="font-semibold text-slate-800 dark:text-slate-200">
-                ক্লাউড ফায়ারবেস স্টোরেজ সক্রিয়:
-              </span>
-              <span className="text-slate-500 dark:text-slate-400 truncate max-w-sm">
-                {currentUser.displayName || currentUser.email} এর সমস্ত ডেটা ক্লাউডে সুরক্ষিত ও ব্যক্তিগত
-              </span>
-            </div>
+          {/* Big Primary Green "খেয়েছি" and Neutral Gray "পরে" Buttons */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
             <button
               type="button"
-              onClick={syncLocalToCloud}
-              disabled={isSyncing}
-              className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-md hover:bg-teal-100 cursor-pointer self-start sm:self-auto disabled:opacity-50 shrink-0"
+              onClick={() => handleTakeDose(nextDueDose)}
+              className="sm:col-span-2 min-h-[56px] w-full flex items-center justify-center gap-2.5 px-6 py-3.5 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold text-xl rounded-2xl shadow-sm transition-colors cursor-pointer"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'সিঙ্ক হচ্ছে...' : 'এখনই সিঙ্ক করুন'}</span>
+              <CheckCircle2 className="w-6 h-6" />
+              <span>খেয়েছি</span>
             </button>
-          </div>
-        ) : (
-          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-slate-50/70 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-200/80 dark:border-slate-700/80">
-            <div className="flex items-start sm:items-center gap-2.5">
-              <Cloud className="w-4 h-4 text-teal-600 shrink-0 mt-0.5 sm:mt-0" />
-              <div>
-                <span className="font-semibold text-slate-800 dark:text-slate-200 block sm:inline mr-1">
-                  ক্লাউড ফায়ারবেস স্টোরেজ:
-                </span>
-                <span className="text-slate-500 dark:text-slate-400">
-                  আপনার প্রেসক্রিপশন ও ওষুধের ইতিহাস নিরাপদ ক্লাউডে সেভ রাখতে লগইন করুন (বর্তমান ডেটা সুরক্ষিত থাকবে)
-                </span>
-              </div>
-            </div>
+
             <button
               type="button"
-              onClick={openAuthModal}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-md shadow-2xs cursor-pointer self-start sm:self-auto whitespace-nowrap shrink-0"
+              onClick={() => handleDeferDose(nextDueDose)}
+              className="min-h-[56px] w-full flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 font-bold text-lg rounded-2xl transition-colors cursor-pointer"
             >
-              <Lock className="w-3.5 h-3.5" />
-              <span>লগইন বা রেজিস্টার</span>
+              <Clock className="w-5 h-5" />
+              <span>পরে</span>
             </button>
           </div>
-        )}
-      </section>
+        </section>
       )}
 
-      {/* Family Care Summary Section */}
-      <FamilyCareSummary />
-
-      {/* Smart Medicine Stock Predictor Section */}
-      <ExpiringStockSection />
-
-      {/* Adherence & Streak Analytics */}
-      <AdherenceAnalytics />
-
-      {/* Main Grid: Schedule on left (2 cols), Refill Alerts & Tips on right (1 col) */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* Today's Schedule Card */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-                আজকের ওষুধের সময়সূচি
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                সময় অনুযায়ী আপনার প্রেসক্রিপশন ডোজ গ্রহণ বা আপডেট করুন
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setCurrentPage('reminders')}
-              className="text-xs font-medium text-teal-700 dark:text-teal-400 hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <span>সকল রিমাইন্ডার</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {todayDoses.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 text-center">
-              <CalendarCheck className="w-10 h-10 text-teal-600 mx-auto mb-3" />
-              <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200">
-                আজ কোনো ওষুধের শিডিউল নেই
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto mt-1 mb-4">
-                নতুন প্রেসক্রিপশন যোগ করতে নিচে ক্লিক করুন।
-              </p>
+      {/* ========================================================
+          TODAY'S REMAINING DOSES IN CHRONOLOGICAL ORDER
+         ======================================================== */}
+      {todayDoses.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">
+              আজকের বাকি ডোজ ({toBengaliNumber(remainingListDoses.length)}টি)
+            </h2>
+            {takenCount > 0 && (
               <button
                 type="button"
-                onClick={() => setCurrentPage('add-medicine')}
-                className="px-4 py-2 bg-teal-700 text-white text-xs font-medium rounded-lg hover:bg-teal-800 cursor-pointer"
+                onClick={() => setShowTakenDoses((v) => !v)}
+                className="min-h-[48px] px-3.5 py-2 text-sm font-semibold text-teal-800 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40 rounded-xl transition-colors cursor-pointer"
               >
-                ওষুধ যোগ করুন
+                {showTakenDoses
+                  ? 'খাওয়া শেষ ডোজ লুকান'
+                  : `খাওয়া হয়েছে (${toBengaliNumber(takenCount)}টি)`}
               </button>
+            )}
+          </div>
+
+          {remainingListDoses.length === 0 && !showTakenDoses ? (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 text-center text-base text-slate-600 dark:text-slate-300">
+              {nextDueDose
+                ? 'এই মুহূর্তে উপরের ডোজটি ছাড়া আর কোনো বাকি ডোজ নেই।'
+                : 'আজকের সব ওষুধ খাওয়া শেষ হয়েছে।'}
             </div>
           ) : (
             <div className="space-y-3">
-              {todayDoses.map((dose, idx) => {
-                const isTaken = dose.logStatus === 'taken';
+              {remainingListDoses.map((dose) => {
                 const isSkipped = dose.logStatus === 'skipped';
+                const isDeferred = deferredDoseKeys.includes(dose.key);
 
                 return (
                   <div
-                    key={`${dose.medicineId}-${dose.timeSlot}-${idx}`}
-                    className={`bg-white dark:bg-slate-900 border rounded-xl p-4 transition-all duration-200 ${
-                      isTaken
-                        ? 'border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/20 dark:bg-emerald-950/10'
-                        : isSkipped
-                        ? 'border-slate-200 dark:border-slate-800 opacity-70'
-                        : 'border-slate-200 dark:border-slate-800 hover:border-teal-300 dark:hover:border-teal-700'
+                    key={dose.key}
+                    className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs ${
+                      isSkipped ? 'opacity-75' : ''
                     }`}
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      
-                      <div className="flex items-start gap-3">
-                        <div
-                          className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                            isTaken
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                              : 'bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-300'
-                          }`}
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-2.5 py-1 rounded-lg">
+                          {dose.timeSlot} · {formatBengaliTime(dose.time)}
+                        </span>
+                        {isDeferred && (
+                          <span className="text-sm font-semibold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 px-2.5 py-1 rounded-lg">
+                            পরে খাবেন
+                          </span>
+                        )}
+                        {isSkipped && (
+                          <span className="text-sm font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg">
+                            বাদ দেওয়া
+                          </span>
+                        )}
+                      </div>
+
+                      <h3 className="text-lg font-bold text-slate-900 dark:text-white pt-1">
+                        {dose.brandName}
+                      </h3>
+
+                      <p className="text-base text-slate-600 dark:text-slate-300">
+                        ডোজ: <strong className="text-slate-900 dark:text-white">{dose.dosage}</strong> · {dose.mealTiming}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap shrink-0">
+                      {canSpeakDose && (
+                        <button
+                          type="button"
+                          onClick={() => handleSpeakDose(dose)}
+                          className="min-h-[48px] px-4 py-2.5 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 text-teal-800 dark:text-teal-200 font-bold text-sm rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
                         >
-                          {isTaken ? (
-                            <CheckCircle2 className="w-5 h-5" />
-                          ) : (
-                            <Clock className="w-5 h-5" />
-                          )}
-                        </div>
-
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-slate-900 dark:text-white text-base">
-                              {dose.brandName}
-                            </span>
-                            <span className="text-xs text-slate-500 dark:text-slate-400">
-                              · {dose.type}
-                            </span>
-                          </div>
-
-                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                            {dose.genericName}
-                          </div>
-
-                          <div className="flex items-center gap-2 mt-2 text-xs text-slate-600 dark:text-slate-300 flex-wrap">
-                            <span className="font-medium text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-2 py-0.5 rounded">
-                              {dose.timeSlot} ({toBengaliNumber(dose.time)})
-                            </span>
-                            <span>ডোজ: {dose.dosage}</span>
-                            <span className="text-slate-400">·</span>
-                            <span>{dose.mealTiming}</span>
-                            {dose.isOverdue && !isTaken && !isSkipped && (
-                              <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
-                                {isBn ? '৩০+ মি. বিলম্বিত' : '30+m Overdue'}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Action buttons */}
-                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0 flex-wrap">
-                        {dose.isOverdue && !isTaken && !isSkipped && (
-                          <button
-                            type="button"
-                            onClick={() => handleNotifyFamily(dose, 'whatsapp')}
-                            className="px-2.5 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800 rounded-lg flex items-center gap-1 cursor-pointer transition"
-                            title={isBn ? 'পরিবারকে সতর্কবার্তা পাঠান' : 'Notify family contact'}
-                          >
-                            <Share2 className="w-3.5 h-3.5" />
-                            <span>{isBn ? 'পরিবারকে জানান' : 'Alert Family'}</span>
-                          </button>
-                        )}
-                        {isTaken ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2.5 py-1 rounded-md flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              গৃহীত সম্পন্ন
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => markDose(dose.medicineId, dose.timeSlot, dose.time, 'skipped', 'পূর্বাবস্থায় ফেরানো')}
-                              className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 underline cursor-pointer"
-                            >
-                              পরিবর্তন
-                            </button>
-                          </div>
-                        ) : isSkipped ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md">
-                              বাদ দেওয়া হয়েছে
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => markDose(dose.medicineId, dose.timeSlot, dose.time, 'taken')}
-                              className="text-xs font-medium text-teal-700 dark:text-teal-400 hover:underline cursor-pointer"
-                            >
-                              গ্রহণ করেছি
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => markDose(dose.medicineId, dose.timeSlot, dose.time, 'taken')}
-                              className="px-3 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 active:bg-teal-900 rounded-lg shadow-2xs transition-colors cursor-pointer flex items-center gap-1"
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              গ্রহণ করুন
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => markDose(dose.medicineId, dose.timeSlot, dose.time, 'skipped', 'ব্যবহারকারী বাদ দিয়েছেন')}
-                              className="px-2.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                            >
-                              বাদ দিন
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
+                          <Volume2 className="w-4 h-4" />
+                          <span>শুনুন</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleTakeDose(dose)}
+                        className="min-h-[48px] px-6 py-3 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold text-base rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle2 className="w-5 h-5" />
+                        <span>খেয়েছি</span>
+                      </button>
                     </div>
                   </div>
                 );
               })}
-            </div>
-          )}
 
-          {/* Banner visual */}
-          <div className="relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 mt-6 shadow-xs">
-            <img
-              src="/src/assets/images/shasthobondhu_hero_1793655800567.jpg"
-              alt="স্বাস্থ্যবন্ধু ওষুধ ব্যবস্থাপনা"
-              referrerPolicy="no-referrer"
-              className="w-full h-44 object-cover"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-900/40 to-transparent flex flex-col justify-end p-5 text-white">
-              <span className="text-[11px] font-semibold text-teal-300">নিয়মিত ওষুধ · সুস্থ জীবন</span>
-              <h3 className="text-base sm:text-lg font-bold">সময়মতো সঠিক ওষুধ সেবনে রোগের জটিলতা ৭০% কমে</h3>
-              <p className="text-xs text-slate-200 mt-0.5">স্বাস্থ্যবন্ধু অ্যাপে প্রতিদিনের ডোজ চেক করুন এবং প্রেসক্রিপশন আপডেট রাখুন।</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Sidebar: Low Stock Alerts & Wellness info */}
-        <div className="space-y-6">
-          
-          {/* Low Stock Alerts */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  মজুত ও রিফিল সতর্কতা
-                </h3>
-              </div>
-              <span className="text-xs text-slate-400 tabular-nums">
-                {toBengaliNumber(lowStockMedicines.length)}টি কম
-              </span>
-            </div>
-
-            {lowStockMedicines.length === 0 ? (
-              <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-lg text-center">
-                <ShieldCheck className="w-6 h-6 text-emerald-600 mx-auto mb-1.5" />
-                <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-300">
-                  সকল ওষুধের পর্যাপ্ত মজুত রয়েছে
-                </p>
-                <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5">
-                  কমপক্ষে ৭ দিনের ডোজ নিশ্চিত আছে
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {lowStockMedicines.map((med) => (
+              {showTakenDoses &&
+                takenDoses.map((dose) => (
                   <div
-                    key={med.id}
-                    className="p-3 rounded-lg bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 flex items-center justify-between gap-3"
+                    key={`taken-${dose.key}`}
+                    className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/60 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
                     <div>
-                      <div className="text-xs font-bold text-slate-900 dark:text-white">
-                        {med.brandName}
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0" />
+                        <span className="text-lg font-bold text-slate-900 dark:text-white">
+                          {dose.brandName}
+                        </span>
                       </div>
-                      <div className="text-[11px] text-amber-800 dark:text-amber-300 mt-0.5">
-                        অবশিষ্ট: {toBengaliNumber(med.stock)} {med.unit} (সতর্কবার্তা সীমা: {toBengaliNumber(med.minStockAlert)})
-                      </div>
+                      <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
+                        {dose.timeSlot} ({formatBengaliTime(dose.time)}) · {dose.dosage} · খাওয়া হয়েছে
+                      </p>
                     </div>
+
                     <button
                       type="button"
-                      onClick={() => openStockAdjustmentModal(med.id)}
-                      className="px-2.5 py-1 text-xs font-semibold text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/60 rounded-md transition-colors cursor-pointer shrink-0"
+                      onClick={() => markDose(dose.medicineId, dose.timeSlot, dose.time, 'skipped', 'পূর্বাবস্থায় ফেরানো')}
+                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
                     >
-                      আপডেট
+                      ফিরিয়ে আনুন
                     </button>
                   </div>
                 ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ========================================================
+          COLLAPSIBLE "আরও দেখুন" FOLD FOR SECONDARY WIDGETS
+         ======================================================== */}
+      <section className="pt-2">
+        <button
+          type="button"
+          onClick={() => setShowMoreWidgets((prev) => !prev)}
+          aria-expanded={showMoreWidgets}
+          className="min-h-[52px] w-full flex items-center justify-between px-5 py-3.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-teal-500 rounded-2xl text-base font-bold text-slate-900 dark:text-white shadow-2xs transition-colors cursor-pointer"
+        >
+          <span>{showMoreWidgets ? 'কম দেখুন' : 'আরও দেখুন (পরিবার, মজুত, চার্ট ও জরুরি তথ্য)'}</span>
+          {showMoreWidgets ? (
+            <ChevronUp className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+          ) : (
+            <ChevronDown className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+          )}
+        </button>
+
+        {showMoreWidgets && (
+          <div className="mt-5 space-y-6">
+            {/* Active Patient Progress & Quick Tools */}
+            {activePatient && (
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <img
+                      src={activePatient.avatarUrl || '/src/assets/images/avatar_patient_bengali_1793655801544.jpg'}
+                      alt={activePatient.name}
+                      referrerPolicy="no-referrer"
+                      className="w-14 h-14 rounded-full object-cover border-2 border-teal-600/30"
+                    />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                          {activePatient.name}
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => openEditProfileModal(activePatient)}
+                          className="p-2 text-slate-500 hover:text-teal-700 dark:hover:text-teal-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          title="প্রোফাইল সম্পাদনা"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <p className="text-sm text-slate-600 dark:text-slate-300">
+                        {activePatient.relation} · {toBengaliNumber(activePatient.age)} বছর · রক্ত: {activePatient.bloodGroup}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage('checklist')}
+                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl hover:bg-teal-100 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <ListChecks className="w-4 h-4" />
+                      <span>দৈনিক চেকলিস্ট</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage('reminders')}
+                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl hover:bg-teal-100 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Bell className="w-4 h-4" />
+                      <span>সব রিমাইন্ডার</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Adherence Progress Bar */}
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex justify-between items-center text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">
+                    <span>আজকের ওষুধ খাওয়ার অগ্রগতি</span>
+                    <span className="tabular-nums text-teal-700 dark:text-teal-400">
+                      {toBengaliNumber(adherencePercent)}% ({toBengaliNumber(takenCount)}/{toBengaliNumber(totalToday)})
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 dark:bg-slate-800 h-3 rounded-full overflow-hidden">
+                    <div
+                      className="bg-teal-600 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${adherencePercent}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Cloud Backup Summary */}
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-sm">
+                  {currentUser ? (
+                    <>
+                      <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+                        <Cloud className="w-4 h-4 text-emerald-600" />
+                        <span>ক্লাউড ব্যাকআপ চালু ({currentUser.displayName || currentUser.email})</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={syncLocalToCloud}
+                        disabled={isSyncing}
+                        className="min-h-[48px] px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl hover:bg-teal-100 cursor-pointer flex items-center gap-1.5"
+                      >
+                        <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                        <span>এখনই সিঙ্ক করুন</span>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-slate-600 dark:text-slate-300">
+                        তথ্য সুরক্ষিত রাখতে লগইন করুন
+                      </span>
+                      <button
+                        type="button"
+                        onClick={openAuthModal}
+                        className="min-h-[48px] px-4 py-2 text-sm font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Lock className="w-4 h-4" />
+                        <span>লগইন বা রেজিস্টার</span>
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+            {/* Quick Action Links */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <button
                 type="button"
-                onClick={() => setIsBuyListOpen(true)}
-                className="w-full py-2 px-3 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 active:bg-amber-800 rounded-lg transition-colors text-center cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+                onClick={() => setCurrentPage('library')}
+                className="min-h-[52px] px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl text-base font-semibold text-slate-900 dark:text-white flex items-center justify-center gap-2 cursor-pointer"
               >
-                <ShoppingCart className="w-3.5 h-3.5" />
-                <span>কিনতে হবে তালিকা</span>
+                <BookOpen className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+                <span>ওষুধ লাইব্রেরি</span>
               </button>
-
               <button
                 type="button"
-                onClick={() => setCurrentPage('medicines')}
-                className="w-full py-2 px-3 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-teal-700 dark:hover:text-teal-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors text-center border border-slate-200 dark:border-slate-700 cursor-pointer flex items-center justify-center gap-1"
+                onClick={() => setCurrentPage('health-records')}
+                className="min-h-[52px] px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl text-base font-semibold text-slate-900 dark:text-white flex items-center justify-center gap-2 cursor-pointer"
               >
-                <Package className="w-3.5 h-3.5" />
-                <span>স্টক বিস্তারিত</span>
+                <HeartPulse className="w-5 h-5 text-rose-600" />
+                <span>স্বাস্থ্য রেকর্ড</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage('history')}
+                className="min-h-[52px] px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl text-base font-semibold text-slate-900 dark:text-white flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <ChevronRight className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+                <span>ডাক্তারকে দেখানোর ইতিহাস</span>
               </button>
             </div>
-          </div>
 
-          {/* Emergency Contact Card (Requirement 3: জরুরি যোগাযোগ কার্ড) */}
-          <EmergencyCard />
+            {/* Family Care Summary */}
+            <FamilyCareSummary />
 
-          {/* Quick Doctor / Patient Notes Card */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs">
-            <div className="flex items-center gap-2 mb-3">
-              <HeartPulse className="w-4 h-4 text-rose-600" />
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                স্বাস্থ্য নির্দেশিকা
-              </h3>
-            </div>
-            
-            <div className="text-xs space-y-2.5 text-slate-600 dark:text-slate-300">
-              <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-lg">
-                <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">গ্যাস্ট্রিকের ওষুধ সেবনের নিয়ম:</span>
-                সেক্লো বা ওমেপ্রাজল জাতীয় ওষুধ সকালের নাস্তার অন্তত ৩০ মিনিট পূর্বে সেবন করুন।
+            {/* Stock Predictor & Low Stock Summary */}
+            <ExpiringStockSection />
+
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    ওষুধের মজুত সতর্কতা ({toBengaliNumber(lowStockMedicines.length)}টি কম)
+                  </h3>
+                </div>
               </div>
-              <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-lg">
-                <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">ইনসুলিন সতর্কতা:</span>
-                ইনসুলিন নেওয়ার আগে প্রতিবার স্থান পরিবর্তন (রোটেশন) করুন এবং হাইপোগ্লাইসেমিয়ার জন্য মিষ্টি সাথে রাখুন।
+
+              {lowStockMedicines.length === 0 ? (
+                <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-xl flex items-center gap-2 text-sm font-semibold text-emerald-900 dark:text-emerald-300">
+                  <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <span>সব ওষুধের পর্যাপ্ত মজুত আছে</span>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {lowStockMedicines.map((med) => (
+                    <div
+                      key={med.id}
+                      className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 flex items-center justify-between gap-3"
+                    >
+                      <div>
+                        <div className="text-base font-bold text-slate-900 dark:text-white">
+                          {med.brandName}
+                        </div>
+                        <div className="text-sm text-amber-900 dark:text-amber-300">
+                          বাকি: {toBengaliNumber(med.stock)} {med.unit}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openStockAdjustmentModal(med.id)}
+                        className="min-h-[48px] px-4 py-2 text-sm font-bold text-amber-950 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 rounded-xl cursor-pointer shrink-0"
+                      >
+                        আপডেট
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsBuyListOpen(true)}
+                  className="min-h-[48px] py-2.5 px-4 text-sm font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <ShoppingCart className="w-4 h-4" />
+                  <span>কিনতে হবে তালিকা</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage('medicines')}
+                  className="min-h-[48px] py-2.5 px-4 text-sm font-semibold text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Package className="w-4 h-4" />
+                  <span>সব ওষুধ দেখুন</span>
+                </button>
               </div>
             </div>
 
-            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
-              <span className="text-slate-400">জরুরি হেল্পলাইন:</span>
-              <a
-                href="tel:16263"
-                className="font-semibold text-teal-700 dark:text-teal-400 hover:underline"
-              >
-                ১৬২৬৩ (স্বাস্থ্য বাতায়ন)
-              </a>
-            </div>
+            {/* Adherence Analytics */}
+            <AdherenceAnalytics />
+
+            {/* Emergency Card */}
+            <EmergencyCard />
           </div>
-
-          {/* Quick Navigation to History / Doctor Report */}
-          <div
-            onClick={() => setCurrentPage('history')}
-            className="bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800/50 rounded-xl p-4 cursor-pointer hover:border-teal-400 transition-colors flex items-center justify-between"
-          >
-            <div>
-              <h4 className="text-xs font-bold text-teal-950 dark:text-teal-200">
-                ডাক্তারকে দেখানোর সারাংশ
-              </h4>
-              <p className="text-[11px] text-teal-800 dark:text-teal-300 mt-0.5">
-                গত ৭ বা ৩০ দিনের ওষুধের সেবন রেকর্ড প্রিন্ট বা এক্সপোর্ট করুন
-              </p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-teal-700 dark:text-teal-400 shrink-0" />
-          </div>
-
-        </div>
-
-      </div>
+        )}
+      </section>
 
       {/* Low Stock Shopping & Refill Modal */}
       <BuyListModal

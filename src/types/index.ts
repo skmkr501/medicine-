@@ -153,12 +153,15 @@ export interface ReminderSettings {
   language: 'bn' | 'en';
   themeMode?: 'light' | 'dark' | 'system';
   largeFontMode?: boolean;
+  easyMode?: boolean;
+  voiceReadoutEnabled?: boolean;
   emergencyContactName?: string;
   emergencyContactPhone?: string;
 }
 
 export type NavigationPage =
   | 'dashboard'
+  | 'me'
   | 'checklist'
   | 'health-records'
   | 'appointments'

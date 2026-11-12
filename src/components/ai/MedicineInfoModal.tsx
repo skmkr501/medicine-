@@ -83,7 +83,7 @@ export const MedicineInfoModal: React.FC<MedicineInfoModalProps> = ({
           </div>
           <div>
             <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">
-              AI ওষুধ তথ্য সহকারী (Gemini AI)
+              AI সহায়ক — ওষুধের তথ্য
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               ওষুধের নাম লিখলে সহজ বাংলায় কাজ, পার্শ্বপ্রতিক্রিয়া ও সাধারণ নিয়ম জানুন

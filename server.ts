@@ -1,13 +1,126 @@
 import express from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import {
+  extractBearerToken,
+  verifyFirebaseIdToken,
+  isVerifiedAdmin,
+  UserAiRateLimiter,
+  formatSafeAiErrorLog,
+  UNAUTH_ERROR_MSG,
+  FORBIDDEN_ADMIN_MSG,
+  VerifiedFirebaseUser,
+} from './server/aiSecurity';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function loadFirebaseProjectId(): string {
+  if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PROJECT_ID.trim()) {
+    return process.env.FIREBASE_PROJECT_ID.trim();
+  }
+  try {
+    const raw = fs.readFileSync(path.resolve(__dirname, 'firebase-applet-config.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.projectId === 'string' && parsed.projectId.trim()) {
+      return parsed.projectId.trim();
+    }
+  } catch (err: any) {
+    console.warn('Could not read firebase-applet-config.json:', err?.message || 'unknown');
+  }
+  return '';
+}
+
+const FIREBASE_PROJECT_ID = loadFirebaseProjectId();
+const aiRateLimiter = new UserAiRateLimiter();
+
+interface AuthenticatedRequest extends express.Request {
+  verifiedUser?: VerifiedFirebaseUser;
+}
+
+async function requireFirebaseAuth(
+  req: AuthenticatedRequest,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const token = extractBearerToken(req.headers.authorization);
+  if (!token || !FIREBASE_PROJECT_ID) {
+    return res.status(401).json({
+      error: UNAUTH_ERROR_MSG,
+      errorStatus: 401,
+    });
+  }
+
+  try {
+    const verifiedUser = await verifyFirebaseIdToken(token, FIREBASE_PROJECT_ID);
+    req.verifiedUser = verifiedUser;
+    return next();
+  } catch {
+    return res.status(401).json({
+      error: UNAUTH_ERROR_MSG,
+      errorStatus: 401,
+    });
+  }
+}
+
+async function requireAdminAuth(
+  req: AuthenticatedRequest,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const token = extractBearerToken(req.headers.authorization);
+  if (!token || !FIREBASE_PROJECT_ID) {
+    return res.status(401).json({
+      error: UNAUTH_ERROR_MSG,
+      errorStatus: 401,
+    });
+  }
+
+  try {
+    const verifiedUser = await verifyFirebaseIdToken(token, FIREBASE_PROJECT_ID);
+    if (!isVerifiedAdmin(verifiedUser)) {
+      return res.status(403).json({
+        error: FORBIDDEN_ADMIN_MSG,
+        errorStatus: 403,
+      });
+    }
+    req.verifiedUser = verifiedUser;
+    return next();
+  } catch {
+    return res.status(401).json({
+      error: UNAUTH_ERROR_MSG,
+      errorStatus: 401,
+    });
+  }
+}
+
+function rateLimitAi(isScan: boolean) {
+  return (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+    const uid = req.verifiedUser?.uid;
+    if (!uid) {
+      return res.status(401).json({
+        error: UNAUTH_ERROR_MSG,
+        errorStatus: 401,
+      });
+    }
+
+    const rateResult = aiRateLimiter.checkAndConsume(uid, isScan);
+    if (!rateResult.allowed) {
+      res.setHeader('Retry-After', String(rateResult.retryAfterSeconds));
+      return res.status(429).json({
+        error: rateResult.message,
+        errorStatus: 429,
+      });
+    }
+
+    return next();
+  };
+}
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -137,10 +250,10 @@ let cachedAiHealth: HealthCheckCache | null = null;
 const HEALTH_CACHE_TTL_MS = 60 * 1000;
 
 /**
- * Health check endpoint for AI service
+ * Health check endpoint for AI service (Admin Token Required)
  * Checks API key presence, performs cached 1-minute probe, returns sanitized status.
  */
-app.get('/api/ai/health', async (_req, res) => {
+app.get('/api/ai/health', requireAdminAuth, async (_req, res) => {
   const now = Date.now();
   if (cachedAiHealth && now - cachedAiHealth.timestamp < HEALTH_CACHE_TTL_MS) {
     return res.json(cachedAiHealth.data);
@@ -178,7 +291,7 @@ app.get('/api/ai/health', async (_req, res) => {
     cachedAiHealth = { data: healthResult, timestamp: now };
     return res.json(healthResult);
   } catch (error: any) {
-    console.error('AI Health Probe Check Error with status:', extractErrorStatus(error), error);
+    console.error(formatSafeAiErrorLog('/api/ai/health', extractErrorStatus(error), error));
     const status = extractErrorStatus(error);
     const sanitizedMsg = sanitizeErrorMessage(error?.message || 'AI service probe failed');
 
@@ -199,7 +312,7 @@ app.get('/api/ai/health', async (_req, res) => {
  * Endpoint 1: Bengali Medicine Information
  * Explains: Uses, Common Side Effects, Administration rules & safety precautions
  */
-app.post('/api/ai/medicine-info', async (req, res) => {
+app.post('/api/ai/medicine-info', requireFirebaseAuth, rateLimitAi(false), async (req, res) => {
   try {
     const { medicineName } = req.body;
     if (!medicineName || typeof medicineName !== 'string' || !medicineName.trim()) {
@@ -237,7 +350,8 @@ app.post('/api/ai/medicine-info', async (req, res) => {
       disclaimer: MANDATORY_DISCLAIMER,
     });
   } catch (error: any) {
-    console.error('Error generating medicine info with status:', extractErrorStatus(error), error);
+    const safeInputs = typeof req.body?.medicineName === 'string' ? [req.body.medicineName] : [];
+    console.error(formatSafeAiErrorLog('/api/ai/medicine-info', extractErrorStatus(error), error, safeInputs));
     const errDetails = getAiErrorMessage(
       error,
       'ওষুধের তথ্য প্রদানে সাময়িক সমস্যা হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'
@@ -253,7 +367,7 @@ app.post('/api/ai/medicine-info', async (req, res) => {
  * Endpoint 2: Prescription / Medicine Strip Photo OCR & Extraction
  * Uses Gemini 3.8 Flash multimodal vision to extract structured prescription details
  */
-app.post('/api/ai/scan-prescription', async (req, res) => {
+app.post('/api/ai/scan-prescription', requireFirebaseAuth, rateLimitAi(true), async (req, res) => {
   try {
     const { imageBase64, mimeType = 'image/jpeg' } = req.body;
     if (!imageBase64 || typeof imageBase64 !== 'string') {
@@ -333,7 +447,8 @@ app.post('/api/ai/scan-prescription', async (req, res) => {
       disclaimer: MANDATORY_DISCLAIMER,
     });
   } catch (error: any) {
-    console.error('Error scanning prescription with status:', extractErrorStatus(error), error);
+    // Never log user prescription images or extracted text
+    console.error(formatSafeAiErrorLog('/api/ai/scan-prescription', extractErrorStatus(error), error));
     const errDetails = getAiErrorMessage(
       error,
       'প্রেসক্রিপশন স্ক্যান করতে সমস্যা হয়েছে। অনুগ্রহ করে পরিষ্কার আলোতে আবার ছবি তুলে চেষ্টা করুন।'
@@ -350,7 +465,7 @@ app.post('/api/ai/scan-prescription', async (req, res) => {
  * Analyzes potential drug-drug interactions between a new medicine and current active medicines.
  * Never gives definitive medical commands or advises changing doses. Always advises consulting doctor/pharmacist.
  */
-app.post('/api/ai/drug-interaction', async (req, res) => {
+app.post('/api/ai/drug-interaction', requireFirebaseAuth, rateLimitAi(false), async (req, res) => {
   try {
     const { newMedicine, currentMedicines = [], patientContext } = req.body;
     if (!newMedicine || typeof newMedicine !== 'string') {
@@ -429,7 +544,17 @@ JSON ফরম্যাটে উত্তর দাও:
       disclaimer: 'এটি সম্ভাব্য পারস্পরিক মিথস্ক্রিয়া তথ্য, ডাক্তারের পরামর্শের বিকল্প নয়। কোনো অবস্থাতেই নিজে থেকে ওষুধ বন্ধ বা ডোজ পরিবর্তন করবেন না।',
     });
   } catch (error: any) {
-    console.error('Error checking drug interactions with status:', extractErrorStatus(error), error);
+    const sensitiveSnippets: string[] = [];
+    if (typeof req.body?.newMedicine === 'string') sensitiveSnippets.push(req.body.newMedicine);
+    if (typeof req.body?.patientContext === 'string') sensitiveSnippets.push(req.body.patientContext);
+    if (Array.isArray(req.body?.currentMedicines)) {
+      for (const m of req.body.currentMedicines) {
+        if (typeof m === 'string') sensitiveSnippets.push(m);
+      }
+    }
+    console.error(
+      formatSafeAiErrorLog('/api/ai/drug-interaction', extractErrorStatus(error), error, sensitiveSnippets)
+    );
     const errDetails = getAiErrorMessage(
       error,
       'পারস্পরিক ক্রিয়া যাচাই করতে সমস্যা হয়েছে।'

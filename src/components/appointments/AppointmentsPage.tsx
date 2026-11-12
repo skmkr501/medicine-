@@ -184,12 +184,12 @@ export const AppointmentsPage: React.FC = () => {
 
       {/* APK Integration status note if present */}
       {hasNativeBridge && (
-        <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+        <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-sm text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
           <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <span>
             {isBn
-              ? 'Android নেটিভ অ্যালার্ম সক্রিয়: অ্যাপয়েন্টমেন্ট সতর্কবার্তা ফোনে সরাসরি প্রাপ্ত হবে।'
-              : 'Android Native Alarm Bridge active: Reminders will trigger device system alarms.'}
+              ? 'ফোনের নিজস্ব অ্যালার্ম সক্রিয়: ডাক্তারের অ্যাপয়েন্টমেন্ট মনে করিয়ে দেওয়া হবে।'
+              : 'Device alarm active: Appointment reminders will alert on your phone.'}
           </span>
         </div>
       )}

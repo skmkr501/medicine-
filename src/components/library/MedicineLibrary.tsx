@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { GlobalMedicine } from '../../types';
 import { GlobalMedicineDetailModal } from './GlobalMedicineDetailModal';
 import { AddToPersonalModal } from './AddToPersonalModal';
+import { LIBRARY_PAGE_SIZE, paginateMedicines } from '../../utils/libraryRealtime';
 import {
   Search,
   Filter,
@@ -25,6 +26,8 @@ import {
   AlertTriangle,
   CheckSquare,
   Square,
+  WifiOff,
+  X,
 } from 'lucide-react';
 import { isTestMedicine } from '../../utils/medicineImportParser';
 
@@ -46,6 +49,12 @@ export const MedicineLibrary: React.FC = () => {
     deleteGlobalMedicineAction,
     bulkDeleteGlobalMedicinesAction,
     openManualAddModal,
+    lastSyncTime,
+    isOnline,
+    isGlobalFromCache,
+    isCloudConnected,
+    latestLibraryNotice,
+    dismissLibraryNotice,
   } = useMedicine();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -55,6 +64,8 @@ export const MedicineLibrary: React.FC = () => {
   const [adminStatusFilter, setAdminStatusFilter] = useState<'published' | 'pending' | 'all'>('published');
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [isBulkPublishing, setIsBulkPublishing] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [visibleCount, setVisibleCount] = useState<number>(LIBRARY_PAGE_SIZE);
 
   // Safe Deletion & Selection States for Draft TEST DATA
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
@@ -164,6 +175,25 @@ export const MedicineLibrary: React.FC = () => {
     selectedSource,
   ]);
 
+  useEffect(() => {
+    setVisibleCount(LIBRARY_PAGE_SIZE);
+  }, [searchQuery, selectedForm, selectedManufacturer, selectedSource, adminStatusFilter, isAdmin]);
+
+  useEffect(() => {
+    if (!latestLibraryNotice) return;
+    const timer = setTimeout(() => {
+      dismissLibraryNotice();
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [latestLibraryNotice, dismissLibraryNotice]);
+
+  const { visibleItems: visibleMedicines, remainingCount, hasMore } = useMemo(
+    () => paginateMedicines(filteredMedicines, visibleCount),
+    [filteredMedicines, visibleCount]
+  );
+
+  const isOfflineMode = !isOnline || (!isCloudConnected && isGlobalFromCache);
+
   // Quick verify & publish by admin
   const handleQuickPublish = async (e: React.MouseEvent, medId: string) => {
     e.stopPropagation();
@@ -259,7 +289,7 @@ export const MedicineLibrary: React.FC = () => {
       return (
         <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 px-2 py-0.5 rounded-md font-medium text-[10px]">
           <Landmark className="w-3 h-3 text-emerald-600" />
-          DGDA সরকারি গেজেট
+          সরকারি অনুমোদিত তালিকা
         </span>
       );
     }
@@ -300,21 +330,55 @@ export const MedicineLibrary: React.FC = () => {
             <span className="p-2 rounded-xl bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">
               <BookOpen className="w-5 h-5" />
             </span>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-              ওষুধ লাইব্রেরি (Medicine Library)
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
+              ওষুধ লাইব্রেরি
             </h1>
-            <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              যাচাইকৃত ডাটাবেজ
+            <span className="text-sm px-3 py-1 rounded-full font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+              <ShieldCheck className="w-4 h-4" />
+              যাচাইকৃত তালিকা
             </span>
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
-            DGDA সরকারি উন্মুক্ত ড্রাগ রেজিস্টার, প্রস্তুতকারকের মনোগ্রাফ ও অনুমোদিত ক্লিনিক্যাল নির্দেশিকা। ব্র্যান্ড নাম, জেনেরিক নাম, শক্তি ও কোম্পানি দিয়ে অনুসন্ধান করুন।
+          <p className="text-base text-slate-600 dark:text-slate-300 mt-1 max-w-2xl">
+            সরকারি অনুমোদিত ওষুধের তালিকা। ওষুধের নাম বা কোম্পানির নাম দিয়ে খুঁজুন।
           </p>
         </div>
 
-        {/* Quick Admin Import Link or Catalog Stats */}
-        <div className="flex items-center gap-3">
+        {/* Live Sync Status & Quick Admin Actions */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Small Live / Offline Indicator with Last Sync Time */}
+          {isOfflineMode ? (
+            <div
+              className="inline-flex flex-wrap items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/70 text-xs"
+              role="status"
+            >
+              <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-300">
+                <WifiOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>অফলাইন, শেষ জানা তালিকা</span>
+              </span>
+              {lastSyncTime && (
+                <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80 border-l border-amber-200 dark:border-amber-800 pl-2">
+                  শেষ সিঙ্ক: {lastSyncTime}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div
+              className="inline-flex flex-wrap items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/70 text-xs"
+              role="status"
+            >
+              <span className="inline-flex items-center gap-1.5 font-bold text-emerald-700 dark:text-emerald-300">
+                <span className="relative flex h-2 w-2" aria-hidden="true">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span>লাইভ</span>
+              </span>
+              <span className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80 border-l border-emerald-200 dark:border-emerald-800 pl-2">
+                {lastSyncTime ? `শেষ সিঙ্ক: ${lastSyncTime}` : 'সিঙ্ক হচ্ছে...'}
+              </span>
+            </div>
+          )}
+
           {isAdmin ? (
             <div className="flex items-center gap-2">
               <button
@@ -346,6 +410,27 @@ export const MedicineLibrary: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Live New Medicine Arrival Notice */}
+      {latestLibraryNotice && (
+        <div
+          className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 shadow-xs"
+          role="status"
+        >
+          <div className="flex items-center gap-2 font-semibold">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0"></span>
+            <span>{latestLibraryNotice.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={dismissLibraryNotice}
+            className="p-1 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 cursor-pointer"
+            aria-label="বার্তা বন্ধ করুন"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Admin Publication Filter Bar (Requirement 6) */}
       {isAdmin && (
@@ -501,92 +586,115 @@ export const MedicineLibrary: React.FC = () => {
         </div>
       )}
 
-      {/* Search and Filters Bar */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
-        
-        {/* Search Input */}
-        <div className="relative">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ব্র্যান্ড নাম, জেনেরিক নাম বা কোম্পানি দিয়ে খুঁজুন (যেমন: Napa, Paracetamol, স্কয়ার, 500mg)..."
-            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500 font-medium"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-            >
-              মুছে ফেলুন
-            </button>
-          )}
+      {/* Search and Collapsible Filters Bar */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row gap-3">
+          {/* Search Input */}
+          <div className="relative flex-1">
+            <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="ওষুধের নাম বা কোম্পানি দিয়ে খুঁজুন (যেমন: নাপা, সেক্লো)..."
+              className="min-h-[48px] w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl pl-11 pr-20 py-2.5 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus:outline-hidden focus:ring-2 focus:ring-teal-500 font-medium"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="min-h-[48px] px-3 absolute right-1 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                মুছুন
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowFilters((prev) => !prev)}
+            aria-expanded={showFilters}
+            className={`min-h-[48px] px-5 py-2.5 rounded-xl border text-base font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shrink-0 ${
+              showFilters || selectedForm !== 'all' || selectedManufacturer !== 'all' || selectedSource !== 'all'
+                ? 'bg-teal-50 dark:bg-teal-950/60 border-teal-500 text-teal-900 dark:text-teal-200'
+                : 'bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
+            }`}
+          >
+            <Filter className="w-5 h-5" />
+            <span>ফিল্টার</span>
+          </button>
         </div>
 
-        {/* Filter Selectors Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 text-xs">
-          
-          {/* Dosage Form Filter */}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 whitespace-nowrap text-[11px]">ডোজ ধরন:</span>
-            <select
-              value={selectedForm}
-              onChange={(e) => setSelectedForm(e.target.value)}
-              className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-hidden"
-            >
-              <option value="all">সকল ধরন (All Forms)</option>
-              {uniqueForms.map((form) => (
-                <option key={form} value={form}>
-                  {form}
-                </option>
-              ))}
-            </select>
+        {/* Filter Selectors Fold */}
+        {showFilters && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-base">
+            {/* Dosage Form Filter */}
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 block">
+                ওষুধের ধরন
+              </label>
+              <select
+                value={selectedForm}
+                onChange={(e) => setSelectedForm(e.target.value)}
+                className="min-h-[48px] w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-base text-slate-900 dark:text-slate-100 focus:outline-hidden"
+              >
+                <option value="all">সকল ধরন</option>
+                {uniqueForms.map((form) => (
+                  <option key={form} value={form}>
+                    {form}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Manufacturer Filter */}
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 block">
+                কোম্পানি
+              </label>
+              <select
+                value={selectedManufacturer}
+                onChange={(e) => setSelectedManufacturer(e.target.value)}
+                className="min-h-[48px] w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-base text-slate-900 dark:text-slate-100 focus:outline-hidden truncate"
+              >
+                <option value="all">সকল কোম্পানি</option>
+                {uniqueManufacturers.map((mfg) => (
+                  <option key={mfg} value={mfg}>
+                    {mfg}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Source Profile Filter */}
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 block">
+                উৎস
+              </label>
+              <select
+                value={selectedSource}
+                onChange={(e) => setSelectedSource(e.target.value)}
+                className="min-h-[48px] w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-base text-slate-900 dark:text-slate-100 focus:outline-hidden"
+              >
+                <option value="all">সকল উৎস</option>
+                <option value="DGDA">সরকারি অনুমোদিত তালিকা</option>
+                <option value="MANUFACTURER">প্রস্তুতকারকের তথ্য</option>
+                <option value="INDEPENDENT">চিকিৎসা যাচাইকৃত</option>
+                <option value="MEDEX">স্বীকৃত তালিকা (মেডেক্স)</option>
+                <option value="DIMS">স্বীকৃত তালিকা (ডিমস)</option>
+              </select>
+            </div>
           </div>
-
-          {/* Manufacturer Filter */}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 whitespace-nowrap text-[11px]">কোম্পানি:</span>
-            <select
-              value={selectedManufacturer}
-              onChange={(e) => setSelectedManufacturer(e.target.value)}
-              className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-hidden truncate"
-            >
-              <option value="all">সকল প্রস্তুতকারক (All Companies)</option>
-              {uniqueManufacturers.map((mfg) => (
-                <option key={mfg} value={mfg}>
-                  {mfg}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Source Profile Filter */}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 whitespace-nowrap text-[11px]">উৎস:</span>
-            <select
-              value={selectedSource}
-              onChange={(e) => setSelectedSource(e.target.value)}
-              className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 focus:outline-hidden"
-            >
-              <option value="all">সকল আইনি উৎস (All Sources)</option>
-              <option value="DGDA">DGDA সরকারি উন্মুক্ত গেজেট</option>
-              <option value="MANUFACTURER">প্রস্তুতকারকের অফিশিয়াল মনোগ্রাফ</option>
-              <option value="INDEPENDENT">স্বাধীন ক্লিনিক্যাল ডাটা</option>
-              <option value="MEDEX">MedEx বাংলাদেশ (লাইসেন্সপ্রাপ্ত)</option>
-              <option value="DIMS">DIMS বাংলাদেশ (লাইসেন্সপ্রাপ্ত)</option>
-            </select>
-          </div>
-
-        </div>
-
+        )}
       </div>
 
       {/* Results Header */}
-      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1">
+      <div className="flex items-center justify-between text-base text-slate-700 dark:text-slate-300 px-1">
         <span>
           পাওয়া গেছে: <strong className="text-slate-900 dark:text-white font-bold">{filteredMedicines.length}</strong> টি ওষুধ
+          {hasMore && (
+            <span className="text-slate-500 dark:text-slate-400"> (দেখানো হচ্ছে {visibleMedicines.length} টি)</span>
+          )}
           {isAdmin && adminStatusFilter === 'pending' && ' (অপেক্ষমাণ খসড়া)'}
         </span>
         {(searchQuery || selectedForm !== 'all' || selectedManufacturer !== 'all' || selectedSource !== 'all') && (
@@ -598,19 +706,20 @@ export const MedicineLibrary: React.FC = () => {
               setSelectedManufacturer('all');
               setSelectedSource('all');
             }}
-            className="text-teal-700 dark:text-teal-400 hover:underline font-semibold cursor-pointer"
+            className="min-h-[48px] px-3 text-teal-800 dark:text-teal-300 hover:underline font-bold cursor-pointer"
           >
-            ফিল্টার রিসেট করুন
+            সব দেখান
           </button>
         )}
       </div>
 
       {/* Medicines Grid */}
       {filteredMedicines.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredMedicines.map((med) => {
-            const isUnpublished = med.status !== 'published' || !med.verifiedByAdmin;
-            const isTest = isTestMedicine(med);
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {visibleMedicines.map((med) => {
+              const isUnpublished = med.status !== 'published' || !med.verifiedByAdmin;
+              const isTest = isTestMedicine(med);
 
             return (
               <div
@@ -693,19 +802,19 @@ export const MedicineLibrary: React.FC = () => {
                   <div className="mt-2.5 flex items-center justify-between gap-1 text-[10px] text-slate-400">
                     {renderSourceBadge(med)}
                     {med.darNumber && (
-                      <span className="truncate max-w-[110px]" title={med.darNumber}>
-                        DAR: {med.darNumber}
+                      <span className="truncate max-w-[120px]" title={med.darNumber}>
+                        নিবন্ধন: {med.darNumber}
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Action Buttons */}
+                  {/* Action Buttons */}
                 <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setSelectedGlobalMedForDetail(med)}
-                    className="flex-1 py-1.5 px-2.5 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer text-center"
+                    className="min-h-[48px] flex-1 py-2.5 px-3 text-base font-semibold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer text-center"
                   >
                     বিস্তারিত
                   </button>
@@ -717,10 +826,10 @@ export const MedicineLibrary: React.FC = () => {
                         type="button"
                         disabled={publishingId === med.id}
                         onClick={(e) => handleQuickPublish(e, med.id)}
-                        className="flex items-center justify-center gap-1 py-1.5 px-3 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 active:bg-amber-800 rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
+                        className="min-h-[48px] flex items-center justify-center gap-1 py-2.5 px-4 text-base font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
                         title="যাচাই ও সার্বজনীন প্রকাশ করুন"
                       >
-                        <Check className="w-3.5 h-3.5" />
+                        <Check className="w-4 h-4" />
                         <span>{publishingId === med.id ? 'প্রকাশ হচ্ছে...' : 'অনুমোদন'}</span>
                       </button>
 
@@ -728,21 +837,21 @@ export const MedicineLibrary: React.FC = () => {
                       <button
                         type="button"
                         onClick={(e) => promptSingleDelete(e, med)}
-                        className="flex items-center justify-center p-2 text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 rounded-xl border border-rose-200 dark:border-rose-900/50 transition-colors cursor-pointer shrink-0"
-                        title="এই টেস্ট রেকর্ডটি নিরাপদে মুছে ফেলুন"
+                        className="min-h-[48px] min-w-[48px] flex items-center justify-center p-2.5 text-sm font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 rounded-xl border border-rose-200 dark:border-rose-900/50 transition-colors cursor-pointer shrink-0"
+                        title="এই রেকর্ডটি মুছে ফেলুন"
                         aria-label={`${med.brandName} মুছে ফেলুন`}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-5 h-5" />
                       </button>
                     </>
                   ) : (
                     <button
                       type="button"
                       onClick={() => openAddToPersonalModal(med)}
-                      className="flex items-center justify-center gap-1 py-1.5 px-3 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 active:bg-teal-900 rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
+                      className="min-h-[48px] flex items-center justify-center gap-1.5 py-2.5 px-4 text-base font-bold text-white bg-teal-700 hover:bg-teal-800 active:bg-teal-900 rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
                       title="আমার ওষুধ তালিকায় যোগ করুন"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="w-5 h-5" />
                       <span>যোগ করুন</span>
                     </button>
                   )}
@@ -750,6 +859,22 @@ export const MedicineLibrary: React.FC = () => {
               </div>
             );
           })}
+          </div>
+
+          {hasMore && (
+            <div className="flex justify-center pt-2">
+              <button
+                type="button"
+                onClick={() => setVisibleCount((prev) => prev + LIBRARY_PAGE_SIZE)}
+                className="min-h-[48px] inline-flex items-center gap-2 px-7 py-3 text-base font-bold text-teal-900 dark:text-teal-100 bg-teal-50 hover:bg-teal-100 dark:bg-teal-950/70 dark:hover:bg-teal-900/70 border border-teal-300 dark:border-teal-800 rounded-2xl shadow-xs transition-colors cursor-pointer"
+              >
+                <span>আরও দেখান</span>
+                <span className="text-sm font-semibold opacity-85">
+                  ({remainingCount} টি বাকি)
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         /* Empty State */
@@ -767,7 +892,7 @@ export const MedicineLibrary: React.FC = () => {
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
               {globalMedicines.length === 0
-                ? 'আইনানুগ উন্মুক্ত সরকারি গেজেট (DGDA), প্রস্তুতকারকের মনোগ্রাফ অথবা অনুমোদিত পার্টনার ফাইল অ্যাডমিন প্যানেল থেকে আপলোড করা হলে যাচাইকৃত ওষুধ ক্যাটালগ এখানে প্রদর্শিত হবে।'
+                ? 'অনুমোদিত ওষুধ তালিকা যুক্ত করা হলে ক্যাটালগটি এখানে প্রদর্শিত হবে।'
                 : isAdmin && adminStatusFilter === 'pending' && pendingCount === 0
                 ? 'আপনার সকল ওষুধ অনুমোদিত ও প্রকাশিত হয়েছে। আপনি "প্রকাশিত ওষুধ" ট্যাবে সব দেখতে পাবেন।'
                 : 'আপনার সার্চ বা ফিল্টার শর্ত অনুযায়ী কোনো ওষুধ পাওয়া যায়নি। ফিল্টার রিসেট করে আবার চেষ্টা করুন।'}

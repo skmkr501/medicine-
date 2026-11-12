@@ -195,7 +195,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {authMode === 'forgot_password'
                 ? 'আপনার ইমেইলে পাসওয়ার্ড পরিবর্তনের লিংক পাঠানো হবে'
-                : 'ক্লাউড ফায়ারবেস স্টোরেজে সুরক্ষিত ওষুধ ডেটা সিঙ্ক করুন'}
+                : 'ক্লাউডে আপনার ওষুধ ও প্রোফাইলের তথ্য নিরাপদে সংরক্ষণ করুন'}
             </p>
           </div>
         </div>
@@ -449,7 +449,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         {/* Privacy Note */}
         <div className="mt-4 text-[11px] text-slate-400 text-center flex items-center justify-center gap-1">
           <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
-          <span>আপনার সমস্ত স্বাস্থ্য তথ্য Firestore ক্লাউডে এনক্রিপ্টেড ও সম্পূর্ণ ব্যক্তিগত থাকবে</span>
+          <span>আপনার সমস্ত স্বাস্থ্য তথ্য সুরক্ষিত ও সম্পূর্ণ ব্যক্তিগত থাকবে</span>
         </div>
       </div>
     </div>

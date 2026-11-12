@@ -9,7 +9,6 @@ import {
   getSampleIndependentJSON,
   getSampleMedExCSV,
   getSampleDIMSCSV,
-  getSampleFictionalTestCSV,
   isTestMedicine,
 } from '../../utils/medicineImportParser';
 import {
@@ -33,7 +32,6 @@ import {
   Building,
   Landmark,
   FileBadge,
-  Sparkles,
   Clock,
   CheckSquare,
   Square,
@@ -197,16 +195,13 @@ export const AdminImportView: React.FC = () => {
 
   // Handle Download Sample Templates
   const handleDownloadSample = (
-    type: 'dgda_csv' | 'manufacturer_csv' | 'independent_json' | 'medex_csv' | 'dims_csv' | 'fictional_test_csv'
+    type: 'dgda_csv' | 'manufacturer_csv' | 'independent_json' | 'medex_csv' | 'dims_csv'
   ) => {
     let content = '';
     let fileName = '';
     let mimeType = 'text/csv';
 
-    if (type === 'fictional_test_csv') {
-      content = getSampleFictionalTestCSV();
-      fileName = 'sample_fictional_test_medicines.csv';
-    } else if (type === 'dgda_csv') {
+    if (type === 'dgda_csv') {
       content = getSampleDGDACSV();
       fileName = 'dgda_bangladesh_formulary_template.csv';
     } else if (type === 'manufacturer_csv') {
@@ -233,40 +228,6 @@ export const AdminImportView: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  };
-
-  // 1-Click Load Fictional Test Data for immediate verification testing
-  // Strictly keeps records marked as TEST DATA and status as pending_verification (unpublished)
-  const handleLoadFictionalTestData = () => {
-    setSourceProfile('dgda_gov');
-    setLicenseReference('DGDA-COMPLIANCE-TEST-SYSTEM-ONLY');
-    setTargetStatus('pending_verification'); // Strictly unpublished draft queue!
-    setRawFileName('sample_fictional_test_medicines.csv (TEST DATA)');
-    setIsProcessingFile(true);
-
-    try {
-      const csvText = getSampleFictionalTestCSV();
-      const parsedRows = parseCSV(csvText);
-      const result = processImportPayload(
-        parsedRows,
-        'dgda_gov',
-        globalMedicines,
-        'DGDA-COMPLIANCE-TEST-SYSTEM-ONLY',
-        undefined,
-        'pending_verification' // Do not publish to public catalog automatically!
-      );
-
-      setPreviewRecords(result.previewRecords);
-      setTotalParsedCount(result.totalCount);
-      setValidCount(result.validCount);
-      setDuplicateCount(result.duplicateCount);
-      setErrorCount(result.errorCount);
-    } catch (err: any) {
-      console.error('Error loading fictional test data:', err);
-      alert('টেস্ট ডাটা লোড করতে সমস্যা হয়েছে: ' + err.message);
-    } finally {
-      setIsProcessingFile(false);
-    }
   };
 
   // Handle File Upload & Processing
@@ -460,14 +421,14 @@ export const AdminImportView: React.FC = () => {
               অ্যাডমিন অনুমোদন প্রয়োজন
             </h2>
             <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-              স্বাস্থ্যবন্ধু অ্যাপে গ্লোবাল ওষুধ ক্যাটালগ ইমপোর্ট ও প্রকাশনার সুযোগ শুধুমাত্র প্রধান স্বাস্থ্য তথ্য প্রশাসক (<strong className="text-teal-700 dark:text-teal-400 font-semibold">{adminEmail}</strong>) এর জন্য সংরক্ষিত।
+              এই অংশে প্রবেশ ও পরিবর্তনের সুযোগ শুধুমাত্র অনুমোদিত অ্যাডমিনের জন্য সংরক্ষিত।
             </p>
           </div>
 
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
             {currentUser ? (
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                বর্তমান অ্যাকাউন্ট: <span className="font-semibold text-slate-800 dark:text-slate-200">{currentUser.email}</span> (অনুমোদিত নয়)
+                বর্তমান অ্যাকাউন্টে অ্যাডমিন অনুমতি নেই।
               </div>
             ) : (
               <button
@@ -891,42 +852,6 @@ export const AdminImportView: React.FC = () => {
             </p>
 
             <div className="space-y-2 text-xs">
-              
-              {/* Highlighted Fictional Test Dataset (TEST DATA ONLY) */}
-              <div className="p-3 bg-amber-50/80 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/80 rounded-xl space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5 text-xs">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                    কাল্পনিক টেস্ট ডাটা (TEST DATA ONLY)
-                  </span>
-                  <span className="text-[10px] font-bold bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200 px-2 py-0.5 rounded-full">
-                    ৫টি ডামি রেকর্ড
-                  </span>
-                </div>
-                <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 leading-tight">
-                  সিস্টেম টেস্টিং এর জন্য ৫টি সম্পূর্ণ কাল্পনিক ও স্পষ্ট টেস্ট চিহ্নিত রেকর্ড। কোনো বাস্তব ব্র্যান্ড বা চিকিৎসাগত নির্দেশনা নেই।
-                </p>
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => handleDownloadSample('fictional_test_csv')}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-amber-100 dark:hover:bg-amber-900/60 border border-amber-300 dark:border-amber-700 rounded-lg text-amber-900 dark:text-amber-200 font-semibold text-[11px] transition-colors cursor-pointer"
-                  >
-                    <Download className="w-3 h-3 text-amber-600" />
-                    <span>CSV ডাউনলোড</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleLoadFictionalTestData}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white rounded-lg font-semibold text-[11px] shadow-xs transition-colors cursor-pointer"
-                    title="কাল্পনিক টেস্ট রেকর্ডগুলো প্রিভিউতে লোড করুন (অপ্রকাশিত হিসেবে)"
-                  >
-                    <Eye className="w-3 h-3" />
-                    <span>প্রিভিউতে লোড করুন</span>
-                  </button>
-                </div>
-              </div>
-
               {/* DGDA Govt Open Data CSV */}
               <button
                 type="button"

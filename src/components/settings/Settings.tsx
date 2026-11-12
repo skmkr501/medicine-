@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber, playAlertTone } from '../../utils/bengaliUtils';
+import { useBengaliSpeech } from '../../utils/speechUtils';
 import {
   Settings as SettingsIcon,
   User,
@@ -16,7 +17,6 @@ import {
   Trash2,
   Check,
   Smartphone,
-  Code,
   ExternalLink,
   Sun,
   Moon,
@@ -26,6 +26,10 @@ import {
   Globe,
   Phone,
   Save,
+  Music,
+  FolderOpen,
+  Play,
+  Square,
 } from 'lucide-react';
 import {
   isNativeRemindersAvailable,
@@ -34,8 +38,16 @@ import {
   openBatterySettings,
   requestNotificationPermission,
   scheduleTestAlarm,
+  getNativeAlarmTone,
+  pickNativeAlarmTone,
+  pickNativeAlarmToneFromFiles,
+  previewNativeAlarmTone,
+  stopNativeAlarmTonePreview,
+  resetNativeAlarmTone,
   NativePermissionStatus,
+  NativeAlarmToneInfo,
 } from '../../services/nativeReminders';
+import { SyncStatusCard } from './SyncStatusCard';
 
 export const Settings: React.FC = () => {
   const {
@@ -48,6 +60,7 @@ export const Settings: React.FC = () => {
     settings,
     updateSettings,
     resetAllData,
+    openResetConfirmationModal,
     medicines,
     doseLogs,
     showToast,
@@ -59,10 +72,21 @@ export const Settings: React.FC = () => {
     isCloudConnected,
   } = useMedicine();
 
+  const { hasBengaliVoice } = useBengaliSpeech();
   const isNative = isNativeRemindersAvailable();
+  const isApkEnvironment =
+    typeof window !== 'undefined' &&
+    typeof (window as unknown as { AndroidReminders?: unknown }).AndroidReminders !== 'undefined';
   const [permissionStatus, setPermissionStatus] = useState<NativePermissionStatus | null>(() =>
     getNativePermissionStatus()
   );
+  const [alarmTone, setAlarmTone] = useState<NativeAlarmToneInfo>(
+    () => getNativeAlarmTone() || { name: 'ডিফল্ট অ্যালার্ম টোন', isDefault: true }
+  );
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPreviewPlayingRef = useRef(false);
+  isPreviewPlayingRef.current = isPreviewPlaying;
 
   const isBn = settings.language !== 'en';
   const [emergencyName, setEmergencyName] = useState(settings.emergencyContactName || '');
@@ -83,26 +107,91 @@ export const Settings: React.FC = () => {
     );
   };
 
-  const refreshPermissions = () => {
+  const refreshPermissions = useCallback(() => {
     if (isNativeRemindersAvailable()) {
       const status = getNativePermissionStatus();
       setPermissionStatus(status);
     }
-  };
+  }, []);
 
-  React.useEffect(() => {
+  const refreshAlarmTone = useCallback(() => {
+    if (isNativeRemindersAvailable()) {
+      const tone = getNativeAlarmTone();
+      if (tone) {
+        setAlarmTone(tone);
+      }
+    }
+  }, []);
+
+  const stopPreviewPlayback = useCallback(() => {
+    if (previewTimerRef.current) {
+      clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = null;
+    }
+    stopNativeAlarmTonePreview();
+    setIsPreviewPlaying(false);
+  }, []);
+
+  useEffect(() => {
     if (!isNative) return;
     refreshPermissions();
-    window.addEventListener('focus', refreshPermissions);
-    return () => window.removeEventListener('focus', refreshPermissions);
-  }, [isNative]);
+    refreshAlarmTone();
 
-  const handleTestAlarm = () => {
+    const handleFocus = () => {
+      refreshPermissions();
+      refreshAlarmTone();
+    };
+    const handleToneChanged = () => {
+      refreshAlarmTone();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('alarmToneChanged', handleToneChanged);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('alarmToneChanged', handleToneChanged);
+      if (previewTimerRef.current) {
+        clearTimeout(previewTimerRef.current);
+        previewTimerRef.current = null;
+      }
+      if (isPreviewPlayingRef.current) {
+        stopNativeAlarmTonePreview();
+      }
+    };
+  }, [isNative, refreshPermissions, refreshAlarmTone]);
+
+  const handleTogglePreviewAlarmTone = () => {
+    if (isPreviewPlaying) {
+      stopPreviewPlayback();
+      return;
+    }
+    const started = previewNativeAlarmTone();
+    if (started) {
+      setIsPreviewPlaying(true);
+      previewTimerRef.current = setTimeout(() => {
+        previewTimerRef.current = null;
+        setIsPreviewPlaying(false);
+      }, 6000);
+    }
+  };
+
+  const handleResetAlarmTone = () => {
+    if (isPreviewPlaying) {
+      stopPreviewPlayback();
+    }
+    const ok = resetNativeAlarmTone();
+    refreshAlarmTone();
+    if (ok) {
+      showToast('ডিফল্ট অ্যালার্ম টোনে ফেরানো হয়েছে', 'success');
+    }
+  };
+
+  const handleCheckAlarm = () => {
     const success = scheduleTestAlarm();
     if (success) {
-      showToast('১ মিনিট পর টেস্ট অ্যালার্ম সফলভাবে শিডিউল করা হয়েছে (Android AlarmManager)', 'success');
+      showToast('১ মিনিট পর একটি অ্যালার্ম সেট করা হয়েছে — বাজলে বুঝতে পারবেন সব ঠিক আছে', 'success');
     } else {
-      showToast('টেস্ট অ্যালার্ম শিডিউল করা যায়নি। দয়া করে পারমিশন চেক করুন।', 'alert');
+      showToast('অ্যালার্ম সেট করা যায়নি। অনুগ্রহ করে অনুমতি পরীক্ষা করুন।', 'alert');
     }
   };
 
@@ -261,25 +350,25 @@ export const Settings: React.FC = () => {
       </section>
 
       {/* Section: Theme & Accessibility Settings */}
-      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
         <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
           <Sun className="w-5 h-5 text-teal-600" />
-          <h2 className="text-base font-bold text-slate-900 dark:text-white">
-            ডিসপ্লে ও থিম পছন্দ (Display & Accessibility)
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+            দেখার সুবিধা ও থিম
           </h2>
         </div>
 
-        <div className="space-y-4 text-xs sm:text-sm">
+        <div className="space-y-5 text-base">
           {/* Dark Mode Switcher */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              কালার থিম (Theme Mode)
+            <label className="block text-base font-bold text-slate-800 dark:text-slate-200 mb-2">
+              রঙ ও থিম
             </label>
             <div className="grid grid-cols-3 gap-3">
               {[
-                { id: 'light' as const, label: 'লাইট মোড', icon: Sun },
-                { id: 'dark' as const, label: 'ডার্ক মোড', icon: Moon },
-                { id: 'system' as const, label: 'ডিভাইস অটো', icon: Monitor },
+                { id: 'light' as const, label: 'আলো (লাইট)', icon: Sun },
+                { id: 'dark' as const, label: 'রাত (ডার্ক)', icon: Moon },
+                { id: 'system' as const, label: 'ফোন অনুযায়ী', icon: Monitor },
               ].map((theme) => {
                 const Icon = theme.icon;
                 const isSelected = (settings.themeMode || 'system') === theme.id;
@@ -288,10 +377,10 @@ export const Settings: React.FC = () => {
                     key={theme.id}
                     type="button"
                     onClick={() => updateSettings({ themeMode: theme.id })}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                    className={`min-h-[48px] flex items-center justify-center gap-2 p-3 rounded-xl border text-sm sm:text-base font-semibold transition-all cursor-pointer ${
                       isSelected
                         ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/60 text-teal-900 dark:text-teal-200 shadow-xs ring-1 ring-teal-500/40'
-                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                        : 'border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
                     }`}
                   >
                     <Icon className="w-4 h-4 text-teal-600 dark:text-teal-400" />
@@ -302,42 +391,113 @@ export const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* Elderly Large Font Mode */}
-          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+          {/* Easy Mode (সহজ মোড) */}
+          <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
             <div>
-              <span className="font-semibold text-slate-900 dark:text-white block flex items-center gap-1.5">
-                <Type className="w-4 h-4 text-teal-600" />
-                বয়স্কদের জন্য সহজ পাঠ ও বড় ফন্ট মোড (Large Font Mode)
+              <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Smartphone className="w-5 h-5 text-teal-600" />
+                সহজ মোড
               </span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">
-                অ্যাপের বাটন ও টেক্সট আকারে বড় হবে যাতে প্রবীণরা সহজে পড়তে পারেন
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                খুব বড় লেখা ও হোম স্ক্রিনে শুধু ৩টি বড় বোতাম (আজকের ওষুধ, ওষুধ যোগ, জরুরি কল)
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => updateSettings({ easyMode: !settings.easyMode })}
+              aria-label="সহজ মোড"
+              aria-pressed={!!settings.easyMode}
+              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                settings.easyMode ? 'bg-teal-600' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                  settings.easyMode ? 'translate-x-7' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Elderly Large Font Mode */}
+          <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Type className="w-5 h-5 text-teal-600" />
+                বড় লেখা মোড
+              </span>
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                অ্যাপের লেখা ও বাটন আরও বড় দেখাবে যাতে পড়তে সহজ হয়
               </span>
             </div>
 
             <button
               type="button"
               onClick={() => updateSettings({ largeFontMode: !settings.largeFontMode })}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+              aria-label="বড় লেখা মোড"
+              aria-pressed={!!settings.largeFontMode}
+              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
                 settings.largeFontMode ? 'bg-teal-600' : 'bg-slate-300 dark:bg-slate-700'
               }`}
             >
               <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  settings.largeFontMode ? 'translate-x-6' : 'translate-x-1'
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                  settings.largeFontMode ? 'translate-x-7' : 'translate-x-1'
                 }`}
               />
             </button>
           </div>
 
-          {/* Language Switcher (Step 5) */}
-          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+          {/* Voice Readout (কথা বলে শোনানো) */}
+          <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
             <div>
-              <span className="font-semibold text-slate-900 dark:text-white block flex items-center gap-1.5">
-                <Globe className="w-4 h-4 text-teal-600" />
-                {isBn ? 'ভাষা নির্বাচন (Language)' : 'Application Language'}
+              <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Volume2 className="w-5 h-5 text-teal-600" />
+                কথা বলে শোনানো
               </span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">
-                {isBn ? 'বাংলা অথবা ইংরেজিতে অ্যাপ প্রদর্শন করুন' : 'Display the app interface in Bengali or English'}
+              <span className="text-sm text-slate-600 dark:text-slate-300 block">
+                ডোজ কার্ডে "শুনুন" বোতামে চাপ দিলে ওষুধের নাম ও সময় বাংলায় পড়ে শোনাবে
+              </span>
+              {!hasBengaliVoice && (
+                <span className="text-xs text-amber-700 dark:text-amber-300 mt-1 block font-medium">
+                  এই ডিভাইসে বাংলা ভয়েস না থাকায় "শুনুন" বোতাম স্বয়ংক্রিয়ভাবে লুকানো থাকবে
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                updateSettings({
+                  voiceReadoutEnabled: settings.voiceReadoutEnabled === false,
+                })
+              }
+              aria-label="কথা বলে শোনানো"
+              aria-pressed={settings.voiceReadoutEnabled !== false}
+              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                settings.voiceReadoutEnabled !== false
+                  ? 'bg-teal-600'
+                  : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                  settings.voiceReadoutEnabled !== false ? 'translate-x-7' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Language Switcher */}
+          <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Globe className="w-5 h-5 text-teal-600" />
+                ভাষা
+              </span>
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                বাংলা অথবা ইংরেজিতে অ্যাপ দেখুন
               </span>
             </div>
 
@@ -345,10 +505,10 @@ export const Settings: React.FC = () => {
               <button
                 type="button"
                 onClick={() => updateSettings({ language: 'bn' })}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                className={`min-h-[48px] px-4 py-2 rounded-xl text-base font-semibold transition cursor-pointer ${
                   (settings.language || 'bn') === 'bn'
-                    ? 'bg-teal-600 text-white shadow-xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
+                    ? 'bg-teal-700 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200'
                 }`}
               >
                 বাংলা
@@ -356,10 +516,10 @@ export const Settings: React.FC = () => {
               <button
                 type="button"
                 onClick={() => updateSettings({ language: 'en' })}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                className={`min-h-[48px] px-4 py-2 rounded-xl text-base font-semibold transition cursor-pointer ${
                   settings.language === 'en'
-                    ? 'bg-teal-600 text-white shadow-xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
+                    ? 'bg-teal-700 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200'
                 }`}
               >
                 English
@@ -448,22 +608,26 @@ export const Settings: React.FC = () => {
           <div className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-800">
             <div>
               <span className="font-semibold text-slate-900 dark:text-white block">
-                অডিও সংকেত (Audio Tone)
+                অ্যালার্মের শব্দ
               </span>
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                ডোজ গ্রহণের নির্ধারিত সময়ে নরম বেল বা চাইম সংকেত বাজবে
+                {isApkEnvironment
+                  ? 'ডোজের নির্ধারিত সময়ে ফোনের অ্যালার্ম শব্দ বাজবে'
+                  : 'ডোজ গ্রহণের নির্ধারিত সময়ে অ্যালার্ম সংকেত বাজবে'}
               </span>
             </div>
 
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => playAlertTone(settings.selectedTone)}
-                className="px-2.5 py-1 text-xs bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-md text-slate-700 dark:text-slate-200 cursor-pointer flex items-center gap-1"
-              >
-                <Volume2 className="w-3.5 h-3.5" />
-                <span>টেস্ট করুন</span>
-              </button>
+              {!isApkEnvironment && (
+                <button
+                  type="button"
+                  onClick={() => playAlertTone(settings.selectedTone)}
+                  className="px-3.5 py-2 min-h-[48px] text-sm font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-xl text-slate-700 dark:text-slate-200 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Volume2 className="w-4 h-4" />
+                  <span>বাজিয়ে শুনুন</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -481,57 +645,59 @@ export const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* Tone Selector */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-            {[
-              { id: 'soft-bell' as const, label: 'নরম সংকেত (Soft Bell)' },
-              { id: 'chime' as const, label: 'সুমিষ্ট চাইম (Chime)' },
-              { id: 'digital-beep' as const, label: 'ডিজিটাল বিপ (Gentle Beep)' },
-            ].map((tone) => (
-              <button
-                key={tone.id}
-                type="button"
-                onClick={() => {
-                  updateSettings({ selectedTone: tone.id });
-                  playAlertTone(tone.id);
-                }}
-                className={`p-3 rounded-lg border text-left cursor-pointer transition-colors ${
-                  settings.selectedTone === tone.id
-                    ? 'border-teal-600 bg-teal-50/50 dark:bg-teal-950/40 text-teal-950 dark:text-teal-200 font-bold'
-                    : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <div className="text-xs">{tone.label}</div>
-              </button>
-            ))}
-          </div>
+          {/* Tone Selector (শুধু ওয়েব ব্রাউজারে দেখাবে; APK-তে লুকানো থাকবে) */}
+          {!isApkEnvironment && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+              {[
+                { id: 'soft-bell' as const, label: 'নরম বেল' },
+                { id: 'chime' as const, label: 'মিষ্টি সুর' },
+                { id: 'digital-beep' as const, label: 'হালকা বিপ' },
+              ].map((tone) => (
+                <button
+                  key={tone.id}
+                  type="button"
+                  onClick={() => {
+                    updateSettings({ selectedTone: tone.id });
+                    playAlertTone(tone.id);
+                  }}
+                  className={`p-3 rounded-lg border text-left cursor-pointer transition-colors ${
+                    settings.selectedTone === tone.id
+                      ? 'border-teal-600 bg-teal-50/50 dark:bg-teal-950/40 text-teal-950 dark:text-teal-200 font-bold'
+                      : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <div className="text-xs">{tone.label}</div>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Advance Time */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                খাবারের কত মিনিট পূর্বে অগ্রিম স্মরণ করাবে?
+              <label className="block text-sm font-bold text-slate-800 dark:text-slate-200 mb-1.5">
+                খাবারের কত মিনিট আগে মনে করাবে?
               </label>
               <select
                 value={settings.advanceMinutes}
                 onChange={(e) => updateSettings({ advanceMinutes: Number(e.target.value) })}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs"
+                className="min-h-[48px] w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-base"
               >
-                <option value={0}>নির্দিষ্ট সময়েই (০ মিনিট)</option>
-                <option value={10}>১০ মিনিট পূর্বে</option>
-                <option value={15}>১৫ মিনিট পূর্বে</option>
-                <option value={30}>৩০ মিনিট পূর্বে (গ্যাস্ট্রিকের ওষুধের জন্য আদর্শ)</option>
+                <option value={0}>নির্দিষ্ট সময়েই (০ মিনিট)</option>
+                <option value={10}>১০ মিনিট আগে</option>
+                <option value={15}>১৫ মিনিট আগে</option>
+                <option value={30}>৩০ মিনিট আগে (গ্যাস্ট্রিকের ওষুধের জন্য ভালো)</option>
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                স্নুজ সময়কাল (Snooze Duration)
+              <label className="block text-sm font-bold text-slate-800 dark:text-slate-200 mb-1.5">
+                পরে মনে করানোর সময়
               </label>
               <select
                 value={settings.snoozeDurationMinutes}
                 onChange={(e) => updateSettings({ snoozeDurationMinutes: Number(e.target.value) })}
-                className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs"
+                className="min-h-[48px] w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-base"
               >
                 <option value={5}>৫ মিনিট</option>
                 <option value={10}>১০ মিনিট</option>
@@ -548,10 +714,10 @@ export const Settings: React.FC = () => {
                   <Smartphone className="w-5 h-5 text-teal-600" />
                   <div>
                     <h3 className="font-bold text-slate-900 dark:text-white text-sm">
-                      ফোন অ্যালার্ম (Android APK নেটিভ রিমাইন্ডার)
+                      ফোন অ্যালার্ম অনুমতি
                     </h3>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      সরাসরি অ্যান্ড্রয়েড অ্যালার্ম ম্যানেজারের মাধ্যমে অ্যালার্ম ও শব্দ নিশ্চিত করার পারমিশন
+                      ঠিক সময়ে অ্যালার্ম বাজতে এই অনুমতিগুলো দিন
                     </p>
                   </div>
                 </div>
@@ -581,10 +747,10 @@ export const Settings: React.FC = () => {
                     </span>
                     <div>
                       <strong className="block text-slate-900 dark:text-white font-semibold">
-                        নির্ধারিত সময়ে অ্যালার্ম (Exact Alarm)
+                        সঠিক সময়ে অ্যালার্ম
                       </strong>
                       <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                        সঠিক মিনিট ও সেকেন্ডে অ্যালার্ম বাজার জন্য প্রয়োজন
+                        সঠিক সময়ে ওষুধের অ্যালার্ম বাজার জন্য প্রয়োজন
                       </span>
                     </div>
                   </div>
@@ -617,10 +783,10 @@ export const Settings: React.FC = () => {
                     </span>
                     <div>
                       <strong className="block text-slate-900 dark:text-white font-semibold">
-                        সিস্টেম নোটিফিকেশন (Notifications)
+                        নোটিফিকেশন
                       </strong>
                       <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                        নোটিফিকেশন প্যানেলে ওষুধের ডোজ ও সময় প্রদর্শনের জন্য
+                        নোটিফিকেশনে ওষুধের ডোজ ও সময় দেখানোর জন্য
                       </span>
                     </div>
                   </div>
@@ -653,10 +819,10 @@ export const Settings: React.FC = () => {
                     </span>
                     <div>
                       <strong className="block text-slate-900 dark:text-white font-semibold">
-                        ব্যাটারি অপ্টিমাইজেশন ছাড় (Battery Unrestricted)
+                        ব্যাটারি সেভার থেকে ছাড়
                       </strong>
                       <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                        স্ক্রিন বন্ধ বা স্লিপ মোডে অ্যালার্ম মিস হওয়া ঠেকায়
+                        ফোন বন্ধ বা ঘুমন্ত অবস্থায় অ্যালার্ম মিস হওয়া ঠেকায়
                       </span>
                     </div>
                   </div>
@@ -676,24 +842,108 @@ export const Settings: React.FC = () => {
                 </div>
               </div>
 
-              {/* Test Alarm Action */}
-              <div className="p-3.5 bg-teal-50/70 dark:bg-teal-950/30 rounded-xl border border-teal-200 dark:border-teal-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <span className="text-xs font-bold text-teal-950 dark:text-teal-200 block">
-                    অ্যালার্ম কার্যকারিতা পরীক্ষা
-                  </span>
-                  <span className="text-[11px] text-teal-800 dark:text-teal-300">
-                    ফোনের সাউন্ড ও রিং পরীক্ষা করতে এখুনি টেস্ট শিডিউল করুন
-                  </span>
+              {/* APK Alarm Tone Card (শুধু APK-তে দেখাবে, ব্রাউজারে নয়) */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 flex items-center justify-center shrink-0">
+                      <Music className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white">
+                        অ্যালার্ম টোন
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        ওষুধের সময় হলে ফোনে যে সুর বাজবে তা পছন্দ করুন
+                      </p>
+                    </div>
+                  </div>
+                  {alarmTone.isDefault && (
+                    <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800 shrink-0">
+                      ডিফল্ট
+                    </span>
+                  )}
                 </div>
 
+                {/* Current Tone Display */}
+                <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                      বর্তমান অ্যালার্ম টোন
+                    </span>
+                    <strong className="text-sm font-bold text-slate-900 dark:text-white block truncate mt-0.5">
+                      {alarmTone.name}
+                    </strong>
+                  </div>
+                  <Volume2 className={`w-5 h-5 shrink-0 ${isPreviewPlaying ? 'text-teal-600 dark:text-teal-400 animate-pulse' : 'text-slate-400 dark:text-slate-500'}`} />
+                </div>
+
+                {/* Picker & Playback Buttons */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isPreviewPlaying) stopPreviewPlayback();
+                      pickNativeAlarmTone();
+                    }}
+                    className="w-full py-3 px-4 rounded-xl bg-white dark:bg-slate-900 hover:bg-teal-50 dark:hover:bg-teal-950/50 border border-slate-200 dark:border-slate-700 hover:border-teal-400 dark:hover:border-teal-700 text-slate-800 dark:text-slate-100 text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Bell className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+                    <span>ফোনের টোন থেকে বাছুন</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isPreviewPlaying) stopPreviewPlayback();
+                      pickNativeAlarmToneFromFiles();
+                    }}
+                    className="w-full py-3 px-4 rounded-xl bg-white dark:bg-slate-900 hover:bg-teal-50 dark:hover:bg-teal-950/50 border border-slate-200 dark:border-slate-700 hover:border-teal-400 dark:hover:border-teal-700 text-slate-800 dark:text-slate-100 text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <FolderOpen className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+                    <span>গান/ফাইল থেকে বাছুন</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleTogglePreviewAlarmTone}
+                    className={`w-full py-3 px-4 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-2xs border ${
+                      isPreviewPlaying
+                        ? 'bg-amber-600 hover:bg-amber-700 border-amber-600 text-white'
+                        : 'bg-teal-700 hover:bg-teal-800 border-teal-700 text-white'
+                    }`}
+                  >
+                    {isPreviewPlaying ? (
+                      <>
+                        <Square className="w-4 h-4 shrink-0" />
+                        <span>থামান</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 shrink-0" />
+                        <span>শুনে দেখুন</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResetAlarmTone}
+                    className="w-full py-3 px-4 rounded-xl bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <RotateCcw className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                    <span>ডিফল্টে ফিরুন</span>
+                  </button>
+                </div>
+
+                {/* 1-Minute Alarm Verification Button (no word "টেস্ট") */}
                 <button
                   type="button"
-                  onClick={handleTestAlarm}
-                  className="px-3.5 py-2 bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer flex items-center justify-center gap-1.5 shrink-0 transition-colors"
+                  onClick={handleCheckAlarm}
+                  className="w-full py-3.5 px-4 rounded-xl bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 dark:hover:bg-teal-900/60 border border-teal-200 dark:border-teal-800 text-teal-900 dark:text-teal-100 text-sm font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
                 >
-                  <Bell className="w-3.5 h-3.5 text-amber-300" />
-                  <span>১ মিনিট পর টেস্ট অ্যালার্ম</span>
+                  <Bell className="w-4 h-4 text-teal-700 dark:text-teal-300 shrink-0" />
+                  <span>অ্যালার্ম ঠিকমতো বাজছে কিনা দেখুন</span>
                 </button>
               </div>
             </div>
@@ -702,91 +952,33 @@ export const Settings: React.FC = () => {
         </div>
       </section>
 
-      {/* Cloud Account & Firestore Storage Section */}
+      {/* Cloud Account & Sync Section */}
       <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              ক্লাউড ফায়ারবেস স্টোরেজ ও অ্যাকাউন্ট
+              ক্লাউড ব্যাকআপ ও সিঙ্ক
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              ক্লাউড ফায়ারস্টোর ডাটাবেজে আপনার ওষুধ ও স্বাস্থ্য ইতিহাস সংরক্ষিত ও নিরাপদ থাকে
+              ক্লাউডে আপনার ওষুধ ও স্বাস্থ্য ইতিহাস নিরাপদে সংরক্ষিত ও সিঙ্ক থাকে
             </p>
           </div>
           <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-md border border-emerald-200 dark:border-emerald-800">
-            ✓ ফায়ারবেস সংযুক্ত
+            ✓ ক্লাউড সক্রিয়
           </span>
         </div>
 
-        {currentUser ? (
-          <div className="space-y-4">
-            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                {currentUser.photoURL ? (
-                  <img
-                    src={currentUser.photoURL}
-                    alt={currentUser.displayName || 'User'}
-                    referrerPolicy="no-referrer"
-                    className="w-12 h-12 rounded-full object-cover border-2 border-teal-500"
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-full bg-teal-100 dark:bg-teal-900 text-teal-800 dark:text-teal-200 flex items-center justify-center font-bold text-lg">
-                    {(currentUser.displayName || currentUser.email || 'U')[0].toUpperCase()}
-                  </div>
-                )}
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                    {currentUser.displayName || 'ব্যবহারকারী'}
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {currentUser.email}
-                  </p>
-                  <p className="text-[11px] text-teal-700 dark:text-teal-400 font-mono mt-0.5">
-                    UID: {currentUser.uid}
-                  </p>
-                </div>
-              </div>
+        {/* Live Sync Status Card */}
+        <SyncStatusCard />
 
-              <div className="flex items-center gap-2 self-end sm:self-center">
-                <button
-                  type="button"
-                  onClick={syncLocalToCloud}
-                  disabled={isSyncing}
-                  className="px-3 py-1.5 text-xs font-semibold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-lg hover:bg-teal-100 cursor-pointer disabled:opacity-50"
-                >
-                  {isSyncing ? 'সিঙ্ক হচ্ছে...' : 'ক্লাউড সিঙ্ক করুন'}
-                </button>
-                <button
-                  type="button"
-                  onClick={signOutUser}
-                  className="px-3 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg hover:bg-rose-100 cursor-pointer"
-                >
-                  লগআউট
-                </button>
-              </div>
-            </div>
-
-            <div className="p-3 bg-teal-50/50 dark:bg-teal-950/30 border border-teal-200/60 dark:border-teal-800/40 rounded-lg text-xs text-teal-900 dark:text-teal-200 flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-teal-600 shrink-0" />
-              <span>
-                আপনার প্রতিটি ওষুধ, রিমাইন্ডার ও সেবনের হিস্ট্রি ফায়ারস্টোর সিকিউরিটি রুলস দ্বারা সুরক্ষিত এবং শুধুমাত্র আপনার একাউন্ট থেকেই অ্যাক্সেসযোগ্য।
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="p-6 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 text-center space-y-3">
-            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
-              আপনি বর্তমানে অতিথি (Guest) মোডে আছেন
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-              যেকোনো ডিভাইসে আপনার ওষুধ ও হিস্ট্রি সুরক্ষিত রাখতে এবং রিয়েল-টাইম ক্লাউড সিঙ্ক চালু করতে গুগল বা ইমেইল দিয়ে লগইন করুন।
-            </p>
+        {currentUser && (
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
-              onClick={openAuthModal}
-              className="px-5 py-2 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-xs cursor-pointer"
+              onClick={signOutUser}
+              className="px-3.5 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg hover:bg-rose-100 cursor-pointer transition-colors"
             >
-              লগইন বা নতুন অ্যাকাউন্ট তৈরি
+              লগআউট
             </button>
           </div>
         )}
@@ -795,13 +987,13 @@ export const Settings: React.FC = () => {
       {/* Section 3: Data Management */}
       <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
         <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3 border-b border-slate-100 dark:border-slate-800">
-          ডাটা ব্যাকআপ ও নিয়ন্ত্রণ
+          ডেটা ব্যাকআপ ও নিয়ন্ত্রণ
         </h2>
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs">
           <div>
             <strong className="block text-sm font-semibold text-slate-900 dark:text-white mb-0.5">
-              ডাটা ব্যাকআপ এক্সপোর্ট (JSON)
+              ব্যাকআপ ডাউনলোড
             </strong>
             <span className="text-slate-500 dark:text-slate-400">
               আপনার সমস্ত ওষুধের তালিকা, পরিবারের সদস্য ও সেবন ইতিহাস একটি ফাইলে ডাউনলোড করুন
@@ -814,7 +1006,7 @@ export const Settings: React.FC = () => {
             className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-lg hover:bg-teal-100 cursor-pointer shrink-0"
           >
             <Download className="w-4 h-4" />
-            <span>JSON ব্যাকআপ ডাউনলোড</span>
+            <span>ব্যাকআপ ডাউনলোড</span>
           </button>
         </div>
 
@@ -830,15 +1022,7 @@ export const Settings: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => {
-              if (
-                window.confirm(
-                  'আপনি কি নিশ্চিত যে সমস্ত ওষুধ, ইতিহাস, প্রোফাইল ও সেটিংস মুছে একদম নতুন করে শুরু করতে চান? এই কাজটি আর ফেরানো যাবে না।'
-                )
-              ) {
-                resetAllData();
-              }
-            }}
+            onClick={openResetConfirmationModal}
             className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-lg hover:bg-rose-100 cursor-pointer shrink-0"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -847,74 +1031,46 @@ export const Settings: React.FC = () => {
         </div>
       </section>
 
-      {/* Section 4: Android App & APK Installation Guide */}
+      {/* Section 4: Mobile App Install Guide */}
       <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2">
             <Smartphone className="w-5 h-5 text-teal-600" />
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              মোবাইলে অ্যাপ ইনস্টলেশন ও APK গাইড
+              মোবাইলের হোম স্ক্রিনে অ্যাপ যুক্ত করুন
             </h2>
           </div>
           <span className="text-[11px] font-semibold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-2 py-0.5 rounded">
-            PWA ও Android
+            মোবাইল অ্যাপ
           </span>
         </div>
 
         <div className="space-y-4 text-xs">
-          {/* Method 1: Direct PWA Install */}
           <div className="p-4 bg-teal-50/60 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-900/40 rounded-xl space-y-2">
-            <div className="flex items-center gap-2 font-bold text-teal-950 dark:text-teal-200">
-              <span className="w-5 h-5 rounded-full bg-teal-600 text-white flex items-center justify-center text-[10px]">১</span>
-              <span>পদ্ধতি ১: মোবাইলে সরাসরি "Install App" (সবচেয়ে সহজ ও তাৎক্ষণিক)</span>
-            </div>
             <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-              আলাদা APK ডাউনলোড বা ফাইল ম্যানেজারের জটিলতা ছাড়াই আপনি সরাসরি আপনার অ্যান্ড্রয়েড বা আইফোনে অ্যাপটি ইনস্টল করতে পারবেন:
+              সহজে ব্যবহারের জন্য আপনি সরাসরি আপনার ফোনের হোম স্ক্রিনে অ্যাপটি যুক্ত করে নিতে পারেন:
             </p>
-            <ol className="list-decimal list-inside space-y-1 text-slate-700 dark:text-slate-300 pl-1">
-              <li>ফোনের <strong>Chrome</strong> বা <strong>Safari</strong> ব্রাউজারে স্বাস্থ্যবন্ধু অ্যাপের লিংকটি ওপেন করুন।</li>
-              <li>ব্রাউজারের ডানদিকের থ্রি-ডট মেনু (<strong>⋮</strong>) অথবা শেয়ার আইকনে চাপুন।</li>
-              <li><strong>"Install app"</strong> অথবা <strong>"Add to Home Screen (হোম স্ক্রিনে যোগ করুন)"</strong> নির্বাচন করুন।</li>
-              <li>কয়েক সেকেন্ডের মধ্যে এটি একটি পূর্ণাঙ্গ নেটিভ অ্যাপ হিসেবে আপনার ফোনের হোম স্ক্রিন ও অ্যাপ ড্রয়ারে চলে আসবে।</li>
+            <ol className="list-decimal list-inside space-y-1 text-slate-700 dark:text-slate-300 pl-1 text-sm">
+              <li>ফোনের ব্রাউজারে স্বাস্থ্যবন্ধু খুলুন।</li>
+              <li>উপরের থ্রি-ডট মেনু (<strong>⋮</strong>) অথবা শেয়ার আইকনে চাপুন।</li>
+              <li><strong>"অ্যাপ ইনস্টল করুন"</strong> অথবা <strong>"হোম স্ক্রিনে যোগ করুন"</strong> বেছে নিন।</li>
+              <li>কয়েক সেকেন্ডেই অ্যাপটি আপনার ফোনের পর্দায় যুক্ত হয়ে যাবে।</li>
             </ol>
-          </div>
-
-          {/* Method 2: Android Studio Native APK Build */}
-          <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2">
-            <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-              <span className="w-5 h-5 rounded-full bg-slate-700 text-white flex items-center justify-center text-[10px]">২</span>
-              <span>পদ্ধতি ২: সোর্স কোড থেকে অফিশিয়াল Android APK বিল্ড করা</span>
-            </div>
-            <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-              স্বাস্থ্যবন্ধু প্রজেক্টের রুট ডিরেক্টরিতে ইতিমধ্যে একটি সম্পূর্ণ নেটিভ অ্যান্ড্রয়েড প্রকল্প (<strong>/android</strong> ফোল্ডার) অন্তর্ভুক্ত রয়েছে, যার প্যাকেজ নেম <code className="bg-slate-200 dark:bg-slate-700 px-1 py-0.5 rounded text-[11px]">com.shasthobondhu.app</code> এবং এতে সঠিক সময়ের অ্যালার্ম ও ব্যাকগ্রাউন্ড অ্যালার্টের জন্য <em>AlarmManager</em> ও <em>Foreground Service</em> কোড রয়েছে।
-            </p>
-            <div className="bg-white dark:bg-slate-900 p-3 rounded-lg border border-slate-200 dark:border-slate-700 space-y-1.5 font-mono text-[11px]">
-              <div className="text-slate-500 font-sans font-semibold mb-1">APK তৈরির সহজ ধাপসমূহ:</div>
-              <div>১. প্রজেক্টের কোড ডাউনলোড করে কম্পিউটারে <strong>Android Studio</strong> ওপেন করুন।</div>
-              <div>২. <strong>Open Project</strong> এ ক্লিক করে অ্যাপের <strong>/android</strong> ফোল্ডারটি নির্বাচন করুন।</div>
-              <div>৩. উপরের মেনু থেকে <strong>Build &gt; Build Bundle(s) / APK(s) &gt; Build APK(s)</strong> নির্বাচন করুন।</div>
-              <div className="text-teal-700 dark:text-teal-400 font-sans font-semibold pt-1">
-                ➔ বিল্ড শেষে <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded">android/app/build/outputs/apk/debug/app-debug.apk</code> ফাইলে সরাসরি ইনস্টলেবল APK পাওয়া যাবে।
-              </div>
-            </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 italic">
-              * নোট: ক্লাউড ওয়েব কন্টেইনারে সরাসরি গিগাবাইট সাইজের Android SDK ও Gradle রানটাইম চলে না, তাই বাস্তব অ্যান্ড্রয়েড APK ফাইল পিসিতে Android Studio বা কমান্ড লাইনের মাধ্যমে তৈরি হয়।
-            </p>
           </div>
         </div>
       </section>
 
       {/* Section 5: Healthcare Disclaimer & About */}
-      <section className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl p-5 text-xs text-slate-600 dark:text-slate-300 space-y-2">
-        <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
-          <ShieldAlert className="w-4 h-4 text-amber-600" />
-          <span>দায়িত্ব অস্বীকার ও স্বাস্থ্য সতর্কতা</span>
+      <section className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 text-sm text-slate-700 dark:text-slate-300 space-y-2">
+        <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white text-base">
+          <ShieldAlert className="w-5 h-5 text-amber-600" />
+          <span>স্বাস্থ্য সতর্কতা</span>
         </div>
         <p className="leading-relaxed">
-          "স্বাস্থ্যবন্ধু" আপনার ওষুধের সময়সূচি মনে রাখা এবং সেবনের ধারাবাহিকতা সংরক্ষণের একটি সহায়ক ডিজিটাল টুল। এটি কোনো নিবন্ধিত রেজিস্টার্ড চিকিৎসকের বিকল্প নয়। ওষুধের ডোজ বৃদ্ধি, হ্রাস বা বন্ধ করার পূর্বে সর্বদা আপনার ডাক্তারের পরামর্শ নিন।
+          "স্বাস্থ্যবন্ধু" আপনার ওষুধের সময় মনে রাখা ও হিসাব রাখার সহায়ক অ্যাপ। এটি ডাক্তারের বিকল্প নয়। ওষুধ শুরু, বদলানো বা বন্ধ করার আগে অবশ্যই ডাক্তারের পরামর্শ নিন।
         </p>
-        <div className="pt-2 text-[11px] text-slate-400 flex items-center justify-between">
-          <span>স্বাস্থ্যবন্ধু (Shasthobondhu) v১.০ · বাংলা হেলথকেয়ার প্ল্যাটফর্ম</span>
+        <div className="pt-2 text-xs text-slate-500 flex items-center justify-between">
+          <span>স্বাস্থ্যবন্ধু · বাংলা ওষুধ সহায়িকা</span>
           <span>© ২০২৬ স্বাস্থ্যবন্ধু</span>
         </div>
       </section>

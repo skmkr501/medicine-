@@ -625,9 +625,9 @@ export const HealthRecordsPage: React.FC = () => {
 
               {/* Blood Sugar Inputs */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5">
-                  <Droplet className="w-3.5 h-3.5 text-blue-500" />
-                  <span>রক্তে সুগার (Blood Glucose - mmol/L)</span>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5">
+                  <Droplet className="w-4 h-4 text-blue-500" />
+                  <span>রক্তে সুগার</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <input
@@ -636,24 +636,24 @@ export const HealthRecordsPage: React.FC = () => {
                     value={bloodSugar}
                     onChange={(e) => setBloodSugar(e.target.value)}
                     placeholder="সুগার মান (যেমন: ৫.৮)"
-                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+                    className="min-h-[48px] w-full px-3 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
                   />
                   <select
                     value={sugarType}
                     onChange={(e) => setSugarType(e.target.value as any)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+                    className="min-h-[48px] w-full px-3 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
                   >
-                    <option value="খালি পেটে">খালি পেটে (Fasting)</option>
-                    <option value="খাওয়ার পরে">খাওয়ার পরে (Postprandial)</option>
+                    <option value="খালি পেটে">খালি পেটে</option>
+                    <option value="খাওয়ার পরে">খাওয়ার পরে</option>
                   </select>
                 </div>
               </div>
 
               {/* Weight Input */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5">
-                  <Scale className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>শারীরিক ওজন (কেজি - kg)</span>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5">
+                  <Scale className="w-4 h-4 text-emerald-500" />
+                  <span>শারীরিক ওজন (কেজি)</span>
                 </label>
                 <input
                   type="number"

@@ -56,7 +56,7 @@ export const MedicineReminder: React.FC = () => {
 
   const handleTestSound = () => {
     playAlertTone(settings.selectedTone);
-    showToast(`"${settings.selectedTone}" অডিও অ্যালার্ট সফলভাবে টেস্ট করা হয়েছে`, 'info');
+    showToast('অ্যালার্ট টোন সফলভাবে পরীক্ষা করা হয়েছে', 'info');
   };
 
   const handleSnooze = (slotKey: string) => {
@@ -103,74 +103,6 @@ export const MedicineReminder: React.FC = () => {
           >
             শব্দ: {settings.soundEnabled ? 'চালু' : 'বন্ধ'}
           </button>
-        </div>
-      </div>
-
-      {/* Android Native Background Reminder Architecture & Permission Info */}
-      <div className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-5 space-y-3">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-700">
-          <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-md bg-emerald-600 text-white flex items-center justify-center text-xs font-bold">
-              🤖
-            </span>
-            <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-              Android নেটিভ ব্যাকগ্রাউন্ড রিমাইন্ডার আর্কিটেকচার (AlarmManager + Kotlin)
-            </h2>
-          </div>
-          <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950 px-2 py-0.5 rounded">
-            নেটিভ কোড যুক্ত
-          </span>
-        </div>
-
-        <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-          স্বাস্থ্যবন্ধুতে নির্ভরযোগ্য অ্যালার্মের জন্য শুধুমাত্র ব্রাউজার টাইমার বা পুশ নোটিফিকেশনের ওপর নির্ভর না করে অ্যান্ড্রয়েডের নিজস্ব <strong>AlarmManager</strong>, <strong>BroadcastReceiver</strong> এবং <strong>Foreground Service</strong> কোডবেস (Kotlin) তৈরি করা হয়েছে।
-        </p>
-
-        {/* Permissions Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-1 text-xs">
-          <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg">
-            <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">
-              1. Exact Alarm
-            </span>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              Android 12+ এ সঠিক মিনিটে ইনসুলিন ও রক্তচাপের ওষুধ স্মরণ করাতে Doze মোড বাইপাস করে।
-            </span>
-          </div>
-
-          <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg">
-            <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">
-              2. Lock-Screen Alert
-            </span>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              ফোন লক থাকলেও স্ক্রিন অন করে সরাসরি গ্রহণ বা ১০ মিনিট স্নুজ করার অপশন দেখায়।
-            </span>
-          </div>
-
-          <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg">
-            <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">
-              3. Reboot Rescheduling
-            </span>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              ডিভাইস রিবুট বা টাইম জোন পরিবর্তিত হলে লোকাল অফলাইন স্টোরেজ থেকে অ্যালার্ম রি-শিডিউল হয়।
-            </span>
-          </div>
-
-          <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg">
-            <span className="font-semibold text-slate-800 dark:text-slate-200 block mb-0.5">
-              4. Offline Storage
-            </span>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              ইন্টারনেট সংযোগ না থাকলেও সমস্ত শিডিউল লোকাল ডিভাইসে সংরক্ষিত থাকে ও যথাসময়ে বাজে।
-            </span>
-          </div>
-        </div>
-
-        {/* Real Device Notice */}
-        <div className="p-3 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/40 rounded-lg text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
-          <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <span>
-            <strong>গুরুত্বপূর্ণ তথ্য:</strong> ব্যাকগ্রাউন্ড অ্যালার্ম ও ভাইব্রেশনের কার্যকারিতা নিশ্চিত করতে বাস্তব অ্যান্ড্রয়েড ডিভাইসে (Real Android Device) APK ইনস্টল করে প্রয়োজনীয় Exact Alarm ও Notification পারমিশন অনুমোদন করতে হবে।
-          </span>
         </div>
       </div>
 
@@ -273,7 +205,7 @@ export const MedicineReminder: React.FC = () => {
             <div className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 pt-1 border-t border-amber-200/60 dark:border-amber-900/30">
               <Info className="w-3 h-3 text-amber-600 shrink-0" />
               <span>
-                ব্রাউজারে ব্যাকগ্রাউন্ড নোটিফিকেশন সীমাবদ্ধ থাকতে পারে। নির্ভরযোগ্য রিমাইন্ডারের জন্য প্রতিদিন অ্যাপে চোখ রাখুন অথবা নেটিভ অ্যান্ড্রয়েড অ্যালার্ম ব্যবহার করুন।
+                নিয়মিত অ্যাপের নোটিফিকেশন ও অ্যালার্ম চালু রাখুন এবং প্রতিদিন অ্যাপটি দেখুন।
               </span>
             </div>
           </div>

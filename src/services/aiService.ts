@@ -3,6 +3,43 @@
  * Strictly proxies requests to server-side Express endpoints (/api/ai/*).
  * Never exposes any API keys to the browser.
  */
+import { auth } from '../firebase/config';
+
+const LOGIN_REQUIRED_ERROR = 'লগইন করে আবার চেষ্টা করুন';
+
+async function getAuthorizedHeaders(forceRefresh = false): Promise<Record<string, string>> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error(LOGIN_REQUIRED_ERROR);
+  }
+  try {
+    const idToken = await user.getIdToken(forceRefresh);
+    if (!idToken) {
+      throw new Error(LOGIN_REQUIRED_ERROR);
+    }
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    };
+  } catch {
+    throw new Error(LOGIN_REQUIRED_ERROR);
+  }
+}
+
+async function fetchWithFirebaseAuth(
+  url: string,
+  initFactory: (headers: Record<string, string>) => RequestInit
+): Promise<Response> {
+  const headers = await getAuthorizedHeaders(false);
+  let res = await fetch(url, initFactory(headers));
+
+  if (res.status === 401 && auth.currentUser) {
+    const freshHeaders = await getAuthorizedHeaders(true);
+    res = await fetch(url, initFactory(freshHeaders));
+  }
+
+  return res;
+}
 
 export interface MedicineInfoResponse {
   success: boolean;
@@ -163,11 +200,11 @@ export async function compressImageForUpload(
 
 export const fetchMedicineInfo = async (medicineName: string): Promise<MedicineInfoResponse> => {
   try {
-    const res = await fetch('/api/ai/medicine-info', {
+    const res = await fetchWithFirebaseAuth('/api/ai/medicine-info', (headers) => ({
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ medicineName }),
-    });
+    }));
 
     return await parseAiResponse<MedicineInfoResponse>(
       res,
@@ -205,12 +242,12 @@ export const scanPrescriptionImage = async (
   }, timeoutMs);
 
   try {
-    const res = await fetch('/api/ai/scan-prescription', {
+    const res = await fetchWithFirebaseAuth('/api/ai/scan-prescription', (headers) => ({
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ imageBase64: uploadBase64, mimeType: uploadMimeType }),
       signal: controller.signal,
-    });
+    }));
 
     return await parseAiResponse<PrescriptionScanResponse>(
       res,
@@ -235,11 +272,11 @@ export const checkDrugInteractions = async (
   patientContext?: string
 ): Promise<DrugInteractionResponse> => {
   try {
-    const res = await fetch('/api/ai/drug-interaction', {
+    const res = await fetchWithFirebaseAuth('/api/ai/drug-interaction', (headers) => ({
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ newMedicine, currentMedicines, patientContext }),
-    });
+    }));
 
     return await parseAiResponse<DrugInteractionResponse>(
       res,
@@ -254,16 +291,29 @@ export const checkDrugInteractions = async (
 };
 
 export const checkAiHealth = async (): Promise<AiHealthResponse> => {
-  const res = await fetch('/api/ai/health');
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
+  try {
+    const res = await fetchWithFirebaseAuth('/api/ai/health', (headers) => ({
+      method: 'GET',
+      headers,
+    }));
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return {
+        keyPresent: false,
+        model: 'gemini-3.8-flash',
+        ok: false,
+        errorStatus: res.status,
+        errorMessage: data?.error || data?.errorMessage || 'Health check request failed',
+      };
+    }
+    return res.json();
+  } catch (err: any) {
     return {
       keyPresent: false,
       model: 'gemini-3.8-flash',
       ok: false,
-      errorStatus: res.status,
-      errorMessage: data?.errorMessage || 'Health check request failed',
+      errorStatus: 401,
+      errorMessage: err?.message || LOGIN_REQUIRED_ERROR,
     };
   }
-  return res.json();
 };

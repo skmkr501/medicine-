@@ -7,7 +7,6 @@ import {
   UserCheck,
   Archive,
   RefreshCw,
-  Sparkles,
   ShieldCheck,
   AlertTriangle,
   ChevronRight,
@@ -28,10 +27,13 @@ export const FamilyCareSummary: React.FC = () => {
     doseLogs,
     archivePatient,
     unarchivePatient,
-    seedFictionalFamilyProfiles,
     openCreateProfileModal,
     showToast,
   } = useMedicine();
+
+  if (patients.length === 0 && medicines.length === 0) {
+    return null;
+  }
 
   const [showArchived, setShowArchived] = useState(false);
 
@@ -129,18 +131,6 @@ export const FamilyCareSummary: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-          {patients.length < 3 && (
-            <button
-              type="button"
-              onClick={seedFictionalFamilyProfiles}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 rounded-lg transition-colors cursor-pointer shadow-2xs"
-              title="বাবা, মা ও সন্তানের জন্য আলাদা আলাদা কাল্পনিক ওষুধসহ ৩টি প্রোফাইল যোগ করুন"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-              <span>৩টি কাল্পনিক ফ্যামিলি প্রোফাইল লোড করুন</span>
-            </button>
-          )}
-
           <button
             type="button"
             onClick={openCreateProfileModal}

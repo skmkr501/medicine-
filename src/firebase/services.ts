@@ -23,10 +23,12 @@ import {
   limit,
   where,
   getDocsFromServer,
+  getDocFromServer,
   getCountFromServer,
 } from 'firebase/firestore';
 import { auth, db, stripUndefined } from './config';
 import { handleFirestoreError, OperationType } from './errors';
+import { isDemoRecordId, hasDemoPrefix, UserDataCollection } from '../utils/demoCleanup';
 import {
   Medicine,
   PatientProfile,
@@ -151,7 +153,7 @@ async function recordUserProfile(user: User): Promise<void> {
 export async function saveMedicineToCloud(userId: string, medicine: Medicine): Promise<void> {
   const path = `users/${userId}/medicines/${medicine.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'medicines', medicine.id), medicine, { merge: true });
+    await setDoc(doc(db, 'users', userId, 'medicines', medicine.id), stripUndefined(medicine));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -170,7 +172,7 @@ export async function deleteMedicineFromCloud(userId: string, medicineId: string
 export async function savePatientToCloud(userId: string, patient: PatientProfile): Promise<void> {
   const path = `users/${userId}/patients/${patient.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'patients', patient.id), patient, { merge: true });
+    await setDoc(doc(db, 'users', userId, 'patients', patient.id), stripUndefined(patient));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -189,7 +191,7 @@ export async function deletePatientFromCloud(userId: string, patientId: string):
 export async function saveDoseLogToCloud(userId: string, doseLog: DoseLog): Promise<void> {
   const path = `users/${userId}/doseLogs/${doseLog.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'doseLogs', doseLog.id), doseLog, { merge: true });
+    await setDoc(doc(db, 'users', userId, 'doseLogs', doseLog.id), stripUndefined(doseLog));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -199,7 +201,7 @@ export async function saveDoseLogToCloud(userId: string, doseLog: DoseLog): Prom
 export async function saveSettingsToCloud(userId: string, settings: ReminderSettings): Promise<void> {
   const path = `users/${userId}/settings/preferences`;
   try {
-    await setDoc(doc(db, 'users', userId, 'settings', 'preferences'), settings, { merge: true });
+    await setDoc(doc(db, 'users', userId, 'settings', 'preferences'), stripUndefined(settings), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -209,7 +211,7 @@ export async function saveSettingsToCloud(userId: string, settings: ReminderSett
 export async function saveHealthRecordToCloud(userId: string, record: HealthRecord): Promise<void> {
   const path = `users/${userId}/healthRecords/${record.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'healthRecords', record.id), record, { merge: true });
+    await setDoc(doc(db, 'users', userId, 'healthRecords', record.id), stripUndefined(record));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -228,7 +230,7 @@ export async function deleteHealthRecordFromCloud(userId: string, recordId: stri
 export async function saveAppointmentToCloud(userId: string, appointment: DoctorAppointment): Promise<void> {
   const path = `users/${userId}/appointments/${appointment.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'appointments', appointment.id), appointment, { merge: true });
+    await setDoc(doc(db, 'users', userId, 'appointments', appointment.id), stripUndefined(appointment));
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -249,47 +251,77 @@ export async function migrateLocalDataToCloud(
   medicines: Medicine[],
   patients: PatientProfile[],
   doseLogs: DoseLog[],
-  settings: ReminderSettings
+  settings: ReminderSettings,
+  healthRecords?: HealthRecord[],
+  appointments?: DoctorAppointment[]
 ): Promise<{ medicinesCount: number; logsCount: number; patientsCount: number }> {
   try {
-    const batch = writeBatch(db);
+    const writes: Array<{ ref: ReturnType<typeof doc>; data: Record<string, any> }> = [];
 
-    // Save user document
-    const userRef = doc(db, 'users', userId);
-    batch.set(
-      userRef,
-      {
+    writes.push({
+      ref: doc(db, 'users', userId),
+      data: stripUndefined({
         uid: userId,
         email: auth.currentUser?.email || '',
         displayName: auth.currentUser?.displayName || 'ব্যবহারকারী',
         updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+      }),
+    });
 
-    // Patients
     patients.forEach((patient) => {
-      const ref = doc(db, 'users', userId, 'patients', patient.id);
-      batch.set(ref, patient, { merge: true });
+      writes.push({
+        ref: doc(db, 'users', userId, 'patients', patient.id),
+        data: stripUndefined(patient),
+      });
     });
 
-    // Medicines
     medicines.forEach((med) => {
-      const ref = doc(db, 'users', userId, 'medicines', med.id);
-      batch.set(ref, med, { merge: true });
+      writes.push({
+        ref: doc(db, 'users', userId, 'medicines', med.id),
+        data: stripUndefined(med),
+      });
     });
 
-    // Dose Logs (migrate recent logs)
     doseLogs.forEach((log) => {
-      const ref = doc(db, 'users', userId, 'doseLogs', log.id);
-      batch.set(ref, log, { merge: true });
+      writes.push({
+        ref: doc(db, 'users', userId, 'doseLogs', log.id),
+        data: stripUndefined(log),
+      });
     });
 
-    // Settings
-    const settingsRef = doc(db, 'users', userId, 'settings', 'preferences');
-    batch.set(settingsRef, settings, { merge: true });
+    writes.push({
+      ref: doc(db, 'users', userId, 'settings', 'preferences'),
+      data: stripUndefined(settings),
+    });
 
-    await batch.commit();
+    if (healthRecords && healthRecords.length > 0) {
+      healthRecords.forEach((hr) => {
+        writes.push({
+          ref: doc(db, 'users', userId, 'healthRecords', hr.id),
+          data: stripUndefined(hr),
+        });
+      });
+    }
+
+    if (appointments && appointments.length > 0) {
+      appointments.forEach((apt) => {
+        writes.push({
+          ref: doc(db, 'users', userId, 'appointments', apt.id),
+          data: stripUndefined(apt),
+        });
+      });
+    }
+
+    // Commit in chunks of 400 to stay safely below Firestore's 500-op writeBatch limit
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < writes.length; i += CHUNK_SIZE) {
+      const batch = writeBatch(db);
+      const chunk = writes.slice(i, i + CHUNK_SIZE);
+      chunk.forEach(({ ref, data }) => {
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
+    }
 
     return {
       medicinesCount: medicines.length,
@@ -298,6 +330,166 @@ export async function migrateLocalDataToCloud(
     };
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `users/${userId}/[batch_migration]`);
+    return { medicinesCount: 0, logsCount: 0, patientsCount: 0 };
+  }
+}
+
+/**
+ * Checks if a user already has data stored in Cloud Firestore
+ */
+export async function checkUserHasCloudData(
+  userId: string
+): Promise<{ hasData: boolean; medicinesCount: number; patientsCount: number }> {
+  const fetchCollection = async (sub: string) => {
+    const colRef = collection(db, 'users', userId, sub);
+    try {
+      return await getDocsFromServer(colRef);
+    } catch {
+      return await getDocs(colRef);
+    }
+  };
+
+  try {
+    const [medsSnap, patientsSnap, logsSnap, healthSnap, aptsSnap] = await Promise.all([
+      fetchCollection('medicines'),
+      fetchCollection('patients'),
+      fetchCollection('doseLogs'),
+      fetchCollection('healthRecords'),
+      fetchCollection('appointments'),
+    ]);
+    const medicinesCount = medsSnap.size;
+    const patientsCount = patientsSnap.size;
+    const hasOtherData = logsSnap.size > 0 || healthSnap.size > 0 || aptsSnap.size > 0;
+    return {
+      hasData: medicinesCount > 0 || patientsCount > 0 || hasOtherData,
+      medicinesCount,
+      patientsCount,
+    };
+  } catch (error) {
+    console.warn('checkUserHasCloudData error:', error);
+    return { hasData: false, medicinesCount: 0, patientsCount: 0 };
+  }
+}
+
+/**
+ * Safely clears only the user's own UID subcollections in Cloud Firestore
+ */
+export async function clearUserCloudData(userId: string): Promise<void> {
+  try {
+    const subcollections = ['patients', 'medicines', 'doseLogs', 'healthRecords', 'appointments', 'settings'];
+    for (const sub of subcollections) {
+      const snap = await getDocs(collection(db, 'users', userId, sub));
+      if (!snap.empty) {
+        const docs = snap.docs;
+        const CHUNK_SIZE = 400;
+        for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+          const batch = writeBatch(db);
+          docs.slice(i, i + CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `users/${userId}`);
+  }
+}
+
+/**
+ * One-time cleanup of legacy demo/fictional records from a user's own Firestore subcollections ONLY.
+ * Strictly ignores global_medicines and preserves all user-created records.
+ */
+export async function cleanupDemoRecordsFromCloud(
+  userId: string
+): Promise<{ removedCount: number; completed: boolean }> {
+  if (!userId) return { removedCount: 0, completed: false };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { removedCount: 0, completed: false };
+  }
+
+  const subcollections: UserDataCollection[] = [
+    'patients',
+    'medicines',
+    'doseLogs',
+    'healthRecords',
+    'appointments',
+  ];
+
+  try {
+    const deleteRefs: Array<ReturnType<typeof doc>> = [];
+    const updateOps: Array<{ ref: ReturnType<typeof doc>; data: Record<string, any> }> = [];
+
+    for (const sub of subcollections) {
+      const colRef = collection(db, 'users', userId, sub);
+      const snap = await getDocsFromServer(colRef);
+      snap.forEach((docSnap) => {
+        if (isDemoRecordId(docSnap.id, sub)) {
+          deleteRefs.push(docSnap.ref);
+        } else if (sub === 'medicines') {
+          const data = docSnap.data() as Medicine;
+          if (Array.isArray(data.schedules) && data.schedules.some((s) => hasDemoPrefix(s?.id))) {
+            updateOps.push({
+              ref: docSnap.ref,
+              data: {
+                schedules: data.schedules.filter((s) => !hasDemoPrefix(s?.id)),
+              },
+            });
+          }
+        }
+      });
+    }
+
+    // Clear default mock emergency contact if untouched from legacy mockData
+    try {
+      const settingsRef = doc(db, 'users', userId, 'settings', 'preferences');
+      const settingsSnap = await getDocFromServer(settingsRef);
+      if (settingsSnap.exists()) {
+        const sData = settingsSnap.data() as Partial<ReminderSettings>;
+        if (
+          sData.emergencyContactName === 'তানভীর করিম (ছেলে)' &&
+          sData.emergencyContactPhone === '+8801711223344'
+        ) {
+          updateOps.push({
+            ref: settingsRef,
+            data: {
+              emergencyContactName: '',
+              emergencyContactPhone: '',
+            },
+          });
+        }
+      }
+    } catch (settingsErr) {
+      // Non-fatal if settings doc does not exist yet
+      console.warn('cleanupDemoRecordsFromCloud settings check notice:', settingsErr);
+    }
+
+    const totalOps = deleteRefs.length + updateOps.length;
+    if (totalOps > 0) {
+      const CHUNK_SIZE = 400;
+      const allOps: Array<
+        | { kind: 'delete'; ref: ReturnType<typeof doc> }
+        | { kind: 'update'; ref: ReturnType<typeof doc>; data: Record<string, any> }
+      > = [
+        ...deleteRefs.map((ref) => ({ kind: 'delete' as const, ref })),
+        ...updateOps.map((op) => ({ kind: 'update' as const, ref: op.ref, data: op.data })),
+      ];
+
+      for (let i = 0; i < allOps.length; i += CHUNK_SIZE) {
+        const batch = writeBatch(db);
+        allOps.slice(i, i + CHUNK_SIZE).forEach((op) => {
+          if (op.kind === 'delete') {
+            batch.delete(op.ref);
+          } else {
+            batch.set(op.ref, op.data, { merge: true });
+          }
+        });
+        await batch.commit();
+      }
+    }
+
+    return { removedCount: deleteRefs.length, completed: true };
+  } catch (error) {
+    console.warn('cleanupDemoRecordsFromCloud deferred due to network/server error:', error);
+    return { removedCount: 0, completed: false };
   }
 }
 

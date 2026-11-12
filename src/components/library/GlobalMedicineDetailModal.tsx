@@ -101,7 +101,7 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
             )}
             {medicine.darNumber && (
               <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-800">
-                <span className="text-[11px] text-slate-400 block font-medium">DGDA নিবন্ধন (DAR No)</span>
+                <span className="text-[11px] text-slate-400 block font-medium">নিবন্ধন নম্বর</span>
                 <span className="font-semibold text-slate-900 dark:text-white mt-0.5 block truncate">
                   {medicine.darNumber}
                 </span>
@@ -135,33 +135,33 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
           <div className="p-3.5 rounded-xl border border-teal-200 dark:border-teal-900/60 bg-teal-50/40 dark:bg-teal-950/20 text-xs space-y-2.5">
             <div className="flex items-center gap-2 text-teal-800 dark:text-teal-300 font-semibold">
               <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
-              <span>আইনি উৎস, সনদ ও মেটাডাটা (Legal Provenance & License)</span>
+              <span>তথ্যের উৎস ও অনুমোদন</span>
             </div>
             
-            <div className="text-[11px] text-slate-600 dark:text-slate-400 space-y-1.5 divide-y divide-teal-100 dark:divide-teal-950/60">
+            <div className="text-sm text-slate-700 dark:text-slate-300 space-y-1.5 divide-y divide-teal-100 dark:divide-teal-950/60">
               
               <div className="flex items-center justify-between pt-1">
-                <span>ডাটা উৎস কাঠামো:</span>
+                <span>তথ্যের উৎস:</span>
                 <span className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1">
                   {medicine.source === 'DGDA_GOV' || medicine.source === 'DGDA_Official' ? (
                     <>
-                      <Landmark className="w-3 h-3 text-emerald-600" />
-                      DGDA সরকারি উন্মুক্ত গেজেট
+                      <Landmark className="w-3.5 h-3.5 text-emerald-600" />
+                      সরকারি অনুমোদিত তালিকা
                     </>
                   ) : medicine.source === 'MANUFACTURER' ? (
                     <>
-                      <Building className="w-3 h-3 text-blue-600" />
-                      প্রস্তুতকারকের অফিসিয়াল মনোগ্রাফ
+                      <Building className="w-3.5 h-3.5 text-blue-600" />
+                      প্রস্তুতকারকের তথ্য
                     </>
                   ) : medicine.source === 'INDEPENDENT_VERIFIED' ? (
                     <>
-                      <FileBadge className="w-3 h-3 text-purple-600" />
-                      স্বাধীন ক্লিনিক্যাল ডাটা
+                      <FileBadge className="w-3.5 h-3.5 text-purple-600" />
+                      চিকিৎসা যাচাইকৃত তথ্য
                     </>
                   ) : (
                     <>
-                      <ShieldAlert className="w-3 h-3 text-amber-600" />
-                      {medicine.source} (লাইসেন্সপ্রাপ্ত পার্টনার)
+                      <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                      যাচাইকৃত তালিকা
                     </>
                   )}
                 </span>
@@ -169,8 +169,10 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
 
               <div className="flex items-center justify-between pt-1.5">
                 <span>লাইসেন্স / কর্তৃপক্ষ রেফারেন্স:</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-[220px]" title={medicine.licenseReference}>
-                  {medicine.licenseReference || 'DGDA Authorized Public Record'}
+                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-[220px]" title={medicine.licenseReference && !medicine.licenseReference.includes('DGDA') ? medicine.licenseReference : 'অনুমোদিত সরকারি তথ্যসূত্র'}>
+                  {medicine.licenseReference && !medicine.licenseReference.includes('DGDA')
+                    ? medicine.licenseReference
+                    : 'অনুমোদিত সরকারি তথ্যসূত্র'}
                 </span>
               </div>
 
@@ -193,7 +195,7 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
                 ) : (
                   <span className="inline-flex items-center gap-1 font-semibold text-amber-600 dark:text-amber-400">
                     <Clock className="w-3.5 h-3.5" />
-                    অপেক্ষমাণ খসড়া (Unpublished)
+                    অপেক্ষমাণ খসড়া
                   </span>
                 )}
               </div>
@@ -208,7 +210,7 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+            className="min-h-[48px] px-5 py-2.5 text-base font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer rounded-xl"
           >
             বন্ধ করুন
           </button>
@@ -218,9 +220,9 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
               onClose();
               onAddToMyMedicines(medicine);
             }}
-            className="flex items-center gap-1.5 px-4 py-2 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold text-xs rounded-xl shadow-xs cursor-pointer transition-colors"
+            className="min-h-[48px] flex items-center gap-2 px-5 py-2.5 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-bold text-base rounded-xl shadow-xs cursor-pointer transition-colors"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-5 h-5" />
             <span>আমার ওষুধে যোগ করুন</span>
           </button>
         </div>

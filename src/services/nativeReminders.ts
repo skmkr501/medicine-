@@ -14,6 +14,12 @@ export interface AndroidRemindersBridge {
   openBatterySettings: () => void;
   requestNotificationPermission: () => void;
   scheduleTestAlarm: () => boolean;
+  getAlarmTone?: () => string;
+  pickAlarmTone?: () => void;
+  pickAlarmToneFromFiles?: () => void;
+  previewAlarmTone?: () => void;
+  stopPreview?: () => void;
+  resetAlarmTone?: () => void;
 }
 
 declare global {
@@ -40,6 +46,11 @@ export interface NativePermissionStatus {
   exactAlarm: boolean;
   notifications: boolean;
   batteryUnrestricted: boolean;
+}
+
+export interface NativeAlarmToneInfo {
+  name: string;
+  isDefault: boolean;
 }
 
 /**
@@ -310,7 +321,7 @@ export const requestNotificationPermission = (): void => {
 };
 
 /**
- * Schedules a test alarm to fire in 1 minute.
+ * Schedules a reminder alarm to fire in 1 minute.
  */
 export const scheduleTestAlarm = (): boolean => {
   if (!isNativeRemindersAvailable()) return false;
@@ -318,6 +329,94 @@ export const scheduleTestAlarm = (): boolean => {
     return Boolean(window.AndroidReminders!.scheduleTestAlarm());
   } catch (err) {
     console.warn('[NativeReminders] scheduleTestAlarm error:', err);
+    return false;
+  }
+};
+
+/**
+ * Reads current alarm tone info from window.AndroidReminders.getAlarmTone().
+ */
+export const getNativeAlarmTone = (): NativeAlarmToneInfo | null => {
+  if (!isNativeRemindersAvailable()) return null;
+  try {
+    const fn = window.AndroidReminders?.getAlarmTone;
+    if (typeof fn !== 'function') return null;
+    const raw = fn.call(window.AndroidReminders);
+    if (typeof raw === 'string') {
+      const parsed = JSON.parse(raw);
+      return {
+        name: typeof parsed?.name === 'string' && parsed.name.trim() ? parsed.name.trim() : 'ডিফল্ট অ্যালার্ম টোন',
+        isDefault: Boolean(parsed?.isDefault),
+      };
+    }
+    if (typeof raw === 'object' && raw !== null) {
+      const obj = raw as Record<string, unknown>;
+      return {
+        name: typeof obj.name === 'string' && obj.name.trim() ? obj.name.trim() : 'ডিফল্ট অ্যালার্ম টোন',
+        isDefault: Boolean(obj.isDefault),
+      };
+    }
+  } catch (err) {
+    console.warn('[NativeReminders] getAlarmTone error:', err);
+  }
+  return null;
+};
+
+export const pickNativeAlarmTone = (): boolean => {
+  if (!isNativeRemindersAvailable()) return false;
+  try {
+    if (typeof window.AndroidReminders?.pickAlarmTone !== 'function') return false;
+    window.AndroidReminders.pickAlarmTone();
+    return true;
+  } catch (err) {
+    console.warn('[NativeReminders] pickAlarmTone error:', err);
+    return false;
+  }
+};
+
+export const pickNativeAlarmToneFromFiles = (): boolean => {
+  if (!isNativeRemindersAvailable()) return false;
+  try {
+    if (typeof window.AndroidReminders?.pickAlarmToneFromFiles !== 'function') return false;
+    window.AndroidReminders.pickAlarmToneFromFiles();
+    return true;
+  } catch (err) {
+    console.warn('[NativeReminders] pickAlarmToneFromFiles error:', err);
+    return false;
+  }
+};
+
+export const previewNativeAlarmTone = (): boolean => {
+  if (!isNativeRemindersAvailable()) return false;
+  try {
+    if (typeof window.AndroidReminders?.previewAlarmTone !== 'function') return false;
+    window.AndroidReminders.previewAlarmTone();
+    return true;
+  } catch (err) {
+    console.warn('[NativeReminders] previewAlarmTone error:', err);
+    return false;
+  }
+};
+
+export const stopNativeAlarmTonePreview = (): void => {
+  if (!isNativeRemindersAvailable()) return;
+  try {
+    if (typeof window.AndroidReminders?.stopPreview === 'function') {
+      window.AndroidReminders.stopPreview();
+    }
+  } catch (err) {
+    console.warn('[NativeReminders] stopPreview error:', err);
+  }
+};
+
+export const resetNativeAlarmTone = (): boolean => {
+  if (!isNativeRemindersAvailable()) return false;
+  try {
+    if (typeof window.AndroidReminders?.resetAlarmTone !== 'function') return false;
+    window.AndroidReminders.resetAlarmTone();
+    return true;
+  } catch (err) {
+    console.warn('[NativeReminders] resetAlarmTone error:', err);
     return false;
   }
 };

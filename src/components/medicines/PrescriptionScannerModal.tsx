@@ -115,7 +115,7 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
           </div>
           <div>
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-              প্রেসক্রিপশন বা ওষুধের পাতা স্ক্যানার (AI)
+              প্রেসক্রিপশন বা ওষুধের পাতা স্ক্যানার (AI সহায়ক)
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               ছবি থেকে ওষুধের নাম, পাওয়ার ও শিডিউল পড়ে ফর্ম স্বয়ংক্রিয়ভাবে পূরণ হবে
@@ -188,7 +188,7 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
                   {loading ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Gemini AI ছবি বিশ্লেষণ করছে...</span>
+                      <span>AI সহায়ক ছবি বিশ্লেষণ করছে...</span>
                     </>
                   ) : (
                     <>
@@ -275,7 +275,7 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
             <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-2xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
               <span>
-                এটি সাধারণ তথ্য, ডাক্তারের পরামর্শের বিকল্প নয়। ছবি থেকে প্রাপ্ত তথ্যগুলো সংরক্ষণের পূর্বে AddMedicine ফর্মে মিলিয়ে দেখুন।
+                এটি সাধারণ তথ্য, ডাক্তারের পরামর্শের বিকল্প নয়। ছবি থেকে প্রাপ্ত তথ্যগুলো সংরক্ষণের পূর্বে নতুন ওষুধ ফর্মে মিলিয়ে দেখুন।
               </span>
             </div>
 

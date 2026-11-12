@@ -26,6 +26,11 @@ import { DailyChecklist } from './components/checklist/DailyChecklist';
 import { AiAssistantPage } from './components/ai/AiAssistantPage';
 import { HealthRecordsPage } from './components/health/HealthRecordsPage';
 import { AppointmentsPage } from './components/appointments/AppointmentsPage';
+import { DataConflictModal } from './components/auth/DataConflictModal';
+import { ResetConfirmationModal } from './components/settings/ResetConfirmationModal';
+import { MePage } from './components/me/MePage';
+import { OnboardingModal } from './components/onboarding/OnboardingModal';
+import { markOnboardingDone, shouldShowOnboarding } from './utils/onboarding';
 
 const AppContent: React.FC = () => {
   const {
@@ -36,7 +41,25 @@ const AppContent: React.FC = () => {
     isProfileModalOpen,
     closeProfileModal,
     editingPatient,
+    isDataConflictModalOpen,
+    conflictInfo,
+    resolveDataConflict,
+    downloadLocalBackup,
+    isSyncing,
+    isResetConfirmationModalOpen,
+    closeResetConfirmationModal,
+    confirmResetAllData,
+    currentUser,
   } = useMedicine();
+
+  const [showOnboarding, setShowOnboarding] = React.useState<boolean>(() =>
+    shouldShowOnboarding()
+  );
+
+  const handleCloseOnboarding = () => {
+    markOnboardingDone();
+    setShowOnboarding(false);
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors">
@@ -45,8 +68,9 @@ const AppContent: React.FC = () => {
       <Navbar activePage={currentPage} onNavigate={setCurrentPage} />
 
       {/* Main Page Content */}
-      <main className="flex-1 pb-20 md:pb-12">
+      <main className="flex-1 pb-24 md:pb-12">
         {currentPage === 'dashboard' && <Dashboard />}
+        {currentPage === 'me' && <MePage />}
         {currentPage === 'checklist' && <DailyChecklist />}
         {currentPage === 'medicines' && <MedicineList />}
         {currentPage === 'health-records' && <HealthRecordsPage />}
@@ -83,13 +107,38 @@ const AppContent: React.FC = () => {
       {/* Admin Manual Medicine Entry Modal */}
       <AdminManualMedicineModal />
 
+      {/* Login Data Conflict Resolution Modal (Requirement গ) */}
+      <DataConflictModal
+        isOpen={isDataConflictModalOpen}
+        localMedicinesCount={conflictInfo?.localMedicinesCount || 0}
+        localPatientsCount={conflictInfo?.localPatientsCount || 0}
+        cloudMedicinesCount={conflictInfo?.cloudMedicinesCount || 0}
+        cloudPatientsCount={conflictInfo?.cloudPatientsCount || 0}
+        onResolve={resolveDataConflict}
+        onDownloadBackup={downloadLocalBackup}
+        isProcessing={isSyncing}
+      />
+
+      {/* 2-Step Reset Confirmation Modal (Requirement চ) */}
+      <ResetConfirmationModal
+        isOpen={isResetConfirmationModalOpen}
+        onClose={closeResetConfirmationModal}
+        onConfirmReset={confirmResetAllData}
+        onDownloadBackup={downloadLocalBackup}
+        isLoggedIn={!!currentUser}
+        userEmail={currentUser?.email}
+      />
+
+      {/* First-launch 3-Slide Simple Onboarding */}
+      <OnboardingModal isOpen={showOnboarding} onComplete={handleCloseOnboarding} />
+
       {/* Quiet Footer */}
       <footer className="hidden md:block border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 text-xs text-slate-500 dark:text-slate-400">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <AppLogo size="sm" showText={false} />
             <span className="font-semibold text-slate-800 dark:text-slate-200">
-              স্বাস্থ্যবন্ধু (Shasthobondhu)
+              স্বাস্থ্যবন্ধু
             </span>
             <span aria-hidden="true">·</span>
             <span>আধুনিক বাংলা ওষুধ ব্যবস্থাপনা</span>

@@ -31,49 +31,46 @@ export const EmergencyCard: React.FC = () => {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-                জরুরি চিকিৎসা কার্ড (Emergency Card)
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                জরুরি চিকিৎসা কার্ড
               </h3>
-              <span className="px-2 py-0.5 rounded-full text-2xs font-extrabold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
-                জরুরি সহায়ক
-              </span>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
               {activePatient.name} ({activePatient.relation}) · {toBengaliNumber(activePatient.age)} বছর
             </p>
           </div>
         </div>
 
         {/* Blood Group Badge */}
-        <div className="bg-rose-600 text-white px-3 py-1 rounded-xl text-center shadow-xs">
-          <span className="text-2xs block uppercase tracking-wider opacity-90">রক্তের গ্রুপ</span>
-          <span className="text-base font-extrabold">{activePatient.bloodGroup}</span>
+        <div className="bg-rose-700 text-white px-3.5 py-1.5 rounded-xl text-center shadow-xs">
+          <span className="text-xs block opacity-90">রক্তের গ্রুপ</span>
+          <span className="text-lg font-extrabold">{activePatient.bloodGroup}</span>
         </div>
       </div>
 
       {/* Medical Highlights: Chronic & Allergies */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-        <div className="p-3 bg-white/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1 text-2xs uppercase tracking-wider">
-            <AlertOctagon className="w-3.5 h-3.5 text-rose-600" />
-            পরিচিত অ্যালার্জি (Allergies)
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-base">
+        <div className="p-3.5 bg-white/90 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1 text-sm">
+            <AlertOctagon className="w-4 h-4 text-rose-600" />
+            পরিচিত অ্যালার্জি
           </span>
-          <p className="font-medium text-slate-900 dark:text-white">
+          <p className="font-semibold text-slate-900 dark:text-white">
             {activePatient.allergies && activePatient.allergies.length > 0
               ? activePatient.allergies.join(', ')
-              : 'কোনো পরিচিত ড্রাগ অ্যালার্জি নেই'}
+              : 'কোনো পরিচিত অ্যালার্জি নেই'}
           </p>
         </div>
 
-        <div className="p-3 bg-white/80 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1 text-2xs uppercase tracking-wider">
-            <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
-            দীর্ঘমেয়াদী রোগ (Chronic Conditions)
+        <div className="p-3.5 bg-white/90 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl">
+          <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1 text-sm">
+            <ShieldAlert className="w-4 h-4 text-amber-600" />
+            দীর্ঘমেয়াদী রোগ
           </span>
-          <p className="font-medium text-slate-900 dark:text-white">
+          <p className="font-semibold text-slate-900 dark:text-white">
             {activePatient.chronicConditions && activePatient.chronicConditions.length > 0
               ? activePatient.chronicConditions.join(', ')
-              : 'কোনো দীর্ঘমেয়াদী রোগ নথিভুক্ত নেই'}
+              : 'কোনো দীর্ঘমেয়াদী রোগ লেখা নেই'}
           </p>
         </div>
       </div>
@@ -84,13 +81,13 @@ export const EmergencyCard: React.FC = () => {
         {activePatient.emergencyContact ? (
           <a
             href={`tel:${activePatient.emergencyContact}`}
-            className="flex items-center justify-center gap-2 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+            className="min-h-[48px] flex items-center justify-center gap-2 py-2.5 px-3 bg-rose-700 hover:bg-rose-800 text-white rounded-xl text-sm font-bold shadow-xs transition-colors"
           >
             <PhoneCall className="w-4 h-4" />
-            <span>জরুরি অভিভাবক: {activePatient.emergencyContact}</span>
+            <span>পরিবার: {activePatient.emergencyContact}</span>
           </a>
         ) : (
-          <div className="flex items-center justify-center py-2 px-3 bg-slate-100 dark:bg-slate-800 text-slate-400 rounded-xl text-xs">
+          <div className="min-h-[48px] flex items-center justify-center py-2 px-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-sm font-medium">
             জরুরি নম্বর সেট নেই
           </div>
         )}
@@ -98,7 +95,7 @@ export const EmergencyCard: React.FC = () => {
         {/* National Health Helpline */}
         <a
           href="tel:16263"
-          className="flex items-center justify-center gap-2 py-2.5 px-3 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+          className="min-h-[48px] flex items-center justify-center gap-2 py-2.5 px-3 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-sm font-bold shadow-xs transition-colors"
         >
           <Ambulance className="w-4 h-4" />
           <span>স্বাস্থ্য বাতায়ন: ১৬২৬৩</span>
@@ -107,7 +104,7 @@ export const EmergencyCard: React.FC = () => {
         {/* National Emergency Police/Ambulance */}
         <a
           href="tel:999"
-          className="flex items-center justify-center gap-2 py-2.5 px-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+          className="min-h-[48px] flex items-center justify-center gap-2 py-2.5 px-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-sm font-bold shadow-xs transition-colors"
         >
           <ShieldAlert className="w-4 h-4 text-rose-400" />
           <span>জাতীয় জরুরি সেবা: ৯৯৯</span>
