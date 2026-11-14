@@ -1173,10 +1173,18 @@ export function subscribeToCaregiverAlerts(
 // রিপোর্ট শেয়ার লিংক (shared_reports) — টোকেন-ভিত্তিক নিরাপদ স্ন্যাপশট
 // ============================================================================
 
+export interface SharedReportDebugInfo {
+  code: string;
+  docExists: boolean | null;
+}
+
 export type SharedReportFetchResult =
-  | { status: 'ok'; report: SharedReportDoc }
-  | { status: 'unavailable' }
-  | { status: 'error'; message: string };
+  | { status: 'ok'; report: SharedReportDoc; debug: SharedReportDebugInfo }
+  | { status: 'not_found'; debug: SharedReportDebugInfo }
+  | { status: 'revoked'; debug: SharedReportDebugInfo }
+  | { status: 'expired'; debug: SharedReportDebugInfo }
+  | { status: 'denied'; debug: SharedReportDebugInfo }
+  | { status: 'error'; message: string; debug: SharedReportDebugInfo };
 
 export async function createSharedReportInCloud(
   snapshot: BuiltSharedReportSnapshot
@@ -1227,20 +1235,35 @@ export async function fetchSharedReportByTokenFromCloud(
   token: string
 ): Promise<SharedReportFetchResult> {
   if (!isValidShareTokenFormat(token)) {
-    return { status: 'unavailable' };
+    return {
+      status: 'not_found',
+      debug: { code: 'invalid-token-format', docExists: false },
+    };
   }
 
   try {
     const snap = await getDocFromServer(doc(db, 'shared_reports', token));
     if (!snap.exists()) {
-      return { status: 'unavailable' };
+      return {
+        status: 'not_found',
+        debug: { code: 'not-found', docExists: false },
+      };
     }
 
     const raw = snap.data() as SharedReportDoc;
     const createdAtMs = toMillisSafe(raw.createdAt);
     const expiresAtMs = toMillisSafe(raw.expiresAt);
-    if (raw.revoked || !expiresAtMs || expiresAtMs <= Date.now()) {
-      return { status: 'unavailable' };
+    if (raw.revoked) {
+      return {
+        status: 'revoked',
+        debug: { code: 'revoked', docExists: true },
+      };
+    }
+    if (!expiresAtMs || expiresAtMs <= Date.now()) {
+      return {
+        status: 'expired',
+        debug: { code: 'expired', docExists: true },
+      };
     }
 
     return {
@@ -1250,27 +1273,41 @@ export async function fetchSharedReportByTokenFromCloud(
         createdAtMs,
         expiresAtMs,
       },
+      debug: { code: 'ok', docExists: true },
     };
   } catch (error: any) {
+    const rawCode = String(error?.code || error?.message || 'unknown-error');
+    const code = rawCode.toLowerCase();
+
     if (isQuotaExceededError(error)) {
       return {
         status: 'error',
         message: 'এই মুহূর্তে ক্লাউড সীমা পূর্ণ হওয়ায় রিপোর্ট খোলা যাচ্ছে না। কিছুক্ষণ পর আবার চেষ্টা করুন।',
+        debug: { code: rawCode, docExists: null },
       };
     }
 
-    const code = String(error?.code || error?.message || '').toLowerCase();
+    if (code.includes('not-found')) {
+      return {
+        status: 'not_found',
+        debug: { code: rawCode, docExists: false },
+      };
+    }
+
     if (
       code.includes('permission-denied') ||
-      code.includes('missing or insufficient permissions') ||
-      code.includes('not-found')
+      code.includes('missing or insufficient permissions')
     ) {
-      return { status: 'unavailable' };
+      return {
+        status: 'denied',
+        debug: { code: rawCode, docExists: null },
+      };
     }
 
     return {
       status: 'error',
       message: 'ইন্টারনেট সংযোগের সমস্যার কারণে রিপোর্ট লোড করা যায়নি। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।',
+      debug: { code: rawCode, docExists: null },
     };
   }
 }

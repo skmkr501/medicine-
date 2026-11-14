@@ -1,12 +1,12 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { SharedReportDoc } from '../../types';
 import {
   fetchSharedReportByTokenFromCloud,
   SharedReportFetchResult,
+  SharedReportDebugInfo,
 } from '../../firebase/services';
 import {
   SHARED_REPORT_VIEWER_DISCLAIMER,
-  SHARED_REPORT_UNAVAILABLE_MSG,
   formatSharedReportDateTime,
   toMillisSafe,
 } from '../../utils/sharedReports';
@@ -22,19 +22,52 @@ import {
   Clock,
   RefreshCw,
   PhoneCall,
+  FileX2,
+  Ban,
+  Lock,
 } from 'lucide-react';
 
 interface SharedReportViewerProps {
   token: string;
 }
 
+const FAILURE_MESSAGES: Record<
+  'not_found' | 'revoked' | 'expired' | 'denied',
+  { title: string; body: string }
+> = {
+  not_found: {
+    title: 'রিপোর্টটি পাওয়া যায়নি',
+    body: 'এই লিংকে কোনো রিপোর্ট পাওয়া যায়নি। লিংকটি অসম্পূর্ণ বা ভুল হতে পারে, অথবা মুছে ফেলা হয়েছে। প্রয়োজনে রোগীকে নতুন লিংক দিতে বলুন।',
+  },
+  revoked: {
+    title: 'এই লিংকটি বাতিল করা হয়েছে',
+    body: 'রোগী বা পরিবারের সদস্য নিরাপত্তার কারণে লিংকটি বাতিল করেছেন। প্রয়োজনে রোগীকে নতুন লিংক দিতে বলুন।',
+  },
+  expired: {
+    title: 'এই লিংকের মেয়াদ শেষ হয়েছে',
+    body: 'নির্ধারিত সময়সীমা পার হয়ে যাওয়ায় রিপোর্টটি আর দেখা যাচ্ছে না। প্রয়োজনে রোগীকে নতুন লিংক দিতে বলুন।',
+  },
+  denied: {
+    title: 'রিপোর্টটি এখন দেখা যাচ্ছে না',
+    body: 'লিংকটি বাতিল বা মেয়াদ শেষ হয়ে থাকতে পারে, অথবা প্রবেশের অনুমতি নেই। রোগীকে নতুন লিংক দিতে বলুন।',
+  },
+};
+
 export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token }) => {
   const [state, setState] = useState<
     | { status: 'loading' }
-    | { status: 'ok'; report: SharedReportDoc }
-    | { status: 'unavailable' }
-    | { status: 'error'; message: string }
+    | { status: 'ok'; report: SharedReportDoc; debug: SharedReportDebugInfo }
+    | {
+        status: 'not_found' | 'revoked' | 'expired' | 'denied';
+        debug: SharedReportDebugInfo;
+      }
+    | { status: 'error'; message: string; debug: SharedReportDebugInfo }
   >({ status: 'loading' });
+
+  const isDebugMode = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('debug') === '1';
+  }, []);
 
   // Enforce <meta name="robots" content="noindex, nofollow" /> on viewer page
   useEffect(() => {
@@ -72,17 +105,32 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
     setState({ status: 'loading' });
     const res: SharedReportFetchResult = await fetchSharedReportByTokenFromCloud(token);
     if (res.status === 'ok') {
-      setState({ status: 'ok', report: res.report });
-    } else if (res.status === 'unavailable') {
-      setState({ status: 'unavailable' });
+      setState({ status: 'ok', report: res.report, debug: res.debug });
+    } else if (res.status === 'error') {
+      setState({ status: 'error', message: res.message, debug: res.debug });
     } else {
-      setState({ status: 'error', message: res.message });
+      setState({ status: res.status, debug: res.debug });
     }
   }, [token]);
 
   useEffect(() => {
     loadReport();
   }, [loadReport]);
+
+  const renderDebugLine = (debug?: SharedReportDebugInfo) => {
+    if (!isDebugMode || !debug) return null;
+    const docText =
+      debug.docExists === true
+        ? 'হ্যাঁ (পাওয়া গেছে)'
+        : debug.docExists === false
+        ? 'না (পাওয়া যায়নি)'
+        : 'অজানা (অনুমতি/সংযোগ ত্রুটি)';
+    return (
+      <p className="mt-4 text-center text-[11px] text-slate-400 font-mono">
+        debug: code={debug.code} · ডকুমেন্ট={docText}
+      </p>
+    );
+  };
 
   if (state.status === 'loading') {
     return (
@@ -96,27 +144,9 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
     );
   }
 
-  if (state.status === 'unavailable') {
-    return (
-      <div className="min-h-screen bg-white text-slate-900 flex items-center justify-center p-6">
-        <div className="max-w-lg w-full border-2 border-slate-200 rounded-2xl p-8 text-center space-y-4 bg-white shadow-xs">
-          <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-700 flex items-center justify-center mx-auto">
-            <Clock className="w-7 h-7" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900">
-            {SHARED_REPORT_UNAVAILABLE_MSG}
-          </h1>
-          <p className="text-base text-slate-600 leading-relaxed">
-            রোগী বা পরিবারের সদস্য লিংকটি বাতিল করে থাকতে পারেন অথবা নির্ধারিত সময়সীমা শেষ হয়ে গেছে। প্রয়োজনে নতুন লিংক চেয়ে নিন।
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   if (state.status === 'error') {
     return (
-      <div className="min-h-screen bg-white text-slate-900 flex items-center justify-center p-6">
+      <div className="min-h-screen bg-white text-slate-900 flex flex-col items-center justify-center p-6">
         <div className="max-w-lg w-full border-2 border-amber-200 rounded-2xl p-8 text-center space-y-4 bg-white shadow-xs">
           <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center mx-auto">
             <ShieldAlert className="w-7 h-7" />
@@ -132,6 +162,32 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
             <span>আবার চেষ্টা করুন</span>
           </button>
         </div>
+        {renderDebugLine(state.debug)}
+      </div>
+    );
+  }
+
+  if (state.status !== 'ok') {
+    const info = FAILURE_MESSAGES[state.status];
+    const Icon =
+      state.status === 'not_found'
+        ? FileX2
+        : state.status === 'revoked'
+        ? Ban
+        : state.status === 'expired'
+        ? Clock
+        : Lock;
+
+    return (
+      <div className="min-h-screen bg-white text-slate-900 flex flex-col items-center justify-center p-6">
+        <div className="max-w-lg w-full border-2 border-slate-200 rounded-2xl p-8 text-center space-y-4 bg-white shadow-xs">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-700 flex items-center justify-center mx-auto">
+            <Icon className="w-7 h-7" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900">{info.title}</h1>
+          <p className="text-base text-slate-600 leading-relaxed">{info.body}</p>
+        </div>
+        {renderDebugLine(state.debug)}
       </div>
     );
   }
@@ -430,6 +486,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
           <span>এটি রোগীর শেয়ার করা স্ন্যাপশট, লাইভ তথ্য নয়।</span>
         </div>
       </div>
+      <div className="no-print">{renderDebugLine(state.debug)}</div>
     </div>
   );
 };
