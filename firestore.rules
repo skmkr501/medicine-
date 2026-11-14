@@ -216,6 +216,284 @@ service cloud.firestore {
       allow create, update: if isAdmin() && isValidId(activityId);
       allow delete: if isAdmin() && isValidId(activityId);
     }
+
+    function isValidLibraryMeta(data) {
+      return data.keys().hasAll(['version', 'chunkCount', 'totalCount', 'updatedAt'])
+        && data.keys().hasOnly(['version', 'chunkCount', 'totalCount', 'updatedAt'])
+        && data.version is number && data.version >= 1
+        && data.chunkCount is number && data.chunkCount >= 0 && data.chunkCount <= 500
+        && data.totalCount is number && data.totalCount >= 0
+        && data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidLibraryChunk(data) {
+      return data.keys().hasAll(['version', 'index', 'items'])
+        && data.keys().hasOnly(['version', 'index', 'items'])
+        && data.version is number && data.version >= 1
+        && data.index is number && data.index >= 0 && data.index <= 500
+        && data.items is list && data.items.size() <= 200
+        && (data.items.size() == 0 || data.items[0] is map);
+    }
+
+    // Versioned Library Metadata (Everyone can read, strictly Admin can write)
+    match /library_meta/{metaId} {
+      allow get, list: if true;
+      allow create, update: if isAdmin() && isValidId(metaId) && isValidLibraryMeta(incoming());
+      allow delete: if isAdmin() && isValidId(metaId);
+    }
+
+    // Versioned Library Chunks (Everyone can read, strictly Admin can write)
+    match /library_chunks/{chunkId} {
+      allow get, list: if true;
+      allow create, update: if isAdmin() && isValidId(chunkId) && isValidLibraryChunk(incoming());
+      allow delete: if isAdmin() && isValidId(chunkId);
+    }
+
+    // =========================================================================
+    // পরিবারের যত্নকারী (Caregiver Mode) — নিরাপত্তা বিধি
+    // =========================================================================
+
+    function isValidCaregiverLinkShape(data) {
+      return data.keys().hasAll([
+          'id', 'inviteCode', 'patientUid', 'patientName', 'caregiverUid',
+          'caregiverName', 'status', 'allowFullView', 'expiresAtMs', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'inviteCode', 'patientUid', 'patientName', 'patientPhone', 'caregiverUid',
+          'caregiverName', 'status', 'allowFullView', 'expiresAtMs', 'createdAt',
+          'linkedAt', 'updatedAt', 'todaySummary', 'sharedMedicines'
+        ])
+        && data.id is string && data.id.matches('^[A-Z0-9]{6}$')
+        && data.inviteCode == data.id
+        && data.patientUid is string && data.patientUid.size() > 0 && data.patientUid.size() <= 128
+        && data.patientName is string && data.patientName.size() > 0 && data.patientName.size() <= 128
+        && (!('patientPhone' in data) || (data.patientPhone is string && data.patientPhone.size() <= 32))
+        && data.caregiverUid is string && data.caregiverUid.size() <= 128
+        && data.caregiverName is string && data.caregiverName.size() <= 128
+        && data.status in ['pending', 'active']
+        && data.allowFullView is bool
+        && data.expiresAtMs is number && data.expiresAtMs > 0
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && data.updatedAt is string && data.updatedAt.size() <= 64
+        && (!('linkedAt' in data) || (data.linkedAt is string && data.linkedAt.size() <= 64))
+        && (!('todaySummary' in data) || data.todaySummary is map)
+        && (!('sharedMedicines' in data) || (
+          data.sharedMedicines is list &&
+          data.sharedMedicines.size() <= 40 &&
+          (data.allowFullView == true || data.sharedMedicines.size() == 0)
+        ));
+    }
+
+    function isValidCaregiverLinkCreate(data, linkId) {
+      return isValidCaregiverLinkShape(data)
+        && data.id == linkId
+        && data.patientUid == request.auth.uid
+        && data.caregiverUid == ''
+        && data.caregiverName == ''
+        && data.status == 'pending'
+        && data.allowFullView == false
+        && data.expiresAtMs > request.time.toMillis()
+        && data.expiresAtMs <= request.time.toMillis() + 259200000;
+    }
+
+    function isLinkedActiveCaregiver(linkId, pUid, cUid) {
+      return linkId is string
+        && linkId.matches('^[A-Z0-9]{6}$')
+        && exists(/databases/$(database)/documents/caregiver_links/$(linkId))
+        && get(/databases/$(database)/documents/caregiver_links/$(linkId)).data.patientUid == pUid
+        && get(/databases/$(database)/documents/caregiver_links/$(linkId)).data.caregiverUid == cUid
+        && get(/databases/$(database)/documents/caregiver_links/$(linkId)).data.status == 'active';
+    }
+
+    function allCaregiversVerified(data) {
+      return data.caregiverUids is list
+        && data.caregiverLinkIds is list
+        && data.caregiverUids.size() >= 1
+        && data.caregiverUids.size() <= 3
+        && data.caregiverLinkIds.size() == data.caregiverUids.size()
+        && isLinkedActiveCaregiver(data.caregiverLinkIds[0], data.patientUid, data.caregiverUids[0])
+        && (data.caregiverUids.size() < 2 || isLinkedActiveCaregiver(data.caregiverLinkIds[1], data.patientUid, data.caregiverUids[1]))
+        && (data.caregiverUids.size() < 3 || isLinkedActiveCaregiver(data.caregiverLinkIds[2], data.patientUid, data.caregiverUids[2]));
+    }
+
+    function isValidFamilyAlertShape(data, alertId) {
+      return data.keys().hasAll([
+          'id', 'patientUid', 'caregiverUids', 'caregiverLinkIds', 'type',
+          'medicineName', 'message', 'createdAt', 'createdAtMs', 'seenBy'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientUid', 'caregiverUids', 'caregiverLinkIds', 'type',
+          'medicineId', 'medicineName', 'slot', 'date', 'message',
+          'patientName', 'patientPhone', 'createdAt', 'createdAtMs', 'seenBy'
+        ])
+        && data.id == alertId
+        && isValidId(alertId)
+        && data.patientUid is string && data.patientUid.size() > 0 && data.patientUid.size() <= 128
+        && data.type in ['missed_dose', 'low_stock']
+        && (!('medicineId' in data) || (data.medicineId is string && data.medicineId.size() <= 128))
+        && data.medicineName is string && data.medicineName.size() > 0 && data.medicineName.size() <= 128
+        && (!('slot' in data) || (data.slot is string && data.slot.size() <= 32))
+        && (!('date' in data) || (data.date is string && data.date.size() <= 32))
+        && data.message is string && data.message.size() > 0 && data.message.size() <= 512
+        && (!('patientName' in data) || (data.patientName is string && data.patientName.size() <= 128))
+        && (!('patientPhone' in data) || (data.patientPhone is string && data.patientPhone.size() <= 32))
+        && data.createdAt is string && data.createdAt.size() <= 64
+        && data.createdAtMs is number && data.createdAtMs > 0
+        && data.seenBy is list && data.seenBy.size() <= 5;
+    }
+
+    function isValidFamilyAlertCreate(data, alertId) {
+      return isValidFamilyAlertShape(data, alertId)
+        && data.patientUid == request.auth.uid
+        && data.seenBy.size() == 0;
+    }
+
+    match /caregiver_links/{linkId} {
+      // Single-doc lookup allowed for owner, linked caregiver, or pending invite holder who knows exact 6-char code
+      allow get: if isSignedIn() && isValidId(linkId) && (
+        existing().patientUid == request.auth.uid ||
+        existing().caregiverUid == request.auth.uid ||
+        (existing().status == 'pending' && request.time.toMillis() < existing().expiresAtMs)
+      );
+      // Queries strictly scoped to own links only (never allows listing pending invites)
+      allow list: if isSignedIn() && (
+        existing().patientUid == request.auth.uid ||
+        existing().caregiverUid == request.auth.uid
+      );
+      allow create: if isSignedIn() && isValidId(linkId) && isValidCaregiverLinkCreate(incoming(), linkId);
+      allow update: if isSignedIn() && isValidId(linkId) && isValidCaregiverLinkShape(incoming()) && (
+        // Case 1: Patient updates todaySummary or toggles allowFullView (immutable identity fields preserved)
+        (
+          existing().patientUid == request.auth.uid &&
+          incoming().patientUid == existing().patientUid &&
+          incoming().caregiverUid == existing().caregiverUid &&
+          incoming().status == existing().status &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'patientName', 'patientPhone', 'allowFullView', 'todaySummary', 'sharedMedicines', 'updatedAt'
+          ])
+        ) ||
+        // Case 2: Caregiver redeems pending unexpired invite once
+        (
+          existing().status == 'pending' &&
+          existing().patientUid != request.auth.uid &&
+          request.time.toMillis() < existing().expiresAtMs &&
+          incoming().patientUid == existing().patientUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'caregiverUid', 'caregiverName', 'status', 'linkedAt', 'updatedAt'
+          ]) &&
+          incoming().caregiverUid == request.auth.uid &&
+          incoming().caregiverName.size() > 0 &&
+          incoming().status == 'active'
+        )
+      );
+      allow delete: if isSignedIn() && isValidId(linkId) && (
+        existing().patientUid == request.auth.uid ||
+        existing().caregiverUid == request.auth.uid
+      );
+    }
+
+    match /family_alerts/{alertId} {
+      allow get: if isSignedIn() && isValidId(alertId) && (
+        existing().patientUid == request.auth.uid ||
+        request.auth.uid in existing().caregiverUids
+      );
+      allow list: if isSignedIn() && (
+        existing().patientUid == request.auth.uid ||
+        request.auth.uid in existing().caregiverUids
+      );
+      allow create: if isSignedIn()
+        && isValidId(alertId)
+        && isValidFamilyAlertCreate(incoming(), alertId)
+        && allCaregiversVerified(incoming());
+      allow update: if isSignedIn()
+        && isValidId(alertId)
+        && isValidFamilyAlertShape(incoming(), alertId)
+        && (request.auth.uid in existing().caregiverUids)
+        && incoming().patientUid == existing().patientUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdAtMs == existing().createdAtMs
+        && incoming().diff(existing()).affectedKeys().hasOnly(['seenBy'])
+        && incoming().seenBy.hasAll(existing().seenBy)
+        && (request.auth.uid in incoming().seenBy);
+      // Patient can clean up alerts >= 30 days old (2,592,000,000 ms)
+      allow delete: if isSignedIn()
+        && isValidId(alertId)
+        && existing().patientUid == request.auth.uid
+        && existing().createdAtMs is number
+        && (request.time.toMillis() - existing().createdAtMs) >= 2592000000;
+    }
+
+    // =========================================================================
+    // ডাক্তার / পরিবারের জন্য রিপোর্ট শেয়ার লিংক (shared_reports) — নিরাপত্তা বিধি
+    // =========================================================================
+
+    function isValidSharedReportToken(token) {
+      return token is string
+        && token.size() >= 20
+        && token.size() <= 128
+        && token.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidSharedReport(data, tokenId) {
+      return data.keys().hasAll([
+          'ownerUid', 'token', 'createdAt', 'expiresAt', 'patientName', 'sections', 'revoked'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'token', 'createdAt', 'expiresAt', 'patientName',
+          'age', 'gender', 'relation', 'sections', 'revoked'
+        ])
+        && data.ownerUid is string && data.ownerUid.size() > 0 && data.ownerUid.size() <= 128
+        && data.token is string && data.token == tokenId && isValidSharedReportToken(data.token)
+        && data.createdAt is timestamp
+        && data.expiresAt is timestamp
+        && data.patientName is string && data.patientName.size() > 0 && data.patientName.size() <= 128
+        && (!('age' in data) || (data.age is number && data.age >= 0 && data.age <= 150))
+        && (!('gender' in data) || (data.gender is string && data.gender.size() <= 32))
+        && (!('relation' in data) || (data.relation is string && data.relation.size() <= 64))
+        && data.sections is map
+        && data.revoked is bool;
+    }
+
+    match /shared_reports/{token} {
+      // Anyone holding the exact unguessable >=20-char token can fetch ONE document if active & unexpired
+      allow get: if isValidSharedReportToken(token)
+        && resource.data.revoked == false
+        && resource.data.expiresAt > request.time;
+
+      // Only authenticated owner can list their own shared links
+      allow list: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+
+      // Only logged-in owner can create; token >= 20 chars; expiry strictly <= 90 days
+      allow create: if isSignedIn()
+        && isValidSharedReportToken(token)
+        && isValidSharedReport(incoming(), token)
+        && incoming().ownerUid == request.auth.uid
+        && incoming().revoked == false
+        && incoming().createdAt == request.time
+        && incoming().expiresAt > request.time
+        && incoming().expiresAt <= request.time + duration.value(90, 'd');
+
+      // Only owner can update, and ONLY the `revoked` field can be set to true
+      allow update: if isSignedIn()
+        && isValidSharedReportToken(token)
+        && isValidSharedReport(incoming(), token)
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().token == existing().token
+        && incoming().createdAt == existing().createdAt
+        && incoming().expiresAt == existing().expiresAt
+        && incoming().patientName == existing().patientName
+        && incoming().sections == existing().sections
+        && incoming().diff(existing()).affectedKeys().hasOnly(['revoked'])
+        && incoming().revoked == true;
+
+      // Only owner can delete their shared report link
+      allow delete: if isSignedIn()
+        && isValidSharedReportToken(token)
+        && existing().ownerUid == request.auth.uid;
+    }
   }
 }
 

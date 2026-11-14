@@ -48,8 +48,13 @@ export async function testFirestoreConnection(): Promise<boolean> {
     await getDocFromServer(doc(db, 'test', 'connection'));
     return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firebase client is offline or network restricted.');
+    const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (
+      msg.includes('the client is offline') ||
+      msg.includes('resource-exhausted') ||
+      msg.includes('quota')
+    ) {
+      console.warn('Firebase client offline or quota limited:', msg);
       return false;
     }
     // Any permission-denied response also confirms connection to the server!

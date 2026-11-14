@@ -86,6 +86,10 @@ export interface Medicine {
   colorTag: 'teal' | 'emerald' | 'cyan' | 'blue' | 'indigo' | 'rose' | 'amber';
   stockAdjustments?: StockAdjustment[];
   lastStockUpdated?: string;
+  expiryDate?: string; // Optional ISO YYYY-MM-DD packet expiry date
+  packageDescription?: string; // Optional pack/strip description from catalog
+  catalogMedicineId?: string; // Optional linked library medicine id
+  pricePerUnit?: number; // Optional user-specified price per single unit
 }
 
 export interface DoseLog {
@@ -157,6 +161,73 @@ export interface ReminderSettings {
   voiceReadoutEnabled?: boolean;
   emergencyContactName?: string;
   emergencyContactPhone?: string;
+  caregiverMissedDoseMinutes?: 15 | 30 | 60;
+  patientSelfPhone?: string;
+}
+
+export interface CaregiverTodayDoseSummary {
+  medicineName: string;
+  timeSlot: TimeSlot;
+  time: string;
+  dosage: string;
+  status: 'taken' | 'pending' | 'skipped';
+}
+
+export interface CaregiverFullMedicineItem {
+  brandName: string;
+  strength?: string;
+  mealTiming: string;
+  stock: number;
+  unit: string;
+  schedulesText: string;
+}
+
+export interface CaregiverTodaySummary {
+  date: string; // YYYY-MM-DD
+  totalDoses: number;
+  takenDoses: number;
+  remainingDoses: number;
+  doses: CaregiverTodayDoseSummary[];
+  updatedAt: string;
+}
+
+export interface CaregiverLinkDoc {
+  id: string;
+  inviteCode: string;
+  patientUid: string;
+  caregiverUid: string; // empty string while pending
+  patientName: string;
+  caregiverName: string;
+  patientPhone?: string;
+  status: 'pending' | 'active';
+  allowFullView: boolean;
+  createdAt: string;
+  expiresAt?: string;
+  expiresAtMs: number;
+  linkedAt?: string;
+  updatedAt?: string;
+  todaySummary?: CaregiverTodaySummary;
+  sharedMedicines?: CaregiverFullMedicineItem[];
+}
+
+export type FamilyAlertType = 'missed_dose' | 'low_stock';
+
+export interface FamilyAlertDoc {
+  id: string;
+  patientUid: string;
+  caregiverUids: string[];
+  caregiverLinkIds: string[];
+  type: FamilyAlertType;
+  medicineId: string;
+  medicineName: string;
+  slot?: TimeSlot;
+  date: string; // YYYY-MM-DD
+  message: string;
+  patientName?: string;
+  patientPhone?: string;
+  createdAt: string;
+  createdAtMs: number;
+  seenBy: string[];
 }
 
 export type NavigationPage =
@@ -167,13 +238,84 @@ export type NavigationPage =
   | 'appointments'
   | 'medicines'
   | 'add-medicine'
+  | 'shopping-list'
   | 'reminders'
   | 'history'
+  | 'share-report'
   | 'ai-assistant'
   | 'settings'
   | 'library'
   | 'admin-import'
-  | 'admin-dashboard';
+  | 'admin-dashboard'
+  | 'admin-library';
+
+export type SharedReportExpiryHours = 24 | 168 | 720;
+
+export interface SharedReportSectionSelection {
+  medicines: boolean;
+  allergiesEmergency: boolean;
+  recentReadings: boolean;
+  appointments: boolean;
+}
+
+export interface SharedReportMedicineItem {
+  brandName: string;
+  genericName: string;
+  strength: string;
+  type: string;
+  mealTiming: string;
+  schedulesText: string;
+  instructions?: string;
+}
+
+export interface SharedReportAllergiesEmergency {
+  bloodGroup: string;
+  allergies: string[];
+  chronicConditions: string[];
+  emergencyContact?: string;
+}
+
+export interface SharedReportReadingItem {
+  recordDate: string;
+  recordTime?: string;
+  systolic?: number;
+  diastolic?: number;
+  bloodSugar?: number;
+  sugarType?: string;
+  weight?: number;
+  notes?: string;
+}
+
+export interface SharedReportAppointmentItem {
+  doctorName: string;
+  specialty?: string;
+  appointmentDate: string;
+  appointmentTime: string;
+  location: string;
+  notes?: string;
+}
+
+export interface SharedReportSections {
+  medicines?: SharedReportMedicineItem[];
+  allergiesEmergency?: SharedReportAllergiesEmergency;
+  recentReadings?: SharedReportReadingItem[];
+  appointments?: SharedReportAppointmentItem[];
+}
+
+export interface SharedReportDoc {
+  ownerUid: string;
+  token: string;
+  createdAt: unknown;
+  expiresAt: unknown;
+  createdAtMs?: number;
+  expiresAtMs?: number;
+  patientName: string;
+  age?: number;
+  gender?: string;
+  relation?: string;
+  sections: SharedReportSections;
+  revoked: boolean;
+}
 
 export type ImportDataSource =
   | 'DGDA_GOV'              // Government Open Data: Directorate General of Drug Administration (DGDA) Gazette / Formulary
@@ -203,6 +345,7 @@ export interface GlobalMedicine {
   therapeuticClass?: string;
   indication?: string;
   pricePerUnit?: number;
+  priceUnit?: string; // e.g. 'পিস', 'পাতা', 'বোতল', 'টিউব'
   packageDescription?: string;
   darNumber?: string; // DGDA Drug Administration Registration Number
   source: ImportDataSource;

@@ -189,6 +189,93 @@
         "status": { "type": "string", "maxLength": 32 }
       },
       "required": ["id", "source", "importedAt", "importedByEmail", "licenseReference", "totalRecordsInFile"]
+    },
+    "LibraryMeta": {
+      "title": "LibraryMeta",
+      "description": "Version metadata for chunked medicine catalog",
+      "type": "object",
+      "properties": {
+        "version": { "type": "number" },
+        "chunkCount": { "type": "number" },
+        "totalCount": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["version", "chunkCount", "totalCount", "updatedAt"]
+    },
+    "LibraryChunk": {
+      "title": "LibraryChunk",
+      "description": "Single chunk of up to 200 medicines for a catalog version",
+      "type": "object",
+      "properties": {
+        "version": { "type": "number" },
+        "index": { "type": "number" },
+        "items": { "type": "array" }
+      },
+      "required": ["version", "index", "items"]
+    },
+    "CaregiverLink": {
+      "title": "CaregiverLink",
+      "description": "Caregiver invite and active link between patient and caregiver with privacy-scoped summary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 16 },
+        "inviteCode": { "type": "string", "maxLength": 16 },
+        "patientUid": { "type": "string", "maxLength": 128 },
+        "patientName": { "type": "string", "maxLength": 128 },
+        "patientPhone": { "type": "string", "maxLength": 32 },
+        "caregiverUid": { "type": "string", "maxLength": 128 },
+        "caregiverName": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "maxLength": 16 },
+        "allowFullView": { "type": "boolean" },
+        "expiresAtMs": { "type": "number" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "linkedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "todaySummary": { "type": "object" },
+        "sharedMedicines": { "type": "array" }
+      },
+      "required": ["id", "inviteCode", "patientUid", "patientName", "caregiverUid", "caregiverName", "status", "allowFullView", "expiresAtMs", "createdAt", "updatedAt"]
+    },
+    "FamilyAlert": {
+      "title": "FamilyAlert",
+      "description": "Missed dose and low stock alerts sent from patient to verified caregivers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "patientUid": { "type": "string", "maxLength": 128 },
+        "caregiverUids": { "type": "array" },
+        "caregiverLinkIds": { "type": "array" },
+        "type": { "type": "string", "maxLength": 32 },
+        "medicineId": { "type": "string", "maxLength": 128 },
+        "medicineName": { "type": "string", "maxLength": 128 },
+        "slot": { "type": "string", "maxLength": 32 },
+        "date": { "type": "string", "maxLength": 32 },
+        "message": { "type": "string", "maxLength": 512 },
+        "patientName": { "type": "string", "maxLength": 128 },
+        "patientPhone": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "createdAtMs": { "type": "number" },
+        "seenBy": { "type": "array" }
+      },
+      "required": ["id", "patientUid", "caregiverUids", "caregiverLinkIds", "type", "medicineName", "message", "createdAt", "createdAtMs", "seenBy"]
+    },
+    "SharedReport": {
+      "title": "SharedReport",
+      "description": "Immutable, time-limited medical snapshot shared via unguessable token link",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "token": { "type": "string", "minLength": 20, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "patientName": { "type": "string", "maxLength": 128 },
+        "age": { "type": "number" },
+        "gender": { "type": "string", "maxLength": 32 },
+        "relation": { "type": "string", "maxLength": 64 },
+        "sections": { "type": "object" },
+        "revoked": { "type": "boolean" }
+      },
+      "required": ["ownerUid", "token", "createdAt", "expiresAt", "patientName", "sections", "revoked"]
     }
   },
   "firestore": {
@@ -222,11 +309,31 @@
     },
     "/global_medicines/{medicineId}": {
       "schema": "GlobalMedicine",
-      "description": "Global verified medicine catalog"
+      "description": "Legacy global verified medicine catalog"
     },
     "/import_batches/{batchId}": {
       "schema": "ImportBatch",
       "description": "Admin import audit batch metadata"
+    },
+    "/library_meta/{metaId}": {
+      "schema": "LibraryMeta",
+      "description": "Current version metadata of chunked medicine catalog"
+    },
+    "/library_chunks/{chunkId}": {
+      "schema": "LibraryChunk",
+      "description": "Chunked global medicine catalog pages"
+    },
+    "/caregiver_links/{linkId}": {
+      "schema": "CaregiverLink",
+      "description": "Patient-caregiver invite and active care connections"
+    },
+    "/family_alerts/{alertId}": {
+      "schema": "FamilyAlert",
+      "description": "Missed dose and low stock alerts for linked caregivers"
+    },
+    "/shared_reports/{token}": {
+      "schema": "SharedReport",
+      "description": "Token-gated snapshot reports shared with doctors or family members"
     }
   }
 }

@@ -13,6 +13,7 @@ import {
   collectionGroup,
   doc,
   setDoc,
+  updateDoc,
   getDoc,
   getDocs,
   deleteDoc,
@@ -22,13 +23,22 @@ import {
   orderBy,
   limit,
   where,
+  arrayUnion,
   getDocsFromServer,
   getDocFromServer,
-  getCountFromServer,
+  Timestamp,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db, stripUndefined } from './config';
-import { handleFirestoreError, OperationType } from './errors';
+import { handleFirestoreError, isQuotaExceededError, OperationType } from './errors';
 import { isDemoRecordId, hasDemoPrefix, UserDataCollection } from '../utils/demoCleanup';
+import {
+  LibraryMetaDoc,
+  LibraryChunkDoc,
+  buildLibraryChunks,
+  estimateUtf8Bytes,
+  hasCatalogChanges,
+} from '../utils/libraryChunks';
 import {
   Medicine,
   PatientProfile,
@@ -39,7 +49,15 @@ import {
   GlobalMedicine,
   ImportBatch,
   AdminActivity,
+  CaregiverLinkDoc,
+  FamilyAlertDoc,
+  SharedReportDoc,
 } from '../types';
+import {
+  BuiltSharedReportSnapshot,
+  isValidShareTokenFormat,
+  toMillisSafe,
+} from '../utils/sharedReports';
 
 export const ADMIN_EMAIL = 'sarashatikmkr501@gmail.com';
 
@@ -493,164 +511,260 @@ export async function cleanupDemoRecordsFromCloud(
   }
 }
 
-// Global Medicine Catalog Services
-export async function saveGlobalMedicine(medicine: GlobalMedicine): Promise<void> {
-  assertAdminAuth();
-  const path = `global_medicines/${medicine.id}`;
-  try {
-    await setDoc(doc(db, 'global_medicines', medicine.id), stripUndefined(medicine), { merge: true });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
-}
-
-export async function publishGlobalMedicine(medicineOrId: string | GlobalMedicine): Promise<void> {
-  assertAdminAuth();
-  const id = typeof medicineOrId === 'string' ? medicineOrId : medicineOrId.id;
-  const path = `global_medicines/${id}`;
-  const payload =
-    typeof medicineOrId === 'string'
-      ? {
-          status: 'published',
-          verifiedByAdmin: true,
-          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
-        }
-      : {
-          ...medicineOrId,
-          status: 'published',
-          verifiedByAdmin: true,
-          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
-        };
-  try {
-    await setDoc(doc(db, 'global_medicines', id), stripUndefined(payload), { merge: true });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
-}
+// Versioned Chunked Global Medicine Catalog Services (library_meta + library_chunks)
 
 /**
- * Publishes multiple draft medicines to the global catalog in real-time.
- * Uses atomic chunked write batches and cleans up any legacy test-license markers.
+ * Fetches the single metadata document library_meta/current (1 Firestore read).
  */
-export async function bulkPublishGlobalMedicines(medicines: GlobalMedicine[]): Promise<number> {
-  assertAdminAuth();
-  if (!medicines || medicines.length === 0) return 0;
-
+export async function fetchLibraryMetaFromCloud(): Promise<LibraryMetaDoc | null> {
   try {
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < medicines.length; i += CHUNK_SIZE) {
-      const chunk = medicines.slice(i, i + CHUNK_SIZE);
-      const writeBatchInst = writeBatch(db);
-      chunk.forEach((med) => {
-        const medRef = doc(db, 'global_medicines', med.id);
-        const cleanLicense =
-          med.licenseReference && med.licenseReference.includes('TEST-SYSTEM-ONLY')
-            ? 'DGDA Public Gazette / National Formulary'
-            : (med.licenseReference || 'DGDA Public Gazette Open Data');
-
-        const cleanMed = stripUndefined({
-          ...med,
-          status: 'published' as const,
-          verifiedByAdmin: true,
-          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
-          licenseReference: cleanLicense,
-        });
-
-        writeBatchInst.set(medRef, cleanMed, { merge: true });
-      });
-      await writeBatchInst.commit();
+    const snap = await getDoc(doc(db, 'library_meta', 'current'));
+    if (!snap.exists()) return null;
+    return snap.data() as LibraryMetaDoc;
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      throw error;
     }
-    return medicines.length;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'global_medicines/[bulk_publish]');
-    return 0;
-  }
-}
-
-export async function bulkImportGlobalMedicines(
-  batchInfo: ImportBatch,
-  medicines: GlobalMedicine[]
-): Promise<void> {
-  assertAdminAuth();
-  try {
-    // 1. Record Import Batch doc
-    const batchDocRef = doc(db, 'import_batches', batchInfo.id);
-    await setDoc(batchDocRef, stripUndefined(batchInfo));
-
-    // 2. Commit medicines in batches of 400
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < medicines.length; i += CHUNK_SIZE) {
-      const chunk = medicines.slice(i, i + CHUNK_SIZE);
-      const writeBatchInst = writeBatch(db);
-      chunk.forEach((med) => {
-        const medRef = doc(db, 'global_medicines', med.id);
-        writeBatchInst.set(medRef, stripUndefined(med), { merge: true });
-      });
-      await writeBatchInst.commit();
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'global_medicines/[bulk_import]');
+    console.warn('fetchLibraryMetaFromCloud error:', error);
+    return null;
   }
 }
 
 /**
- * Reads directly from the server to verify exactly how many global medicines exist in Cloud Firestore
+ * Fetches all chunks for a given library catalog version (e.g. 25 reads for ~5,000 items at 200/chunk).
  */
-export async function verifyCloudGlobalMedicinesCount(): Promise<number> {
+export async function fetchLibraryChunksByVersion(version: number): Promise<GlobalMedicine[]> {
+  if (!version || version <= 0) return [];
+  const q = query(collection(db, 'library_chunks'), where('version', '==', version));
+  let snap;
   try {
-    const coll = collection(db, 'global_medicines');
-    const snapshot = await getCountFromServer(coll);
-    return snapshot.data().count;
-  } catch (error) {
-    console.warn('verifyCloudGlobalMedicinesCount getCountFromServer failed, falling back to getDocsFromServer:', error);
-    const snap = await getDocsFromServer(collection(db, 'global_medicines'));
-    return snap.size;
-  }
-}
-
-/**
- * Returns exact server counts for total, published, and draft medicines from Cloud Firestore
- */
-export async function getCloudMedicineCounts(): Promise<{ total: number; published: number; draft: number }> {
-  try {
-    const snap = await getDocsFromServer(collection(db, 'global_medicines'));
-    let published = 0;
-    let draft = 0;
-    snap.docs.forEach((d) => {
-      const data = d.data() as GlobalMedicine;
-      if (data.status === 'published' && data.verifiedByAdmin) {
-        published++;
-      } else {
-        draft++;
-      }
-    });
-    return {
-      total: snap.size,
-      published,
-      draft,
-    };
+    snap = await getDocsFromServer(q);
   } catch (err) {
-    console.warn('getCloudMedicineCounts error:', err);
-    return { total: 0, published: 0, draft: 0 };
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    // Offline/cache fallback
+    snap = await getDocs(q);
+  }
+
+  const chunkDocs: LibraryChunkDoc[] = [];
+  snap.forEach((docSnap) => {
+    chunkDocs.push(docSnap.data() as LibraryChunkDoc);
+  });
+
+  chunkDocs.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+
+  const items: GlobalMedicine[] = [];
+  for (const chunk of chunkDocs) {
+    if (Array.isArray(chunk.items)) {
+      for (const item of chunk.items) {
+        items.push(item);
+      }
+    }
+  }
+  return items;
+}
+
+/**
+ * Publishes an entire updated catalog as versioned library_chunks (<= 200 items & < 1MB each),
+ * commits chunk batches safely under Firestore's 10 MiB batch limit,
+ * updates library_meta/current LAST, and cleans up older version chunks best-effort.
+ */
+export async function publishChunkedLibraryCatalog(
+  medicines: GlobalMedicine[],
+  currentKnownVersion: number = 0,
+  importBatchInfo?: ImportBatch
+): Promise<{
+  newVersion: number;
+  chunkCount: number;
+  totalCount: number;
+  totalWrites: number;
+}> {
+  assertAdminAuth();
+
+  let serverVersion = 0;
+  try {
+    let metaSnap;
+    try {
+      metaSnap = await getDocFromServer(doc(db, 'library_meta', 'current'));
+    } catch (err) {
+      if (isQuotaExceededError(err)) throw err;
+      metaSnap = await getDoc(doc(db, 'library_meta', 'current'));
+    }
+    if (metaSnap.exists()) {
+      const data = metaSnap.data() as Partial<LibraryMetaDoc>;
+      if (typeof data.version === 'number') {
+        serverVersion = data.version;
+      }
+    }
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    console.warn('Could not fetch current library_meta before publish, using local version baseline:', err);
+  }
+
+  const newVersion = Math.max(currentKnownVersion, serverVersion, 0) + 1;
+  const cleanMedicines = medicines.map((m) => stripUndefined(m));
+  const chunks = buildLibraryChunks(cleanMedicines, newVersion);
+
+  let totalWrites = 0;
+
+  try {
+    // 1. Write chunk docs in byte-safe batches (max 5 chunks or ~3.5 MB per batch to stay well under 10 MiB Firestore batch limit)
+    const MAX_CHUNKS_PER_BATCH = 5;
+    const MAX_BATCH_BYTES = 3_500_000;
+
+    let currentBatchDocs: LibraryChunkDoc[] = [];
+    let currentBatchBytes = 0;
+
+    const commitChunkBatch = async (docsToWrite: LibraryChunkDoc[]) => {
+      if (docsToWrite.length === 0) return;
+      const batch = writeBatch(db);
+      docsToWrite.forEach((chunkDoc) => {
+        const ref = doc(db, 'library_chunks', `${newVersion}_${chunkDoc.index}`);
+        batch.set(ref, stripUndefined(chunkDoc));
+      });
+      await batch.commit();
+      totalWrites += docsToWrite.length;
+    };
+
+    for (const chunk of chunks) {
+      const chunkBytes = estimateUtf8Bytes(chunk);
+      if (
+        currentBatchDocs.length >= MAX_CHUNKS_PER_BATCH ||
+        (currentBatchDocs.length > 0 && currentBatchBytes + chunkBytes > MAX_BATCH_BYTES)
+      ) {
+        await commitChunkBatch(currentBatchDocs);
+        currentBatchDocs = [chunk];
+        currentBatchBytes = chunkBytes;
+      } else {
+        currentBatchDocs.push(chunk);
+        currentBatchBytes += chunkBytes;
+      }
+    }
+
+    if (currentBatchDocs.length > 0) {
+      await commitChunkBatch(currentBatchDocs);
+    }
+
+    // 2. Write optional import batch audit doc
+    if (importBatchInfo) {
+      await setDoc(doc(db, 'import_batches', importBatchInfo.id), stripUndefined(importBatchInfo));
+      totalWrites += 1;
+    }
+
+    // 3. Update library_meta/current LAST so clients only switch after all chunks exist
+    const metaPayload: LibraryMetaDoc = {
+      version: newVersion,
+      chunkCount: chunks.length,
+      totalCount: cleanMedicines.length,
+      updatedAt: new Date().toISOString(),
+    };
+    await setDoc(doc(db, 'library_meta', 'current'), metaPayload);
+    totalWrites += 1;
+
+    // 4. Best-effort cleanup of old version chunks (non-fatal if skipped/empty)
+    try {
+      const oldChunksSnap = await getDocs(
+        query(collection(db, 'library_chunks'), where('version', '<', newVersion))
+      );
+      if (!oldChunksSnap.empty) {
+        const docsToDelete = oldChunksSnap.docs;
+        const DELETE_BATCH_SIZE = 300;
+        for (let i = 0; i < docsToDelete.length; i += DELETE_BATCH_SIZE) {
+          const delBatch = writeBatch(db);
+          docsToDelete.slice(i, i + DELETE_BATCH_SIZE).forEach((d) => delBatch.delete(d.ref));
+          await delBatch.commit();
+        }
+      }
+    } catch (cleanupErr) {
+      console.warn('Old library_chunks cleanup notice (non-fatal):', cleanupErr);
+    }
+
+    return {
+      newVersion,
+      chunkCount: chunks.length,
+      totalCount: cleanMedicines.length,
+      totalWrites,
+    };
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, 'library_chunks/[publish]');
+    return { newVersion, chunkCount: 0, totalCount: 0, totalWrites: 0 };
   }
 }
 
-export async function fetchGlobalMedicines(): Promise<GlobalMedicine[]> {
+/**
+ * One-time admin-only legacy migration:
+ * Reads legacy global_medicines documents ONCE, merges cleanly with any existing catalog items,
+ * writes them as chunked library_chunks + library_meta/current, and logs an activity.
+ */
+export async function migrateLegacyGlobalMedicinesToChunks(
+  existingCatalog: GlobalMedicine[] = [],
+  currentKnownVersion: number = 0
+): Promise<{
+  legacyFoundCount: number;
+  mergedTotalCount: number;
+  newVersion: number;
+  chunkCount: number;
+  totalWrites: number;
+  mergedMedicines: GlobalMedicine[];
+}> {
+  assertAdminAuth();
+
+  let snap;
   try {
-    const isAdmin = isUserAdmin(auth.currentUser?.email);
-    // Non-admins query published medicines via single-field query (no composite index required)
-    const q = isAdmin
-      ? collection(db, 'global_medicines')
-      : query(
-          collection(db, 'global_medicines'),
-          where('status', '==', 'published')
-        );
-    const snap = await getDocs(q);
-    return snap.docs.map((docSnap) => docSnap.data() as GlobalMedicine);
-  } catch (error) {
-    console.warn('Could not fetch global medicines from firestore:', error);
-    return [];
+    snap = await getDocsFromServer(collection(db, 'global_medicines'));
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDocs(collection(db, 'global_medicines'));
   }
+
+  const legacyMeds: GlobalMedicine[] = [];
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() as GlobalMedicine;
+    legacyMeds.push({
+      ...data,
+      id: data.id || docSnap.id,
+    });
+  });
+
+  if (legacyMeds.length === 0 && existingCatalog.length === 0) {
+    return {
+      legacyFoundCount: 0,
+      mergedTotalCount: 0,
+      newVersion: currentKnownVersion,
+      chunkCount: 0,
+      totalWrites: 0,
+      mergedMedicines: [],
+    };
+  }
+
+  const diff = hasCatalogChanges(existingCatalog, legacyMeds);
+  const targetList = diff.changed ? diff.mergedList : existingCatalog;
+
+  const publishRes = await publishChunkedLibraryCatalog(targetList, currentKnownVersion);
+
+  recordAdminActivity({
+    type: 'import',
+    title: 'পুরনো লাইব্রেরি নতুন চাঙ্কড ফরম্যাটে মাইগ্রেশন',
+    description: `পুরনো global_medicines থেকে ${legacyMeds.length}টি ওষুধ পড়া হয়েছে এবং ${publishRes.chunkCount}টি চাঙ্কে মোট ${publishRes.totalCount}টি ওষুধ সংরক্ষিত হয়েছে (সংস্করণ ${publishRes.newVersion})।`,
+    adminEmail: auth.currentUser?.email || ADMIN_EMAIL,
+  }).catch((e) => console.warn('Activity log error:', e));
+
+  return {
+    legacyFoundCount: legacyMeds.length,
+    mergedTotalCount: publishRes.totalCount,
+    newVersion: publishRes.newVersion,
+    chunkCount: publishRes.chunkCount,
+    totalWrites: publishRes.totalWrites,
+    mergedMedicines: targetList,
+  };
 }
 
 export async function fetchImportBatches(): Promise<ImportBatch[]> {
@@ -661,43 +775,6 @@ export async function fetchImportBatches(): Promise<ImportBatch[]> {
   } catch (error) {
     console.warn('Could not fetch import batches from firestore:', error);
     return [];
-  }
-}
-
-/**
- * Safely deletes a global medicine draft/test record
- * Validates admin status both locally and on Firestore rules
- */
-export async function deleteGlobalMedicine(medicineId: string): Promise<void> {
-  assertAdminAuth();
-  const path = `global_medicines/${medicineId}`;
-  try {
-    await deleteDoc(doc(db, 'global_medicines', medicineId));
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
-}
-
-/**
- * Bulk deletes multiple global medicine draft/test records
- * Executes via Firestore writeBatch in chunks
- */
-export async function bulkDeleteGlobalMedicines(medicineIds: string[]): Promise<void> {
-  assertAdminAuth();
-  if (!medicineIds.length) return;
-
-  try {
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < medicineIds.length; i += CHUNK_SIZE) {
-      const chunk = medicineIds.slice(i, i + CHUNK_SIZE);
-      const batch = writeBatch(db);
-      chunk.forEach((id) => {
-        batch.delete(doc(db, 'global_medicines', id));
-      });
-      await batch.commit();
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, 'global_medicines/[bulk_delete]');
   }
 }
 
@@ -792,7 +869,7 @@ export async function testFirebaseDetailedStatus(): Promise<{
   const online = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
   try {
-    await getDoc(doc(db, 'import_batches', '_health_check_ping_'));
+    await getDoc(doc(db, 'library_meta', 'current'));
     const latencyMs = Math.round(performance.now() - start);
     return {
       isConnected: true,
@@ -804,8 +881,10 @@ export async function testFirebaseDetailedStatus(): Promise<{
     };
   } catch (error: any) {
     const latencyMs = Math.round(performance.now() - start);
-    // If the error is not-found or permission-denied (still connected to server)
-    const isActuallyConnected = !error?.message?.includes('failed-precondition') && !error?.message?.includes('offline');
+    const isActuallyConnected =
+      !error?.message?.includes('failed-precondition') &&
+      !error?.message?.includes('offline') &&
+      !isQuotaExceededError(error);
     return {
       isConnected: isActuallyConnected,
       latencyMs,
@@ -816,4 +895,448 @@ export async function testFirebaseDetailedStatus(): Promise<{
     };
   }
 }
+
+// ============================================================================
+// পরিবারের যত্নকারী (Caregiver Mode) — সাশ্রয়ী Firestore অপারেশন
+// ============================================================================
+
+export async function createCaregiverInviteInCloud(linkDoc: CaregiverLinkDoc): Promise<void> {
+  try {
+    await setDoc(doc(db, 'caregiver_links', linkDoc.id), stripUndefined(linkDoc));
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.CREATE, `caregiver_links/${linkDoc.id}`);
+  }
+}
+
+export async function redeemCaregiverInviteInCloud(
+  inviteCode: string,
+  caregiverUid: string,
+  caregiverName: string
+): Promise<CaregiverLinkDoc> {
+  const docRef = doc(db, 'caregiver_links', inviteCode);
+  let snap;
+  try {
+    snap = await getDocFromServer(docRef);
+  } catch (err: any) {
+    if (isQuotaExceededError(err)) throw err;
+    const msg = String(err?.code || err?.message || '').toLowerCase();
+    if (msg.includes('permission-denied')) {
+      throw new Error('কোডটি সঠিক নয় বা ইতিমধ্যেই ব্যবহৃত হয়েছে');
+    }
+    throw new Error('ইন্টারনেট সংযোগ চালু রেখে কোডটি যাচাই করুন');
+  }
+
+  if (!snap.exists()) {
+    throw new Error('কোডটি সঠিক নয় বা মুছে ফেলা হয়েছে');
+  }
+
+  const data = snap.data() as CaregiverLinkDoc;
+  if (data.patientUid === caregiverUid) {
+    throw new Error('আপনি নিজের আমন্ত্রণ কোডে নিজে যত্নকারী হতে পারবেন না');
+  }
+  if (data.status !== 'pending') {
+    throw new Error('এই আমন্ত্রণ কোডটি আগেই ব্যবহার করা হয়েছে');
+  }
+  if (!data.expiresAtMs || Date.now() >= data.expiresAtMs) {
+    throw new Error('এই কোডের ৪৮ ঘণ্টার মেয়াদ শেষ হয়ে গেছে। নতুন কোড চান।');
+  }
+
+  const nowIso = new Date().toISOString();
+  const safeCaregiverName = (caregiverName || 'পরিবারের যত্নকারী').trim().slice(0, 128);
+
+  try {
+    await updateDoc(
+      docRef,
+      stripUndefined({
+        caregiverUid,
+        caregiverName: safeCaregiverName,
+        status: 'active',
+        linkedAt: nowIso,
+        updatedAt: nowIso,
+      })
+    );
+  } catch (error) {
+    if (isQuotaExceededError(error)) throw error;
+    const msg = String((error as any)?.code || (error as any)?.message || '').toLowerCase();
+    if (msg.includes('permission-denied')) {
+      throw new Error('কোডটি আর বৈধ নয় বা মেয়াদ শেষ হয়ে গেছে');
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `caregiver_links/${inviteCode}`);
+  }
+
+  return {
+    ...data,
+    caregiverUid,
+    caregiverName: safeCaregiverName,
+    status: 'active',
+    linkedAt: nowIso,
+    updatedAt: nowIso,
+  };
+}
+
+export async function fetchPatientCaregiverLinks(patientUid: string): Promise<CaregiverLinkDoc[]> {
+  try {
+    const q = query(
+      collection(db, 'caregiver_links'),
+      where('patientUid', '==', patientUid),
+      limit(10)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as CaregiverLinkDoc);
+  } catch (error) {
+    if (isQuotaExceededError(error)) throw error;
+    console.warn('fetchPatientCaregiverLinks warning:', error);
+    return [];
+  }
+}
+
+export async function fetchCaregiverPatientsLinks(caregiverUid: string): Promise<CaregiverLinkDoc[]> {
+  try {
+    const q = query(
+      collection(db, 'caregiver_links'),
+      where('caregiverUid', '==', caregiverUid),
+      limit(10)
+    );
+    const snap = await getDocs(q);
+    return snap.docs
+      .map((d) => d.data() as CaregiverLinkDoc)
+      .filter((item) => item.status === 'active');
+  } catch (error) {
+    if (isQuotaExceededError(error)) throw error;
+    console.warn('fetchCaregiverPatientsLinks warning:', error);
+    return [];
+  }
+}
+
+export async function updateCaregiverLinkInCloud(
+  linkId: string,
+  updates: Partial<CaregiverLinkDoc>
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'caregiver_links', linkId), stripUndefined(updates));
+  } catch (error) {
+    if (isQuotaExceededError(error)) throw error;
+    console.warn('updateCaregiverLinkInCloud warning:', error);
+    throw error;
+  }
+}
+
+export async function deleteCaregiverLinkInCloud(linkId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'caregiver_links', linkId));
+  } catch (error) {
+    if (isQuotaExceededError(error)) throw error;
+    handleFirestoreError(error, OperationType.DELETE, `caregiver_links/${linkId}`);
+  }
+}
+
+export async function createFamilyAlertInCloud(alertDoc: FamilyAlertDoc): Promise<void> {
+  const alertRef = doc(db, 'family_alerts', alertDoc.id);
+  try {
+    await setDoc(alertRef, stripUndefined(alertDoc));
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) throw error;
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    // If retry hit an already-created immutable alert doc, verify existence before treating as error
+    if (msg.includes('permission-denied')) {
+      try {
+        const existingSnap = await getDoc(alertRef);
+        if (existingSnap.exists()) {
+          return;
+        }
+      } catch {
+        // Fall through and throw original error
+      }
+    }
+    throw error;
+  }
+}
+
+export async function markFamilyAlertSeenInCloud(
+  alertId: string,
+  caregiverUid: string
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'family_alerts', alertId), {
+      seenBy: arrayUnion(caregiverUid),
+    });
+  } catch (error) {
+    if (isQuotaExceededError(error)) throw error;
+    handleFirestoreError(error, OperationType.UPDATE, `family_alerts/${alertId}`);
+  }
+}
+
+export async function cleanupOldFamilyAlertsInCloud(
+  patientUid: string,
+  retentionMs: number
+): Promise<number> {
+  try {
+    const q = query(
+      collection(db, 'family_alerts'),
+      where('patientUid', '==', patientUid),
+      limit(25)
+    );
+    const snap = await getDocs(q);
+    const cutoff = Date.now() - retentionMs;
+    const toDelete = snap.docs.filter((d) => {
+      const data = d.data() as Partial<FamilyAlertDoc>;
+      return typeof data.createdAtMs === 'number' && data.createdAtMs <= cutoff;
+    });
+
+    if (toDelete.length === 0) return 0;
+
+    const batch = writeBatch(db);
+    toDelete.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    return toDelete.length;
+  } catch (error) {
+    console.warn('cleanupOldFamilyAlertsInCloud notice:', error);
+    return 0;
+  }
+}
+
+/**
+ * Single real-time listener for caregiver alerts (limit 20, filtered by caregiverUids).
+ * Automatically falls back to client-sorted query if Firestore composite index is missing.
+ */
+export function subscribeToCaregiverAlerts(
+  caregiverUid: string,
+  onData: (alerts: FamilyAlertDoc[]) => void,
+  onError?: (err: unknown) => void
+): () => void {
+  let activeUnsub: (() => void) | null = null;
+  let cancelled = false;
+  let usedFallback = false;
+
+  const sortAlertsDesc = (items: FamilyAlertDoc[]) =>
+    [...items].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+
+  const attachFallbackListener = () => {
+    if (cancelled || usedFallback) return;
+    usedFallback = true;
+    const fallbackQuery = query(
+      collection(db, 'family_alerts'),
+      where('caregiverUids', 'array-contains', caregiverUid),
+      limit(20)
+    );
+    activeUnsub = onSnapshot(
+      fallbackQuery,
+      (snapshot) => {
+        if (cancelled) return;
+        const list: FamilyAlertDoc[] = [];
+        snapshot.forEach((d) => list.push(d.data() as FamilyAlertDoc));
+        onData(sortAlertsDesc(list));
+      },
+      (err) => {
+        if (!cancelled) onError?.(err);
+      }
+    );
+  };
+
+  const primaryQuery = query(
+    collection(db, 'family_alerts'),
+    where('caregiverUids', 'array-contains', caregiverUid),
+    orderBy('createdAt', 'desc'),
+    limit(20)
+  );
+
+  activeUnsub = onSnapshot(
+    primaryQuery,
+    (snapshot) => {
+      if (cancelled) return;
+      const list: FamilyAlertDoc[] = [];
+      snapshot.forEach((d) => list.push(d.data() as FamilyAlertDoc));
+      onData(sortAlertsDesc(list));
+    },
+    (err: any) => {
+      if (cancelled) return;
+      const msg = String(err?.code || err?.message || '').toLowerCase();
+      if (!usedFallback && (msg.includes('failed-precondition') || msg.includes('index'))) {
+        if (activeUnsub) activeUnsub();
+        attachFallbackListener();
+        return;
+      }
+      onError?.(err);
+    }
+  );
+
+  return () => {
+    cancelled = true;
+    if (activeUnsub) activeUnsub();
+  };
+}
+
+// ============================================================================
+// রিপোর্ট শেয়ার লিংক (shared_reports) — টোকেন-ভিত্তিক নিরাপদ স্ন্যাপশট
+// ============================================================================
+
+export type SharedReportFetchResult =
+  | { status: 'ok'; report: SharedReportDoc }
+  | { status: 'unavailable' }
+  | { status: 'error'; message: string };
+
+export async function createSharedReportInCloud(
+  snapshot: BuiltSharedReportSnapshot
+): Promise<SharedReportDoc> {
+  if (!auth.currentUser || auth.currentUser.uid !== snapshot.ownerUid) {
+    throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
+  }
+
+  if (!isValidShareTokenFormat(snapshot.token)) {
+    throw new Error('নিরাপদ লিংক টোকেন সঠিক নয়। অনুগ্রহ করে আবার চেষ্টা করুন।');
+  }
+
+  const firestorePayload = stripUndefined({
+    ownerUid: snapshot.ownerUid,
+    token: snapshot.token,
+    createdAt: serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(snapshot.expiresAtMs),
+    patientName: snapshot.patientName,
+    age: snapshot.age,
+    gender: snapshot.gender,
+    relation: snapshot.relation,
+    sections: snapshot.sections,
+    revoked: false,
+  });
+
+  try {
+    await setDoc(doc(db, 'shared_reports', snapshot.token), firestorePayload);
+    return {
+      ...firestorePayload,
+      createdAtMs: snapshot.createdAtMs,
+      expiresAtMs: snapshot.expiresAtMs,
+    };
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      throw new Error('আজকের ক্লাউড সীমা শেষ হয়ে গেছে। আগামীকাল আবার চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.CREATE, `shared_reports/${snapshot.token}`);
+    }
+    throw new Error(
+      'রিপোর্ট লিংক তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।'
+    );
+  }
+}
+
+export async function fetchSharedReportByTokenFromCloud(
+  token: string
+): Promise<SharedReportFetchResult> {
+  if (!isValidShareTokenFormat(token)) {
+    return { status: 'unavailable' };
+  }
+
+  try {
+    const snap = await getDocFromServer(doc(db, 'shared_reports', token));
+    if (!snap.exists()) {
+      return { status: 'unavailable' };
+    }
+
+    const raw = snap.data() as SharedReportDoc;
+    const createdAtMs = toMillisSafe(raw.createdAt);
+    const expiresAtMs = toMillisSafe(raw.expiresAt);
+    if (raw.revoked || !expiresAtMs || expiresAtMs <= Date.now()) {
+      return { status: 'unavailable' };
+    }
+
+    return {
+      status: 'ok',
+      report: {
+        ...raw,
+        createdAtMs,
+        expiresAtMs,
+      },
+    };
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      return {
+        status: 'error',
+        message: 'এই মুহূর্তে ক্লাউড সীমা পূর্ণ হওয়ায় রিপোর্ট খোলা যাচ্ছে না। কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      };
+    }
+
+    const code = String(error?.code || error?.message || '').toLowerCase();
+    if (
+      code.includes('permission-denied') ||
+      code.includes('missing or insufficient permissions') ||
+      code.includes('not-found')
+    ) {
+      return { status: 'unavailable' };
+    }
+
+    return {
+      status: 'error',
+      message: 'ইন্টারনেট সংযোগের সমস্যার কারণে রিপোর্ট লোড করা যায়নি। সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।',
+    };
+  }
+}
+
+export async function fetchOwnerSharedReportsFromCloud(
+  ownerUid: string
+): Promise<SharedReportDoc[]> {
+  try {
+    const q = query(
+      collection(db, 'shared_reports'),
+      where('ownerUid', '==', ownerUid),
+      limit(30)
+    );
+    const snap = await getDocsFromServer(q);
+    const items = snap.docs.map((d) => {
+      const raw = d.data() as SharedReportDoc;
+      return {
+        ...raw,
+        createdAtMs: toMillisSafe(raw.createdAt),
+        expiresAtMs: toMillisSafe(raw.expiresAt),
+      };
+    });
+    return items.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      throw new Error('আজকের ক্লাউড সীমা শেষ হয়ে গেছে। আগামীকাল আবার চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.LIST, 'shared_reports');
+    }
+    throw new Error('শেয়ার করা লিংকগুলো লোড করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করুন।');
+  }
+}
+
+export async function revokeSharedReportInCloud(token: string): Promise<void> {
+  try {
+    await updateDoc(doc(db, 'shared_reports', token), {
+      revoked: true,
+    });
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      throw new Error('আজকের ক্লাউড সীমা শেষ হয়ে গেছে। আগামীকাল আবার চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.UPDATE, `shared_reports/${token}`);
+    }
+    throw new Error('লিংকটি বাতিল করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।');
+  }
+}
+
+export async function deleteSharedReportInCloud(token: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'shared_reports', token));
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      throw new Error('আজকের ক্লাউড সীমা শেষ হয়ে গেছে। আগামীকাল আবার চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.DELETE, `shared_reports/${token}`);
+    }
+    throw new Error('লিংকটি মুছে ফেলা যায়নি। আবার চেষ্টা করুন।');
+  }
+}
+
+
 

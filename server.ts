@@ -566,12 +566,37 @@ JSON ফরম্যাটে উত্তর দাও:
   }
 });
 
+function injectNoIndexRobotsMeta(html: string): string {
+  const robotsMeta = '<meta name="robots" content="noindex, nofollow" />';
+  if (/name=["']robots["']/i.test(html)) {
+    return html.replace(/<meta[^>]*name=["']robots["'][^>]*>/i, robotsMeta);
+  }
+  return html.replace(/<head([^>]*)>/i, `<head$1>\n    ${robotsMeta}`);
+}
+
+function setPrivateReportHeaders(res: express.Response): void {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+}
+
 // Mount Vite or serve static assets
 async function startServer() {
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
+    const prodIndexPath = path.resolve(__dirname, 'dist', 'index.html');
+    app.get(['/r', '/r/*'], (_req, res) => {
+      setPrivateReportHeaders(res);
+      try {
+        const html = fs.readFileSync(prodIndexPath, 'utf8');
+        return res.status(200).type('text/html').send(injectNoIndexRobotsMeta(html));
+      } catch {
+        return res.sendFile(prodIndexPath);
+      }
+    });
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(prodIndexPath);
     });
   } else {
     const { createServer } = await import('vite');
@@ -582,6 +607,19 @@ async function startServer() {
       },
       appType: 'spa',
     });
+
+    app.get(['/r', '/r/*'], async (req, res, next) => {
+      setPrivateReportHeaders(res);
+      try {
+        const devIndexPath = path.resolve(__dirname, 'index.html');
+        const rawHtml = fs.readFileSync(devIndexPath, 'utf8');
+        const transformed = await vite.transformIndexHtml(req.originalUrl, rawHtml);
+        return res.status(200).type('text/html').send(injectNoIndexRobotsMeta(transformed));
+      } catch (err) {
+        return next(err);
+      }
+    });
+
     app.use(vite.middlewares);
   }
 

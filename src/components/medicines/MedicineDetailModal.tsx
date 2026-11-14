@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Medicine } from '../../types';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
 import { useMedicine } from '../../context/MedicineContext';
 import { predictMedicineStock } from '../../utils/stockPredictor';
+import { findMatchingCatalogMedicine } from '../../utils/shoppingListCalculator';
+import { buildMedicineDetailSpeechText, useBengaliSpeech } from '../../utils/speechUtils';
 import {
   X,
   Pill,
@@ -16,6 +18,8 @@ import {
   Users,
   Sparkles,
   Package,
+  Volume2,
+  Square,
 } from 'lucide-react';
 
 interface MedicineDetailModalProps {
@@ -33,11 +37,41 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
   onDelete,
   onAdjustStock,
 }) => {
-  const { patients, assignMedicineToPatient, openStockAdjustmentModal } = useMedicine();
+  const { patients, globalMedicines, assignMedicineToPatient, openStockAdjustmentModal } = useMedicine();
+  const { hasBengaliVoice, isSpeaking, voiceSettings, speak, stop } = useBengaliSpeech();
+
+  useEffect(() => {
+    stop();
+  }, [medicine?.id, stop]);
 
   if (!medicine) return null;
 
   const prediction = predictMedicineStock(medicine);
+  const catalogMatch = findMatchingCatalogMedicine(medicine, globalMedicines);
+  const canSpeak = hasBengaliVoice && voiceSettings.enabled;
+
+  const handleCloseModal = () => {
+    stop();
+    onClose();
+  };
+
+  const handleToggleSpeak = () => {
+    if (isSpeaking) {
+      stop();
+      return;
+    }
+    const text = buildMedicineDetailSpeechText({
+      brandName: medicine.brandName,
+      purpose: medicine.purpose,
+      indication: catalogMatch.medicine?.indication,
+      therapeuticClass: catalogMatch.medicine?.therapeuticClass,
+      type: medicine.type,
+      mealTiming: medicine.mealTiming,
+      schedules: medicine.schedules,
+      instructions: medicine.instructions,
+    });
+    speak(text);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
@@ -48,7 +82,7 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
         {/* Close Button */}
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleCloseModal}
           aria-label="বন্ধ করুন"
           className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
         >
@@ -60,11 +94,30 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
           <div className="w-12 h-12 rounded-xl bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-400 flex items-center justify-center shrink-0">
             <Pill className="w-6 h-6" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <h2 className="text-xl font-bold text-slate-900 dark:text-white">
                 {medicine.brandName}
               </h2>
+              {canSpeak && (
+                <button
+                  type="button"
+                  onClick={handleToggleSpeak}
+                  className="min-h-[48px] px-4 py-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 text-teal-800 dark:text-teal-200 font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isSpeaking ? (
+                    <>
+                      <Square className="w-4 h-4 fill-current" />
+                      <span>থামুন</span>
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 className="w-4 h-4" />
+                      <span>🔊 শুনুন</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
               {medicine.genericName}
@@ -236,7 +289,7 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
               </div>
             )}
 
-            <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-between">
+            <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 text-slate-500">
                 <Calendar className="w-4 h-4" />
                 <span>শুরুর তারিখ: {toBengaliNumber(medicine.startDate)}</span>
@@ -245,6 +298,15 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
                 {medicine.isChronic ? 'দীর্ঘমেয়াদী / নিয়মিত ওষুধ' : `কোর্স: ${toBengaliNumber(medicine.durationDays)} দিন`}
               </span>
             </div>
+
+            {medicine.expiryDate && (
+              <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-between">
+                <span className="text-slate-500">প্যাকেটের মেয়াদ শেষের তারিখ:</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  {toBengaliNumber(medicine.expiryDate)}
+                </span>
+              </div>
+            )}
           </div>
 
         </div>
@@ -269,6 +331,7 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
             <button
               type="button"
               onClick={() => {
+                stop();
                 onClose();
                 onEdit(medicine);
               }}
@@ -279,7 +342,7 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
             </button>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleCloseModal}
               className="px-4 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg cursor-pointer"
             >
               ঠিক আছে

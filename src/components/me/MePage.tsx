@@ -19,6 +19,8 @@ import {
   ChevronRight,
   CheckCircle2,
   ShieldCheck,
+  HeartHandshake,
+  Share2,
 } from 'lucide-react';
 
 export const MePage: React.FC = () => {
@@ -209,6 +211,15 @@ export const MePage: React.FC = () => {
             subtitle: 'সহজ মোড, অ্যালার্ম টোন, কথা বলা, ব্যাকআপ',
             icon: SettingsIcon,
             iconColor: 'text-teal-700 dark:text-teal-400',
+            anchor: '',
+          },
+          {
+            id: 'settings' as const,
+            title: 'পরিবারের যত্নকারী',
+            subtitle: 'আমন্ত্রণ কোড, সতর্কতা ও সংযোগ পরিচালনা',
+            icon: HeartHandshake,
+            iconColor: 'text-emerald-700 dark:text-emerald-400',
+            anchor: 'caregiver-section',
           },
           {
             id: 'health-records' as const,
@@ -216,6 +227,7 @@ export const MePage: React.FC = () => {
             subtitle: 'রক্তচাপ, ডায়াবেটিস ও ওজনের হিসাব',
             icon: HeartPulse,
             iconColor: 'text-rose-600',
+            anchor: '',
           },
           {
             id: 'appointments' as const,
@@ -223,6 +235,15 @@ export const MePage: React.FC = () => {
             subtitle: 'ডাক্তারের সাক্ষাতের তারিখ ও সময়',
             icon: Calendar,
             iconColor: 'text-teal-700 dark:text-teal-400',
+            anchor: '',
+          },
+          {
+            id: 'share-report' as const,
+            title: 'ডাক্তারের জন্য রিপোর্ট',
+            subtitle: 'ডাক্তার বা পরিবারকে নিরাপদ, মেয়াদি শেয়ার লিংক ও PDF',
+            icon: Share2,
+            iconColor: 'text-teal-700 dark:text-teal-400',
+            anchor: '',
           },
           {
             id: 'history' as const,
@@ -230,6 +251,7 @@ export const MePage: React.FC = () => {
             subtitle: 'আগের দিনগুলোর ডোজ ও ডাক্তারকে দেখানোর রিপোর্ট',
             icon: History,
             iconColor: 'text-indigo-600 dark:text-indigo-400',
+            anchor: '',
           },
           {
             id: 'library' as const,
@@ -237,6 +259,7 @@ export const MePage: React.FC = () => {
             subtitle: 'অনুমোদিত ওষুধের তালিকা খুঁজুন',
             icon: BookOpen,
             iconColor: 'text-emerald-700 dark:text-emerald-400',
+            anchor: '',
           },
           ...(isAdmin
             ? [
@@ -246,6 +269,7 @@ export const MePage: React.FC = () => {
                   subtitle: 'লাইব্রেরি ও ইমপোর্ট ব্যবস্থাপনা',
                   icon: ShieldCheck,
                   iconColor: 'text-teal-700 dark:text-teal-400',
+                  anchor: '',
                 },
               ]
             : []),
@@ -253,9 +277,18 @@ export const MePage: React.FC = () => {
           const Icon = item.icon;
           return (
             <button
-              key={item.id}
+              key={`${item.id}-${item.title}`}
               type="button"
-              onClick={() => setCurrentPage(item.id)}
+              onClick={() => {
+                setCurrentPage(item.id);
+                if (item.anchor) {
+                  setTimeout(() => {
+                    document
+                      .getElementById(item.anchor)
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }, 100);
+                }
+              }}
               className="min-h-[72px] p-4 sm:p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl flex items-center justify-between gap-3 text-left transition-colors cursor-pointer shadow-2xs"
             >
               <div className="flex items-center gap-3.5 min-w-0">

@@ -20,6 +20,7 @@ export interface AndroidRemindersBridge {
   previewAlarmTone?: () => void;
   stopPreview?: () => void;
   resetAlarmTone?: () => void;
+  setVoiceEnabled?: (enabled: boolean) => void;
 }
 
 declare global {
@@ -420,3 +421,16 @@ export const resetNativeAlarmTone = (): boolean => {
     return false;
   }
 };
+
+export const setNativeAlarmVoiceEnabled = (enabled: boolean): boolean => {
+  if (!isNativeRemindersAvailable()) return false;
+  try {
+    if (typeof window.AndroidReminders?.setVoiceEnabled !== 'function') return false;
+    window.AndroidReminders.setVoiceEnabled(Boolean(enabled));
+    return true;
+  } catch (err) {
+    console.warn('[NativeReminders] setVoiceEnabled error:', err);
+    return false;
+  }
+};
+

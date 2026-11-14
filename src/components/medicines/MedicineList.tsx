@@ -16,6 +16,7 @@ import {
   BookOpen,
   Sparkles,
   Package,
+  ShoppingBag,
 } from 'lucide-react';
 
 
@@ -86,11 +87,20 @@ export const MedicineList: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={() => setCurrentPage('shopping-list')}
+            className="min-h-[52px] flex items-center gap-2.5 px-5 py-3 text-base sm:text-lg font-bold text-white bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 rounded-xl shadow-sm transition-colors cursor-pointer"
+          >
+            <ShoppingBag className="w-5 h-5" />
+            <span>কেনার তালিকা বানান</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setCurrentPage('library')}
-            className="min-h-[48px] flex items-center gap-2 px-4 py-2.5 text-base font-semibold text-teal-900 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-300 dark:border-teal-800/80 hover:bg-teal-100 rounded-xl shadow-xs transition-colors cursor-pointer"
+            className="min-h-[52px] flex items-center gap-2 px-4 py-2.5 text-base font-semibold text-teal-900 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-300 dark:border-teal-800/80 hover:bg-teal-100 rounded-xl shadow-xs transition-colors cursor-pointer"
           >
             <BookOpen className="w-5 h-5 text-teal-700 dark:text-teal-400" />
             <span>ওষুধ লাইব্রেরি</span>
@@ -99,7 +109,7 @@ export const MedicineList: React.FC = () => {
           <button
             type="button"
             onClick={() => setCurrentPage('add-medicine')}
-            className="min-h-[48px] flex items-center gap-2 px-5 py-2.5 text-base font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl shadow-xs transition-colors cursor-pointer"
+            className="min-h-[52px] flex items-center gap-2 px-5 py-2.5 text-base font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl shadow-xs transition-colors cursor-pointer"
           >
             <Plus className="w-5 h-5" />
             <span>নতুন ওষুধ</span>

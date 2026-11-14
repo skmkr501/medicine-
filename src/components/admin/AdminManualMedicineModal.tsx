@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { ImportDataSource, ImportSourceType } from '../../types';
 import {
@@ -26,6 +26,7 @@ interface FormState {
   dosageForm: string;
   manufacturer: string;
   pricePerUnit: string;
+  priceUnit: string;
   packageDescription: string;
   darNumber: string;
   therapeuticClass: string;
@@ -74,6 +75,7 @@ const INITIAL_FORM: FormState = {
   dosageForm: 'ট্যাবলেট',
   manufacturer: '',
   pricePerUnit: '',
+  priceUnit: '',
   packageDescription: '',
   darNumber: '',
   therapeuticClass: '',
@@ -88,8 +90,10 @@ const INITIAL_FORM: FormState = {
 export const AdminManualMedicineModal: React.FC = () => {
   const {
     isManualAddModalOpen,
+    editingGlobalMedicine,
     closeManualAddModal,
     addSingleGlobalMedicineAction,
+    updateSingleGlobalMedicineAction,
   } = useMedicine();
 
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
@@ -98,7 +102,49 @@ export const AdminManualMedicineModal: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  useEffect(() => {
+    if (!isManualAddModalOpen) return;
+    setErrors({});
+    if (editingGlobalMedicine) {
+      const isCommon = COMMON_FORMS.includes(editingGlobalMedicine.dosageForm);
+      setShowCustomForm(!isCommon);
+      setCustomFormInput(isCommon ? '' : editingGlobalMedicine.dosageForm || '');
+      setForm({
+        brandName: editingGlobalMedicine.brandName || '',
+        brandNameBn: editingGlobalMedicine.brandNameBn || '',
+        genericName: editingGlobalMedicine.genericName || '',
+        genericNameBn: editingGlobalMedicine.genericNameBn || '',
+        strength: editingGlobalMedicine.strength || '',
+        dosageForm: isCommon ? editingGlobalMedicine.dosageForm : 'ট্যাবলেট',
+        manufacturer: editingGlobalMedicine.manufacturer || '',
+        pricePerUnit:
+          editingGlobalMedicine.pricePerUnit !== undefined &&
+          !Number.isNaN(editingGlobalMedicine.pricePerUnit)
+            ? String(editingGlobalMedicine.pricePerUnit)
+            : '',
+        priceUnit: editingGlobalMedicine.priceUnit || '',
+        packageDescription: editingGlobalMedicine.packageDescription || '',
+        darNumber: editingGlobalMedicine.darNumber || '',
+        therapeuticClass: editingGlobalMedicine.therapeuticClass || '',
+        indication: editingGlobalMedicine.indication || '',
+        source: editingGlobalMedicine.source || 'DGDA_GOV',
+        sourceType: editingGlobalMedicine.sourceType || 'government',
+        sourceName: editingGlobalMedicine.sourceName || 'DGDA সরকারি উন্মুক্ত গেজেট ও ফর্মুলারি',
+        licenseReference:
+          editingGlobalMedicine.licenseReference ||
+          'DGDA Public Gazette / National Formulary Open Data',
+        publishOption: editingGlobalMedicine.status === 'published' ? 'publish' : 'draft',
+      });
+    } else {
+      setShowCustomForm(false);
+      setCustomFormInput('');
+      setForm(INITIAL_FORM);
+    }
+  }, [isManualAddModalOpen, editingGlobalMedicine]);
+
   if (!isManualAddModalOpen) return null;
+
+  const isEditing = Boolean(editingGlobalMedicine);
 
   const handleInputChange = (field: keyof FormState, value: any) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -198,6 +244,7 @@ export const AdminManualMedicineModal: React.FC = () => {
       dosageForm: currentDosageForm,
       manufacturer: form.manufacturer.trim(),
       pricePerUnit: priceNum,
+      priceUnit: form.priceUnit.trim() || undefined,
       packageDescription: form.packageDescription.trim() || undefined,
       darNumber: form.darNumber.trim() || undefined,
       therapeuticClass: form.therapeuticClass.trim() || undefined,
@@ -210,7 +257,13 @@ export const AdminManualMedicineModal: React.FC = () => {
       verifiedByAdmin: form.publishOption === 'publish',
     };
 
-    const success = await addSingleGlobalMedicineAction(payload);
+    const success = editingGlobalMedicine
+      ? await updateSingleGlobalMedicineAction({
+          ...editingGlobalMedicine,
+          ...payload,
+        })
+      : await addSingleGlobalMedicineAction(payload);
+
     setIsSubmitting(false);
 
     if (success) {
@@ -240,13 +293,15 @@ export const AdminManualMedicineModal: React.FC = () => {
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>ম্যানুয়ালি নতুন ওষুধ যোগ করুন</span>
+                <span>{isEditing ? 'ওষুধের তথ্য সম্পাদনা করুন' : 'ম্যানুয়ালি নতুন ওষুধ যোগ করুন'}</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
-                  অ্যাডমিন এন্ট্রি
+                  {isEditing ? 'অ্যাডমিন সম্পাদনা' : 'অ্যাডমিন এন্ট্রি'}
                 </span>
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                ফরম পূরণ করে সরাসরি ক্লাউড ফায়ারস্টোর ডাটাবেজে ওষুধ অন্তর্ভুক্ত ও সার্বজনীন প্রকাশ করুন।
+                {isEditing
+                  ? 'পরিবর্তনগুলো সংরক্ষণ করলে লাইব্রেরির সব ফোনে নতুন সংস্করণ হিসেবে আপডেট হবে।'
+                  : 'ফরম পূরণ করে সরাসরি ক্লাউড লাইব্রেরিতে ওষুধ অন্তর্ভুক্ত ও প্রকাশ করুন।'}
               </p>
             </div>
           </div>
@@ -369,28 +424,44 @@ export const AdminManualMedicineModal: React.FC = () => {
                 )}
               </div>
 
-              {/* Price Per Unit */}
+              {/* Price Per Unit & Price Unit */}
               <div className="space-y-1">
                 <label className="font-semibold text-slate-700 dark:text-slate-300">
-                  খুচরা মূল্য / প্রতি ইউনিট (৳ - ঐচ্ছিক)
+                  খুচরা মূল্য ও একক (৳ - ঐচ্ছিক)
                 </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
-                    ৳
-                  </span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={form.pricePerUnit}
-                    onChange={(e) => handleInputChange('pricePerUnit', e.target.value)}
-                    placeholder="যেমন: 2.50 বা 7.00"
-                    className={`w-full pl-8 pr-3.5 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 ${
-                      errors.pricePerUnit
-                        ? 'border-rose-400 focus:ring-rose-500'
-                        : 'border-slate-200 dark:border-slate-700 focus:ring-teal-500'
-                    }`}
-                  />
+                <div className="grid grid-cols-5 gap-2">
+                  <div className="relative col-span-3">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
+                      ৳
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.pricePerUnit}
+                      onChange={(e) => handleInputChange('pricePerUnit', e.target.value)}
+                      placeholder="যেমন: 2.50"
+                      className={`w-full pl-8 pr-3 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 ${
+                        errors.pricePerUnit
+                          ? 'border-rose-400 focus:ring-rose-500'
+                          : 'border-slate-200 dark:border-slate-700 focus:ring-teal-500'
+                      }`}
+                    />
+                  </div>
+                  <select
+                    value={form.priceUnit}
+                    onChange={(e) => handleInputChange('priceUnit', e.target.value)}
+                    aria-label="দামের একক"
+                    className="col-span-2 px-2.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500 cursor-pointer"
+                  >
+                    <option value="">একক (ঐচ্ছিক)</option>
+                    <option value="পিস">প্রতি পিস</option>
+                    <option value="পাতা">প্রতি পাতা</option>
+                    <option value="বোতল">প্রতি বোতল</option>
+                    <option value="টিউব">প্রতি টিউব</option>
+                    <option value="ভায়াল">প্রতি ভায়াল</option>
+                    <option value="প্যাক">প্রতি প্যাক</option>
+                  </select>
                 </div>
                 {errors.pricePerUnit && (
                   <p className="text-[11px] text-rose-500 font-medium">{errors.pricePerUnit}</p>
@@ -750,7 +821,9 @@ export const AdminManualMedicineModal: React.FC = () => {
                   <>
                     <Check className="w-4 h-4" />
                     <span>
-                      {form.publishOption === 'publish'
+                      {isEditing
+                        ? 'পরিবর্তন সংরক্ষণ করুন'
+                        : form.publishOption === 'publish'
                         ? 'সংরক্ষণ ও সরাসরি প্রকাশ করুন'
                         : 'খসড়া হিসেবে সংরক্ষণ করুন'}
                     </span>

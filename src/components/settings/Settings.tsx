@@ -1,7 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber, playAlertTone } from '../../utils/bengaliUtils';
-import { useBengaliSpeech } from '../../utils/speechUtils';
+import {
+  useBengaliSpeech,
+  buildDoseSpeechText,
+  MISSING_BENGALI_VOICE_MESSAGE,
+  VoiceSpeed,
+} from '../../utils/speechUtils';
 import {
   Settings as SettingsIcon,
   User,
@@ -30,6 +35,7 @@ import {
   FolderOpen,
   Play,
   Square,
+  Share2,
 } from 'lucide-react';
 import {
   isNativeRemindersAvailable,
@@ -48,6 +54,8 @@ import {
   NativeAlarmToneInfo,
 } from '../../services/nativeReminders';
 import { SyncStatusCard } from './SyncStatusCard';
+import { CaregiverSettingsSection } from '../caregiver/CaregiverSettingsSection';
+import { MySharedLinksSection } from '../reports/MySharedLinksSection';
 
 export const Settings: React.FC = () => {
   const {
@@ -70,9 +78,17 @@ export const Settings: React.FC = () => {
     syncLocalToCloud,
     isSyncing,
     isCloudConnected,
+    setCurrentPage,
   } = useMedicine();
 
-  const { hasBengaliVoice } = useBengaliSpeech();
+  const {
+    hasBengaliVoice,
+    isSpeaking,
+    voiceSettings,
+    updateVoiceSettings,
+    speak,
+    stop,
+  } = useBengaliSpeech();
   const isNative = isNativeRemindersAvailable();
   const isApkEnvironment =
     typeof window !== 'undefined' &&
@@ -449,46 +465,6 @@ export const Settings: React.FC = () => {
             </button>
           </div>
 
-          {/* Voice Readout (কথা বলে শোনানো) */}
-          <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
-            <div>
-              <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <Volume2 className="w-5 h-5 text-teal-600" />
-                কথা বলে শোনানো
-              </span>
-              <span className="text-sm text-slate-600 dark:text-slate-300 block">
-                ডোজ কার্ডে "শুনুন" বোতামে চাপ দিলে ওষুধের নাম ও সময় বাংলায় পড়ে শোনাবে
-              </span>
-              {!hasBengaliVoice && (
-                <span className="text-xs text-amber-700 dark:text-amber-300 mt-1 block font-medium">
-                  এই ডিভাইসে বাংলা ভয়েস না থাকায় "শুনুন" বোতাম স্বয়ংক্রিয়ভাবে লুকানো থাকবে
-                </span>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                updateSettings({
-                  voiceReadoutEnabled: settings.voiceReadoutEnabled === false,
-                })
-              }
-              aria-label="কথা বলে শোনানো"
-              aria-pressed={settings.voiceReadoutEnabled !== false}
-              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
-                settings.voiceReadoutEnabled !== false
-                  ? 'bg-teal-600'
-                  : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-            >
-              <span
-                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
-                  settings.voiceReadoutEnabled !== false ? 'translate-x-7' : 'translate-x-1'
-                }`}
-              />
-            </button>
-          </div>
-
           {/* Language Switcher */}
           <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
             <div>
@@ -526,6 +502,199 @@ export const Settings: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Section: ভয়েস (Bengali Voice Reminder Settings) */}
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-5">
+        <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <Volume2 className="w-5 h-5 text-teal-600" />
+          <div>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">
+              ভয়েস
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              ডোজের সময়, ওষুধের বিবরণ এবং সহায়ক উত্তর বাংলায় পড়ে শোনান
+            </p>
+          </div>
+        </div>
+
+        {/* Missing Bengali Voice Alert */}
+        {!hasBengaliVoice && (
+          <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 flex items-start gap-2.5 text-sm">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <p className="font-medium leading-relaxed">{MISSING_BENGALI_VOICE_MESSAGE}</p>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {/* Voice On/Off */}
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <span className="font-bold text-slate-900 dark:text-white block">
+                ভয়েস রিমাইন্ডার চালু
+              </span>
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                ডোজ কার্ড, ওষুধের বিবরণ ও সহকারী উত্তরে &quot;শুনুন&quot; বোতাম দেখাবে
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const nextEnabled = !voiceSettings.enabled;
+                updateVoiceSettings({ enabled: nextEnabled });
+                updateSettings({ voiceReadoutEnabled: nextEnabled });
+              }}
+              aria-label="ভয়েস রিমাইন্ডার চালু বা বন্ধ"
+              aria-pressed={voiceSettings.enabled}
+              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                voiceSettings.enabled ? 'bg-teal-600' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                  voiceSettings.enabled ? 'translate-x-7' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Reading Speed: ধীরে / স্বাভাবিক / একটু দ্রুত */}
+          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+            <div>
+              <span className="font-bold text-slate-900 dark:text-white block">
+                পড়ার গতি
+              </span>
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                কথা কত ধীরে বা দ্রুত শোনাবে তা বেছে নিন
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  { key: 'slow', label: 'ধীরে' },
+                  { key: 'normal', label: 'স্বাভাবিক' },
+                  { key: 'fast', label: 'একটু দ্রুত' },
+                ] as Array<{ key: VoiceSpeed; label: string }>
+              ).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => updateVoiceSettings({ speed: opt.key })}
+                  className={`min-h-[48px] px-3 py-2.5 rounded-xl text-sm sm:text-base font-semibold transition cursor-pointer ${
+                    voiceSettings.speed === opt.key
+                      ? 'bg-teal-700 text-white shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Optional Dose-Taken Voice Confirmation */}
+          <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              <span className="font-bold text-slate-900 dark:text-white block">
+                &quot;খেয়েছি&quot; চাপলে নিশ্চিতকরণ কথা
+              </span>
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                ওষুধ খাওয়া চিহ্নিত করলে সংক্ষেপে নিশ্চিতকরণ শোনাবে
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                updateVoiceSettings({
+                  confirmOnDoseTaken: !voiceSettings.confirmOnDoseTaken,
+                })
+              }
+              aria-label="খেয়েছি চাপলে নিশ্চিতকরণ কথা"
+              aria-pressed={voiceSettings.confirmOnDoseTaken}
+              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                voiceSettings.confirmOnDoseTaken
+                  ? 'bg-teal-600'
+                  : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                  voiceSettings.confirmOnDoseTaken ? 'translate-x-7' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Future APK Alarm Voice Setting */}
+          <div className="flex items-center justify-between gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              <span className="font-bold text-slate-900 dark:text-white block">
+                অ্যালার্মের সময় ফোনের ভয়েস রিমাইন্ডার
+              </span>
+              <span className="text-sm text-slate-600 dark:text-slate-300">
+                অ্যাপ বাইরে থেকে অ্যালার্ম বাজালে ওষুধের নাম বলে ডাকবে (সমর্থিত ফোনে)
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                updateVoiceSettings({
+                  apkAlarmVoiceEnabled: !voiceSettings.apkAlarmVoiceEnabled,
+                })
+              }
+              aria-label="অ্যালার্মের সময় ফোনের ভয়েস রিমাইন্ডার"
+              aria-pressed={voiceSettings.apkAlarmVoiceEnabled}
+              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
+                voiceSettings.apkAlarmVoiceEnabled
+                  ? 'bg-teal-600'
+                  : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                  voiceSettings.apkAlarmVoiceEnabled ? 'translate-x-7' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Test Voice Playback Button (only shown if Bengali voice exists & voice is enabled) */}
+          {hasBengaliVoice && voiceSettings.enabled && (
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSpeaking) {
+                    stop();
+                    return;
+                  }
+                  const activeName = patients.find((p) => p.id === activePatientId)?.name || 'যমুনা আপা';
+                  const sampleText = buildDoseSpeechText({
+                    patientName: activeName,
+                    brandName: 'নাপা এক্সটেন্ড',
+                    dosage: '১টি',
+                    type: 'ট্যাবলেট',
+                    mealTiming: 'খাওয়ার পরে',
+                  });
+                  speak(sampleText);
+                }}
+                className="min-h-[48px] w-full sm:w-auto px-5 py-3 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-bold text-base rounded-xl shadow-xs transition-colors cursor-pointer inline-flex items-center justify-center gap-2"
+              >
+                {isSpeaking ? (
+                  <>
+                    <Square className="w-4 h-4 fill-current" />
+                    <span>থামুন</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-5 h-5" />
+                    <span>পরীক্ষা করে শুনুন</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
@@ -950,6 +1119,34 @@ export const Settings: React.FC = () => {
           )}
 
         </div>
+      </section>
+
+      {/* Caregiver Mode Section ("পরিবারের যত্নকারী") */}
+      <CaregiverSettingsSection />
+
+      {/* Shared Medical Report Links Section ("আমার শেয়ার করা লিংক") */}
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Share2 className="w-4 h-4 text-teal-600" />
+              <span>রিপোর্ট শেয়ার লিংক (ডাক্তার/পরিবার)</span>
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              মেয়াদি নিরাপদ লিংক তৈরি করুন ও আগে তৈরি করা লিংক পরিচালনা বা বাতিল করুন
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCurrentPage('share-report')}
+            className="min-h-[44px] px-3.5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            <span>নতুন শেয়ার লিংক বানান</span>
+          </button>
+        </div>
+
+        <MySharedLinksSection autoLoadOnMount={false} />
       </section>
 
       {/* Cloud Account & Sync Section */}

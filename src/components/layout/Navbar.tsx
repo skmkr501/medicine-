@@ -46,16 +46,16 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
 
   const navLinks: { id: NavigationPage; label: string; matchPages: NavigationPage[] }[] = [
     { id: 'dashboard', label: isBn ? 'আজ' : 'Today', matchPages: ['dashboard', 'checklist', 'reminders'] },
-    { id: 'medicines', label: isBn ? 'ওষুধ' : 'Medicines', matchPages: ['medicines', 'add-medicine', 'library'] },
+    { id: 'medicines', label: isBn ? 'ওষুধ' : 'Medicines', matchPages: ['medicines', 'add-medicine', 'library', 'shopping-list'] },
     { id: 'ai-assistant', label: 'AI সহায়ক', matchPages: ['ai-assistant'] },
-    { id: 'me', label: isBn ? 'আমি' : 'Me', matchPages: ['me', 'settings', 'health-records', 'appointments', 'history'] },
+    { id: 'me', label: isBn ? 'আমি' : 'Me', matchPages: ['me', 'settings', 'health-records', 'appointments', 'history', 'share-report'] },
     ...(isAdmin
-      ? [{ id: 'admin-import' as NavigationPage, label: isBn ? 'অ্যাডমিন' : 'Admin', matchPages: ['admin-import', 'admin-dashboard'] as NavigationPage[] }]
+      ? [{ id: 'admin-import' as NavigationPage, label: isBn ? 'অ্যাডমিন' : 'Admin', matchPages: ['admin-import', 'admin-dashboard', 'admin-library'] as NavigationPage[] }]
       : []),
   ];
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
+    <header className="no-print sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
         
         {/* Zone 1: Single Brand Wordmark with SVG Emblem */}
@@ -253,18 +253,32 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
                   </button>
 
                   {isAdmin && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowUserMenu(false);
-                        onNavigate('admin-import');
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-teal-50 dark:hover:bg-teal-950/40 text-teal-700 dark:text-teal-300 flex items-center gap-2 cursor-pointer mt-1 font-medium"
-                    >
-                      <span className="w-2 h-2 rounded-full bg-teal-600" />
-                      <span>অ্যাডমিন ইমপোর্ট প্যানেল</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowUserMenu(false);
+                          onNavigate('admin-library');
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-teal-50 dark:hover:bg-teal-950/40 text-teal-700 dark:text-teal-300 flex items-center gap-2 cursor-pointer mt-1 font-medium"
+                      >
+                        <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                        <span>ওষুধ ব্যবস্থাপনা</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowUserMenu(false);
+                          onNavigate('admin-import');
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-teal-50 dark:hover:bg-teal-950/40 text-teal-700 dark:text-teal-300 flex items-center gap-2 cursor-pointer mt-1 font-medium"
+                      >
+                        <span className="w-2 h-2 rounded-full bg-teal-600" />
+                        <span>অ্যাডমিন ইমপোর্ট প্যানেল</span>
+                      </button>
+                    </>
                   )}
 
 

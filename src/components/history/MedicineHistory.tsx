@@ -13,6 +13,7 @@ import {
   Filter,
   FileSpreadsheet,
   TrendingUp,
+  Share2,
 } from 'lucide-react';
 
 export const MedicineHistory: React.FC = () => {
@@ -22,6 +23,7 @@ export const MedicineHistory: React.FC = () => {
     activePatient,
     markDose,
     showToast,
+    setCurrentPage,
   } = useMedicine();
 
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | '7days' | '30days'>('7days');
@@ -121,8 +123,17 @@ export const MedicineHistory: React.FC = () => {
 
           <button
             type="button"
+            onClick={() => setCurrentPage('share-report')}
+            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] text-xs font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-900/60 rounded-lg shadow-2xs transition-colors cursor-pointer"
+          >
+            <Share2 className="w-4 h-4" />
+            <span>শেয়ার লিংক বানান</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowDoctorReport(true)}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-xs transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-xs transition-colors cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             <span>ডাক্তার রিপোর্ট (প্রিন্ট)</span>

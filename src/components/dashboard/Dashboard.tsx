@@ -30,6 +30,7 @@ import {
   ListChecks,
   X,
   Volume2,
+  Square,
 } from 'lucide-react';
 
 import { ExpiringStockSection } from './ExpiringStockSection';
@@ -42,7 +43,12 @@ import {
   getNativePermissionStatus,
   NativePermissionStatus,
 } from '../../services/nativeReminders';
-import { buildDoseSpeechText, useBengaliSpeech } from '../../utils/speechUtils';
+import {
+  buildDoseSpeechText,
+  buildDoseTakenSpeechText,
+  useBengaliSpeech,
+} from '../../utils/speechUtils';
+import { CaregiverAlertBanners, CaregiverFamilyCard } from '../caregiver/CaregiverHomeSection';
 
 function parseScheduleMinutes(timeStr: string): number {
   const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
@@ -67,8 +73,9 @@ export const Dashboard: React.FC = () => {
   const [deferredDoseKeys, setDeferredDoseKeys] = useState<string[]>([]);
   const [showEasyDosesModal, setShowEasyDosesModal] = useState(false);
   const [showEasyEmergencyModal, setShowEasyEmergencyModal] = useState(false);
+  const [speakingDoseKey, setSpeakingDoseKey] = useState<string | null>(null);
 
-  const { hasBengaliVoice, speak } = useBengaliSpeech();
+  const { hasBengaliVoice, isSpeaking, voiceSettings, speak, stop } = useBengaliSpeech();
   const isNative = isNativeRemindersAvailable();
   const [nativePerms, setNativePerms] = useState<NativePermissionStatus | null>(() =>
     getNativePermissionStatus()
@@ -265,18 +272,36 @@ export const Dashboard: React.FC = () => {
   const handleTakeDose = (dose: TodayDoseItem) => {
     setDeferredDoseKeys((prev) => prev.filter((k) => k !== dose.key));
     markDose(dose.medicineId, dose.timeSlot, dose.time, 'taken');
+    if (hasBengaliVoice && voiceSettings.enabled && voiceSettings.confirmOnDoseTaken) {
+      const confirmText = buildDoseTakenSpeechText({
+        patientName: activePatient?.name,
+        brandName: dose.brandName,
+      });
+      setSpeakingDoseKey(null);
+      speak(confirmText);
+    }
   };
 
-  const canSpeakDose = hasBengaliVoice && settings.voiceReadoutEnabled !== false;
+  const canSpeakDose = hasBengaliVoice && voiceSettings.enabled;
 
   const handleSpeakDose = (dose: TodayDoseItem) => {
+    if (isSpeaking && speakingDoseKey === dose.key) {
+      stop();
+      setSpeakingDoseKey(null);
+      return;
+    }
     const text = buildDoseSpeechText({
+      patientName: activePatient?.name,
       timeSlot: dose.timeSlot,
       brandName: dose.brandName,
       dosage: dose.dosage,
+      type: dose.type,
       mealTiming: dose.mealTiming,
     });
-    speak(text);
+    setSpeakingDoseKey(dose.key);
+    speak(text, {
+      onEnd: () => setSpeakingDoseKey((curr) => (curr === dose.key ? null : curr)),
+    });
   };
 
   if (settings.easyMode) {
@@ -285,7 +310,8 @@ export const Dashboard: React.FC = () => {
     const cleanEmergencyPhone = emergencyPhone.replace(/[^0-9+]/g, '');
 
     return (
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-5">
+        <CaregiverAlertBanners />
         <div className="grid grid-cols-1 gap-5">
           {/* 1. আজকের ওষুধ */}
           <button
@@ -358,6 +384,8 @@ export const Dashboard: React.FC = () => {
           </button>
         </div>
 
+        <CaregiverFamilyCard />
+
         {/* Easy Mode: আজকের ওষুধ Modal */}
         {showEasyDosesModal && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -368,7 +396,11 @@ export const Dashboard: React.FC = () => {
                 </h2>
                 <button
                   type="button"
-                  onClick={() => setShowEasyDosesModal(false)}
+                  onClick={() => {
+                    stop();
+                    setSpeakingDoseKey(null);
+                    setShowEasyDosesModal(false);
+                  }}
                   aria-label="বন্ধ করুন"
                   className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
                 >
@@ -417,8 +449,17 @@ export const Dashboard: React.FC = () => {
                             onClick={() => handleSpeakDose(dose)}
                             className="min-h-[48px] px-4 py-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-200 font-bold text-base inline-flex items-center gap-1.5 cursor-pointer"
                           >
-                            <Volume2 className="w-5 h-5" />
-                            <span>শুনুন</span>
+                            {isSpeaking && speakingDoseKey === dose.key ? (
+                              <>
+                                <Square className="w-4 h-4 fill-current" />
+                                <span>থামুন</span>
+                              </>
+                            ) : (
+                              <>
+                                <Volume2 className="w-5 h-5" />
+                                <span>🔊 শুনুন</span>
+                              </>
+                            )}
                           </button>
                         )}
                       </div>
@@ -513,6 +554,9 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+
+      {/* Unseen Caregiver Alert Banner & Patient Offline Alert Fallback */}
+      <CaregiverAlertBanners />
 
       {/* Compact Top Context Row: Date + Active Patient Switcher + Sync */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -797,8 +841,17 @@ export const Dashboard: React.FC = () => {
                   onClick={() => handleSpeakDose(nextDueDose)}
                   className="min-h-[48px] px-4 py-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 text-teal-800 dark:text-teal-200 font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Volume2 className="w-4 h-4" />
-                  <span>শুনুন</span>
+                  {isSpeaking && speakingDoseKey === nextDueDose.key ? (
+                    <>
+                      <Square className="w-4 h-4 fill-current" />
+                      <span>থামুন</span>
+                    </>
+                  ) : (
+                    <>
+                      <Volume2 className="w-4 h-4" />
+                      <span>🔊 শুনুন</span>
+                    </>
+                  )}
                 </button>
               )}
               <span className="text-sm font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-xl">
@@ -920,8 +973,17 @@ export const Dashboard: React.FC = () => {
                           onClick={() => handleSpeakDose(dose)}
                           className="min-h-[48px] px-4 py-2.5 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 text-teal-800 dark:text-teal-200 font-bold text-sm rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
                         >
-                          <Volume2 className="w-4 h-4" />
-                          <span>শুনুন</span>
+                          {isSpeaking && speakingDoseKey === dose.key ? (
+                            <>
+                              <Square className="w-4 h-4 fill-current" />
+                              <span>থামুন</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-4 h-4" />
+                              <span>🔊 শুনুন</span>
+                            </>
+                          )}
                         </button>
                       )}
                       <button
@@ -968,6 +1030,9 @@ export const Dashboard: React.FC = () => {
           )}
         </section>
       )}
+
+      {/* Caregiver "পরিবার" Card (যাদের দেখাশোনা করছেন) */}
+      <CaregiverFamilyCard />
 
       {/* ========================================================
           COLLAPSIBLE "আরও দেখুন" FOLD FOR SECONDARY WIDGETS

@@ -36,13 +36,103 @@ import {
 } from '../server/aiSecurity';
 import {
   findBengaliVoice,
+  selectSpeechVoice,
   buildDoseSpeechText,
+  buildDoseTakenSpeechText,
+  buildMedicineDetailSpeechText,
+  buildGlobalMedicineDetailSpeechText,
+  buildAiResponseSpeechText,
+  loadVoiceSettings,
+  saveVoiceSettings,
+  DEFAULT_VOICE_SETTINGS,
+  VOICE_SPEED_RATE,
+  MISSING_BENGALI_VOICE_MESSAGE,
 } from '../src/utils/speechUtils';
+import { setNativeAlarmVoiceEnabled } from '../src/services/nativeReminders';
 import {
   ONBOARDING_DONE_KEY,
   shouldShowOnboarding,
   markOnboardingDone,
 } from '../src/utils/onboarding';
+import {
+  DEFAULT_LIBRARY_CHUNK_SIZE,
+  buildLibraryChunks,
+  estimateUtf8Bytes,
+  hasCatalogChanges,
+  shouldFetchChunksForMeta,
+} from '../src/utils/libraryChunks';
+import {
+  QUOTA_EXCEEDED_BN_MSG,
+  isQuotaExceededError,
+  consumeQuotaExceededNoticeOnce,
+  resetQuotaNoticeForTests,
+  getFriendlyErrorMessage,
+} from '../src/firebase/errors';
+import { GlobalMedicine, Medicine, PatientProfile } from '../src/types';
+import {
+  calculateMedicineShoppingList,
+  calculateShoppingCostSummary,
+  findMatchingCatalogMedicine,
+  formatTakaBn,
+  getTargetDateForPreset,
+  parsePackageSize,
+  toLocalIsoDate,
+} from '../src/utils/shoppingListCalculator';
+import {
+  buildShoppingListShareText,
+  buildShoppingListWhatsAppUrl,
+} from '../src/utils/shoppingListPdf';
+import {
+  DEFAULT_ADMIN_FILTERS,
+  applyBulkMedicinePatch,
+  buildMedicinesCsvWithBom,
+  buildPreDeleteBackupJson,
+  computeLibraryQualityReport,
+  filterAndSortAdminMedicines,
+  findSameGenericAlternatives,
+  findSuspectedDuplicateGroups,
+  getActiveAdminFilterChips,
+  getMedicineAlphabetLetter,
+  loadLibraryFavoriteIds,
+  matchMedicineBilingualFuzzy,
+  mergeRestoredMedicines,
+  pickDuplicateIdsKeepingOne,
+  recordRecentlyViewedId,
+  saveLibraryFavoriteIds,
+} from '../src/utils/libraryManagement';
+import {
+  CAREGIVER_INVITE_TTL_MS,
+  MAX_CAREGIVERS,
+  generateInviteCode,
+  normalizeInviteCodeInput,
+  isValidInviteCode,
+  isInviteExpired,
+  buildCaregiverInviteWhatsAppUrl,
+  buildCaregiverAlertCheckInWhatsAppUrl,
+  buildDeterministicAlertId,
+  parseScheduleTimeForDate,
+  evaluateCaregiverTriggers,
+  loadSentFamilyAlertIds,
+  markFamilyAlertSentLocally,
+  loadPendingFamilyAlerts,
+  enqueuePendingFamilyAlerts,
+  removePendingFamilyAlert,
+} from '../src/utils/caregiverAlerts';
+import {
+  DEFAULT_SHARED_REPORT_SECTIONS,
+  SHARED_REPORT_DELETE_AFTER_EXPIRY_MS,
+  SHARED_REPORT_UNAVAILABLE_MSG,
+  SHARED_REPORT_VIEWER_DISCLAIMER,
+  generateShareToken,
+  isValidShareTokenFormat,
+  extractSharedReportTokenFromPath,
+  buildSharedReportUrl,
+  buildSharedReportWhatsAppUrl,
+  buildSharedReportSnapshot,
+  getSharedReportStatus,
+  canDeleteExpiredSharedReport,
+  getIncludedSectionLabels,
+} from '../src/utils/sharedReports';
 
 console.log('\n================================================================');
 console.log('  স্বাস্থ্যবন্ধু (Shasthobondhu) - New Features Verification Tests');
@@ -814,12 +904,14 @@ describe('ধাপ ১২: সহজ মোড, কথা বলে শোন�
 
     assert.strictEqual(
       buildDoseSpeechText({
+        patientName: 'যমুনা আপা',
         timeSlot: 'সকাল',
-        brandName: 'Napa Extra (নাপা এক্সট্রা)',
+        brandName: 'Napa Extend',
         dosage: '১টি',
+        type: 'ট্যাবলেট',
         mealTiming: 'খাওয়ার পরে',
       }),
-      'এখন সকালের ওষুধ, নাপা এক্সট্রা, ১টি, খাওয়ার পরে'
+      'যমুনা আপা, এখন Napa Extend খাওয়ার সময়। একটি ট্যাবলেট, খাবারের পরে।'
     );
 
     assert.strictEqual(
@@ -828,7 +920,7 @@ describe('ধাপ ১২: সহজ মোড, কথা বলে শোন�
         brandName: 'Seclo 20',
         dosage: '১টি',
       }),
-      'এখন রাতের ওষুধ, Seclo 20, ১টি'
+      'এখন Seclo 20 খাওয়ার সময়। একটি।'
     );
   });
 
@@ -846,6 +938,1175 @@ describe('ধাপ ১২: সহজ মোড, কথা বলে শোন�
     assert.strictEqual(map.get(ONBOARDING_DONE_KEY), '1');
     assert.strictEqual(shouldShowOnboarding(memoryStorage), false);
     assert.strictEqual(shouldShowOnboarding(null), false);
+  });
+});
+
+describe('ধাপ ১৩: চাঙ্কড লাইব্রেরি, মেটাডাটা সংস্করণ ও কোটা সীমা হ্যান্ডলিং', () => {
+  const makeMed = (idx: number, extraNotes = ''): GlobalMedicine => ({
+    id: `gmed_${idx}`,
+    brandName: `Napa ${idx}`,
+    genericName: 'Paracetamol',
+    strength: '500 mg',
+    dosageForm: 'ট্যাবলেট',
+    manufacturer: 'Beximco Pharmaceuticals Ltd.',
+    source: 'DGDA_GOV',
+    sourceType: 'government',
+    sourceName: 'DGDA',
+    licenseReference: 'DGDA Open Data',
+    duplicateKey: `napa_${idx}|paracetamol|500 mg|ট্যাবলেট|beximco`,
+    status: 'published',
+    verifiedByAdmin: true,
+    indication: extraNotes || 'Fever and mild pain',
+    importedAt: '2026-11-12T00:00:00.000Z',
+  });
+
+  it('সর্বোচ্চ ২০০টি ওষুধ প্রতি চাঙ্ক এবং ১MB সীমার নিচে স্বয়ংক্রিয়ভাবে ভাগ করে', () => {
+    // 505 items -> 3 chunks (200, 200, 105)
+    const meds505 = Array.from({ length: 505 }, (_, i) => makeMed(i + 1));
+    const chunks = buildLibraryChunks(meds505, 3);
+    assert.strictEqual(chunks.length, 3);
+    assert.strictEqual(chunks[0].version, 3);
+    assert.strictEqual(chunks[0].index, 0);
+    assert.strictEqual(chunks[0].items.length, DEFAULT_LIBRARY_CHUNK_SIZE);
+    assert.strictEqual(chunks[1].items.length, DEFAULT_LIBRARY_CHUNK_SIZE);
+    assert.strictEqual(chunks[2].items.length, 105);
+
+    // Byte-size limit splits chunks below 200 when items are large
+    const largeNotes = 'X'.repeat(5000);
+    const largeMeds = Array.from({ length: 20 }, (_, i) => makeMed(i + 1, largeNotes));
+    const byteCappedChunks = buildLibraryChunks(largeMeds, 4, 200, 25_000);
+    assert.ok(byteCappedChunks.length > 1, 'Large items must split into multiple chunks');
+    for (const chunk of byteCappedChunks) {
+      assert.ok(estimateUtf8Bytes(chunk) <= 25_000, 'Each chunk must stay within byte budget');
+    }
+  });
+
+  it('ডুপ্লিকেট বা অপরিবর্তিত ইমপোর্টে changed=false দেয় এবং নতুন ওষুধ থাকলে শুধু বদল যোগ করে', () => {
+    const existing = [makeMed(1), makeMed(2)];
+
+    const identicalIncoming = [makeMed(1), makeMed(2)];
+    const noChange = hasCatalogChanges(existing, identicalIncoming);
+    assert.strictEqual(noChange.changed, false);
+    assert.strictEqual(noChange.addedOrUpdatedCount, 0);
+    assert.strictEqual(noChange.mergedList.length, 2);
+
+    const updatedAndNew = [makeMed(1), makeMed(2, 'Updated pain relief'), makeMed(3)];
+    const hasDiff = hasCatalogChanges(existing, updatedAndNew);
+    assert.strictEqual(hasDiff.changed, true);
+    assert.strictEqual(hasDiff.addedOrUpdatedCount, 2);
+    assert.strictEqual(hasDiff.mergedList.length, 3);
+    assert.strictEqual(hasDiff.mergedList[1].indication, 'Updated pain relief');
+  });
+
+  it('ফোনে একই সংস্করণ থাকলে ০টি চাঙ্ক ডাউনলোড করে এবং নতুন সংস্করণে চাঙ্ক আনে', () => {
+    assert.strictEqual(
+      shouldFetchChunksForMeta({
+        meta: { version: 5, chunkCount: 25, totalCount: 5000, updatedAt: '2026-11-12T00:00:00Z' },
+        localVersion: 5,
+        hasLocalCatalog: true,
+      }),
+      false
+    );
+
+    assert.strictEqual(
+      shouldFetchChunksForMeta({
+        meta: { version: 6, chunkCount: 26, totalCount: 5020, updatedAt: '2026-11-12T01:00:00Z' },
+        localVersion: 5,
+        hasLocalCatalog: true,
+      }),
+      true
+    );
+
+    // Missing local catalog triggers chunk fetch even if version matches
+    assert.strictEqual(
+      shouldFetchChunksForMeta({
+        meta: { version: 5, chunkCount: 25, totalCount: 5000, updatedAt: '2026-11-12T00:00:00Z' },
+        localVersion: 5,
+        hasLocalCatalog: false,
+      }),
+      true
+    );
+  });
+
+  it('Firestore quota exceeded এরর শনাক্ত করে ও সেশনে কেবল একবার বাংলা সতর্কতা দেখায়', () => {
+    resetQuotaNoticeForTests();
+    const quotaErr1 = { code: 'resource-exhausted', message: 'Quota exceeded.' };
+    const quotaErr2 = new Error('RESOURCE_EXHAUSTED: Quota exceeded for free tier database');
+    const permErr = { code: 'permission-denied', message: 'Missing or insufficient permissions.' };
+
+    assert.strictEqual(isQuotaExceededError(quotaErr1), true);
+    assert.strictEqual(isQuotaExceededError(quotaErr2), true);
+    assert.strictEqual(isQuotaExceededError(permErr), false);
+    assert.strictEqual(getFriendlyErrorMessage(quotaErr1), QUOTA_EXCEEDED_BN_MSG);
+
+    assert.strictEqual(consumeQuotaExceededNoticeOnce(), true);
+    assert.strictEqual(consumeQuotaExceededNoticeOnce(), false);
+    resetQuotaNoticeForTests();
+  });
+});
+
+describe('ধাপ ১৪: ওষুধ কেনার তালিকা হিসাব, বাফার, মেয়াদ সতর্কতা ও প্যাক হিসাব', () => {
+  const refDate = new Date(2026, 10, 10); // 2026-11-10 local
+
+  const patients: PatientProfile[] = [
+    {
+      id: 'p-father',
+      name: 'আব্দুল করিম',
+      relation: 'বাবা',
+      age: 68,
+      gender: 'পুরুষ',
+      bloodGroup: 'O+',
+      chronicConditions: ['উচ্চ রক্তচাপ'],
+      allergies: [],
+      emergencyContact: '01700000000',
+    },
+    {
+      id: 'p-mother',
+      name: 'রাহেলা বেগম',
+      relation: 'মা',
+      age: 62,
+      gender: 'মহিলা',
+      bloodGroup: 'B+',
+      chronicConditions: [],
+      allergies: [],
+      emergencyContact: '01700000000',
+    },
+  ];
+
+  const baseMed: Medicine = {
+    id: 'm-1',
+    brandName: 'Concor 5',
+    genericName: 'Bisoprolol',
+    type: 'ট্যাবলেট',
+    strength: '5 mg',
+    mealTiming: 'খাওয়ার পরে',
+    schedules: [
+      { id: 's-1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১/২টি' },
+    ],
+    stock: 4,
+    minStockAlert: 5,
+    unit: 'টি',
+    startDate: '2026-11-01',
+    isChronic: true,
+    assignedPatientId: 'p-father',
+    status: 'active',
+    colorTag: 'teal',
+  };
+
+  it('দৈনিক ডোজ (আধা ট্যাবলেট সহ), ২ দিনের বাফার এবং ছাপানো/পূর্ণসংখ্যা হিসাব সঠিকভাবে করে', () => {
+    const medMorningNight: Medicine = {
+      ...baseMed,
+      id: 'm-twice',
+      brandName: 'Napa',
+      genericName: 'Paracetamol',
+      strength: '500 mg',
+      schedules: [
+        { id: 's-a', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
+        { id: 's-b', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' },
+      ],
+      stock: 6, // 3 days left at 2/day
+      packageDescription: '10 tablets/strip',
+    };
+
+    const target15d = getTargetDateForPreset('15d', refDate);
+    assert.strictEqual(toLocalIsoDate(target15d), '2026-11-25');
+
+    // With 2-day buffer ON: 15 + 2 = 17 days
+    // baseMed (0.5/day): 17 * 0.5 = 8.5 - 4 stock = 4.5 -> Math.ceil = 5
+    // medMorningNight (2/day): 17 * 2 = 34 - 6 stock = 28 -> 28 / 10 per strip = 3 strips
+    const withBuffer = calculateMedicineShoppingList({
+      medicines: [baseMed, medMorningNight],
+      patients,
+      selectedPatientId: 'p-father',
+      targetDate: target15d,
+      includeBuffer: true,
+      referenceDate: refDate,
+    });
+
+    assert.strictEqual(withBuffer.daysCount, 15);
+    assert.strictEqual(withBuffer.bufferDays, 2);
+    assert.strictEqual(withBuffer.effectiveDays, 17);
+    assert.strictEqual(withBuffer.patientAge, 68);
+    assert.strictEqual(withBuffer.toBuyItems.length, 2);
+
+    // Soonest run-out first: m-twice (3 days) comes before m-1 (8 days)
+    assert.strictEqual(withBuffer.toBuyItems[0].medicine.id, 'm-twice');
+    assert.strictEqual(withBuffer.toBuyItems[1].medicine.id, 'm-1');
+
+    const napaItem = withBuffer.toBuyItems[0];
+    assert.strictEqual(napaItem.dailyUsage, 2);
+    assert.strictEqual(napaItem.daysRemaining, 3);
+    assert.strictEqual(napaItem.toBuyUnits, 28);
+    assert.strictEqual(napaItem.estimatedPacks, 3);
+    assert.strictEqual(napaItem.packSummaryBn, 'প্রায় ৩ পাতা');
+
+    const concorItem = withBuffer.toBuyItems.find((i) => i.medicine.id === 'm-1')!;
+    assert.strictEqual(concorItem.dailyUsage, 0.5);
+    assert.strictEqual(concorItem.daysRemaining, 8);
+    assert.strictEqual(concorItem.toBuyUnits, 5);
+    assert.strictEqual(concorItem.packSummaryBn, null); // no strip info -> must NOT fabricate
+
+    // With buffer OFF: 15 * 0.5 = 7.5 - 4 = 3.5 -> Math.ceil = 4
+    const noBuffer = calculateMedicineShoppingList({
+      medicines: [baseMed],
+      patients,
+      selectedPatientId: 'p-father',
+      targetDate: target15d,
+      includeBuffer: false,
+      referenceDate: refDate,
+    });
+    assert.strictEqual(noBuffer.effectiveDays, 15);
+    assert.strictEqual(noBuffer.toBuyItems[0].toBuyUnits, 4);
+  });
+
+  it('পর্যাপ্ত মজুত, মেয়াদ সতর্কতা এবং প্রয়োজনমতো (PRN) ওষুধ আলাদাভাবে দেখায়', () => {
+    const sufficientMed: Medicine = {
+      ...baseMed,
+      id: 'm-ok',
+      brandName: 'Seclo 20',
+      schedules: [{ id: 's-1', timeSlot: 'সকাল', time: '07:30 AM', dosage: '১টি' }],
+      stock: 40, // covers 15+2=17 days easily
+    };
+
+    const expiringMed: Medicine = {
+      ...baseMed,
+      id: 'm-exp',
+      brandName: 'Fexo 120',
+      schedules: [{ id: 's-1', timeSlot: 'রাত', time: '10:00 PM', dosage: '১টি' }],
+      stock: 40, // stock count is enough, BUT expires before target date!
+      expiryDate: '2026-11-20',
+    };
+
+    const prnMed: Medicine = {
+      ...baseMed,
+      id: 'm-prn',
+      brandName: 'Napa Extra PRN',
+      mealTiming: 'প্রয়োজনমতো',
+      schedules: [],
+      stock: 5,
+      assignedPatientId: 'p-mother',
+    };
+
+    const pausedMed: Medicine = {
+      ...baseMed,
+      id: 'm-paused',
+      brandName: 'Old Paused Med',
+      status: 'paused',
+    };
+
+    const target30d = getTargetDateForPreset('30d', refDate); // 2026-12-10
+    const resAll = calculateMedicineShoppingList({
+      medicines: [sufficientMed, expiringMed, prnMed, pausedMed],
+      patients,
+      selectedPatientId: 'all',
+      targetDate: target30d,
+      includeBuffer: true,
+      referenceDate: refDate,
+    });
+
+    assert.strictEqual(resAll.patientLabelBn, 'সবার জন্য');
+    assert.strictEqual(resAll.sufficientItems.length, 1);
+    assert.strictEqual(resAll.sufficientItems[0].statusLabelBn, 'পর্যাপ্ত আছে ✓');
+    assert.strictEqual(resAll.sufficientItems[0].medicine.id, 'm-ok');
+
+    // Expiring medicine appears in toBuyItems with red warning even when stock count >= required
+    assert.strictEqual(resAll.toBuyItems.length, 1);
+    assert.strictEqual(resAll.toBuyItems[0].medicine.id, 'm-exp');
+    assert.strictEqual(resAll.toBuyItems[0].expiresBeforeTarget, true);
+    assert.strictEqual(resAll.toBuyItems[0].needsExpiryReplacementOnly, true);
+    assert.strictEqual(
+      resAll.toBuyItems[0].expiryWarningBn,
+      'এই তারিখের আগেই মেয়াদ শেষ হবে, নতুন প্যাকেট কিনুন'
+    );
+
+    // PRN medicine does NOT guess a daily dose and shows "নিজে হিসাব করুন"
+    assert.strictEqual(resAll.asNeededItems.length, 1);
+    assert.strictEqual(resAll.asNeededItems[0].medicine.id, 'm-prn');
+    assert.strictEqual(resAll.asNeededItems[0].noteBn, 'নিজে হিসাব করুন');
+
+    // Paused medicine is excluded
+    assert.strictEqual(resAll.totalActiveMedicinesConsidered, 3);
+
+    // Share text & wa.me link include doctor name, notes, sufficient label, and disclaimer
+    const shareText = buildShoppingListShareText({
+      result: resAll,
+      doctorName: 'ডা. তানভীর',
+      notes: 'সন্ধ্যার আগে কিনতে হবে',
+    });
+    assert.ok(shareText.includes('ডা. তানভীর'));
+    assert.ok(shareText.includes('সন্ধ্যার আগে কিনতে হবে'));
+    assert.ok(shareText.includes('পর্যাপ্ত আছে ✓'));
+    assert.ok(shareText.includes('নিজে হিসাব করুন'));
+    assert.ok(shareText.includes('এই তারিখের আগেই মেয়াদ শেষ হবে, নতুন প্যাকেট কিনুন'));
+    assert.ok(shareText.includes('এটি অ্যাপের হিসাব; ওষুধ বদলানোর আগে ডাক্তারের পরামর্শ নিন।'));
+
+    const waUrl = buildShoppingListWhatsAppUrl({
+      result: resAll,
+      doctorName: 'ডা. তানভীর',
+      notes: 'সন্ধ্যার আগে কিনতে হবে',
+    });
+    assert.ok(waUrl.startsWith('https://wa.me/?text='));
+  });
+
+  it('প্যাকেট বিবরণ না থাকলে কল্পিত পাতার সংখ্যা বানায় না, থাকলে সঠিকভাবে হিসাব করে', () => {
+    assert.strictEqual(parsePackageSize(undefined, 'টি'), null);
+    assert.strictEqual(parsePackageSize('Unknown pack', 'টি'), null);
+    assert.deepStrictEqual(parsePackageSize('10 tablets/strip', 'টি'), {
+      unitsPerPack: 10,
+      packUnitBn: 'পাতা',
+    });
+    assert.deepStrictEqual(parsePackageSize('১০টি/পাতা', 'টি'), {
+      unitsPerPack: 10,
+      packUnitBn: 'পাতা',
+    });
+    assert.deepStrictEqual(parsePackageSize('100 ml bottle', 'মিলি'), {
+      unitsPerPack: 100,
+      packUnitBn: 'বোতল',
+    });
+    // 1-tablet strip/pack should not return unitsPerPack=1 (prevents strips == tablets bug)
+    assert.strictEqual(parsePackageSize('1 tablet/strip', 'টি'), null);
+    assert.strictEqual(parsePackageSize('১টি/পাতা', 'টি'), null);
+    // If already tracked in বোতল, do NOT divide bottle count by 100ml
+    assert.strictEqual(parsePackageSize('100 ml bottle', 'বোতল'), null);
+  });
+
+  it('লাইব্রেরি থেকে দাম মেলায় (প্রথমে আইডি, তারপর ব্র্যান্ড+শক্তি), নিজের দামকে অগ্রাধিকার দেয় ও বাদ দিলে মোট খরচ পুনরায় হিসাব করে', () => {
+    const catalog: GlobalMedicine[] = [
+      {
+        id: 'cat-napa-500',
+        brandName: 'Napa',
+        genericName: 'Paracetamol',
+        strength: '500 mg',
+        dosageForm: 'ট্যাবলেট',
+        manufacturer: 'Beximco',
+        pricePerUnit: 1.2,
+        packageDescription: '১০টি ট্যাবলেট/পাতা',
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA Open Data',
+        importedAt: '2026-11-01T00:00:00.000Z',
+        verifiedByAdmin: true,
+        status: 'published',
+        duplicateKey: 'napa_500_beximco',
+      },
+      {
+        id: 'cat-seclo-20',
+        brandName: 'Seclo',
+        genericName: 'Omeprazole',
+        strength: '20mg',
+        dosageForm: 'ক্যাপসুল',
+        manufacturer: 'Square',
+        pricePerUnit: 6.0,
+        packageDescription: '10 capsules/strip',
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA Open Data',
+        importedAt: '2026-11-01T00:00:00.000Z',
+        verifiedByAdmin: true,
+        status: 'published',
+        duplicateKey: 'seclo_20_square',
+      },
+    ];
+
+    // Match 1: matched by catalogMedicineId
+    const medById: Medicine = {
+      ...baseMed,
+      id: 'u-1',
+      brandName: 'Napa Custom Name',
+      strength: '500mg',
+      catalogMedicineId: 'cat-napa-500',
+      schedules: [{ id: 's1', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' }],
+      stock: 5, // 7d + 2d buffer = 9 needed -> buy 4 (< 1 strip of 10)
+    };
+
+    // Match 2: matched by brand + strength (no catalogMedicineId), WITH user price override
+    const medByBrandOverride: Medicine = {
+      ...baseMed,
+      id: 'u-2',
+      brandName: 'seclo',
+      strength: '20 mg', // spacing difference should still match "20mg"
+      pricePerUnit: 5.5, // user price overrides library price 6.0
+      schedules: [{ id: 's1', timeSlot: 'সকাল', time: '07:30 AM', dosage: '২টি' }],
+      stock: 4, // 9 * 2 = 18 -> buy 14 (2 strips -> "প্রায় ২ পাতা")
+    };
+
+    // No price item (and no catalog match)
+    const medNoPrice: Medicine = {
+      ...baseMed,
+      id: 'u-3',
+      brandName: 'UnknownVitamin',
+      genericName: 'Paracetamol', // same generic must NOT falsely pull Napa's pack/price
+      strength: '100 mg',
+      schedules: [{ id: 's1', timeSlot: 'দুপুর', time: '02:00 PM', dosage: '১টি' }],
+      stock: 0, // buy 9
+    };
+
+    const match1 = findMatchingCatalogMedicine(medById, catalog);
+    assert.strictEqual(match1.matchType, 'catalog_id');
+    assert.strictEqual(match1.medicine?.id, 'cat-napa-500');
+
+    const match2 = findMatchingCatalogMedicine(medByBrandOverride, catalog);
+    assert.strictEqual(match2.matchType, 'brand_strength');
+    assert.strictEqual(match2.medicine?.id, 'cat-seclo-20');
+
+    const target7d = getTargetDateForPreset('7d', refDate);
+    const listRes = calculateMedicineShoppingList({
+      medicines: [medById, medByBrandOverride, medNoPrice],
+      patients,
+      globalMedicines: catalog,
+      selectedPatientId: 'p-father',
+      targetDate: target7d,
+      includeBuffer: true, // 9 effective days
+      referenceDate: refDate,
+    });
+
+    const item1 = listRes.toBuyItems.find((i) => i.medicine.id === 'u-1')!;
+    const item2 = listRes.toBuyItems.find((i) => i.medicine.id === 'u-2')!;
+    const item3 = listRes.toBuyItems.find((i) => i.medicine.id === 'u-3')!;
+
+    assert.strictEqual(item1.toBuyUnits, 4);
+    assert.strictEqual(item1.packSummaryBn, '১ পাতার কম');
+    assert.strictEqual(item1.unitPrice, 1.2);
+    assert.strictEqual(item1.priceSource, 'library');
+    assert.strictEqual(item1.estimatedCost, 4.8);
+
+    assert.strictEqual(item2.toBuyUnits, 14);
+    assert.strictEqual(item2.packSummaryBn, 'প্রায় ২ পাতা');
+    assert.strictEqual(item2.unitPrice, 5.5);
+    assert.strictEqual(item2.priceSource, 'user');
+    assert.strictEqual(item2.estimatedCost, 77);
+
+    assert.strictEqual(item3.unitPrice, null);
+    assert.strictEqual(item3.priceSource, 'none');
+    assert.strictEqual(item3.packSummaryBn, null);
+    assert.strictEqual(item3.estimatedCost, null);
+
+    // Total cost summary before exclusion: 4.8 + 77 = 81.8, 1 missing price
+    const sumAll = calculateShoppingCostSummary(listRes.toBuyItems);
+    assert.strictEqual(sumAll.totalEstimatedCost, 81.8);
+    assert.strictEqual(sumAll.missingPriceCount, 1);
+    assert.strictEqual(formatTakaBn(sumAll.totalEstimatedCost), '৳৮১.৮০');
+
+    // Toggle "এটা কিনব না" on u-2 -> total drops to 4.8 immediately
+    const excluded = new Set(['u-2']);
+    const sumAfterExclude = calculateShoppingCostSummary(listRes.toBuyItems, excluded);
+    assert.strictEqual(sumAfterExclude.totalEstimatedCost, 4.8);
+    assert.strictEqual(sumAfterExclude.excludedCount, 1);
+    assert.strictEqual(sumAfterExclude.missingPriceCount, 1);
+
+    const shareText = buildShoppingListShareText({
+      result: listRes,
+      excludedMedicineIds: excluded,
+    });
+    assert.ok(shareText.includes('আনুমানিক মোট খরচ ৳৪.৮০'));
+    assert.ok(shareText.includes('১ টির দাম নেই, মোটে ধরা হয়নি'));
+    assert.ok(shareText.includes('দাম আনুমানিক, দোকানভেদে বদলাতে পারে'));
+    assert.ok(!shareText.includes('seclo'));
+  });
+});
+
+describe('ধাপ ১৫: অ্যাডমিন ওষুধ ব্যবস্থাপনা ও উন্নত ব্যবহারকারী লাইব্রেরি', () => {
+  const baseCatalog: GlobalMedicine[] = [
+    {
+      id: 'm1',
+      brandName: 'Napa',
+      brandNameBn: 'নাপা',
+      genericName: 'Paracetamol',
+      genericNameBn: 'প্যারাসিটামল',
+      strength: '500 mg',
+      dosageForm: 'ট্যাবলেট',
+      manufacturer: 'Beximco Pharmaceuticals Ltd.',
+      pricePerUnit: 1.2,
+      priceUnit: 'পিস',
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'DGDA Open Data',
+      importedAt: '2026-11-12T10:00:00.000Z',
+      verifiedByAdmin: true,
+      status: 'published',
+      duplicateKey: 'napa_paracetamol_500mg_ট্যাবলেট_beximco',
+    },
+    {
+      id: 'm2',
+      brandName: 'Ace',
+      genericName: 'Paracetamol',
+      strength: '500 mg',
+      dosageForm: 'ট্যাবলেট',
+      manufacturer: 'Square Pharmaceuticals PLC',
+      pricePerUnit: 1.0,
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'DGDA Open Data',
+      importedAt: '2026-11-10T10:00:00.000Z',
+      verifiedByAdmin: true,
+      status: 'published',
+      duplicateKey: 'ace_paracetamol_500mg_ট্যাবলেট_square',
+    },
+    {
+      id: 'm3',
+      brandName: 'Napa',
+      genericName: 'Paracetamol',
+      strength: '500mg',
+      dosageForm: 'ট্যাবলেট',
+      manufacturer: 'Beximco Pharmaceuticals Ltd.',
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'DGDA Open Data',
+      importedAt: '2026-11-13T09:00:00.000Z',
+      verifiedByAdmin: false,
+      status: 'draft',
+      duplicateKey: 'napa_paracetamol_500mg_ট্যাবলেট_beximco_dup',
+    },
+    {
+      id: 'm4',
+      brandName: 'TestMed (TEST DATA)',
+      genericName: '-',
+      strength: '10 mg',
+      dosageForm: 'সিরাপ',
+      manufacturer: 'Sample Demo Pharma PLC (TEST DATA)',
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'TEST-SYSTEM-ONLY',
+      darNumber: 'TEST-DAR-001',
+      importedAt: '2026-10-01T00:00:00.000Z',
+      verifiedByAdmin: false,
+      status: 'draft',
+      duplicateKey: 'testmed_10mg_সিরাপ_sample',
+    },
+  ];
+
+  it('বাংলা-ইংরেজি দ্বিভাষিক ও বানান-ভুলসহ ফাজি অনুসন্ধান এবং একই উপাদানের বিকল্প খুঁজে পায়', () => {
+    const bnHit = matchMedicineBilingualFuzzy(baseCatalog[0], 'নাপা');
+    assert.strictEqual(bnHit.matched, true);
+
+    const bnGenericHit = matchMedicineBilingualFuzzy(baseCatalog[1], 'প্যারাসিটামল');
+    assert.strictEqual(bnGenericHit.matched, true);
+    assert.strictEqual(bnGenericHit.matchType, 'generic');
+
+    // Typo tolerance ("paracetmol")
+    const typoHit = matchMedicineBilingualFuzzy(baseCatalog[1], 'paracetmol');
+    assert.strictEqual(typoHit.matched, true);
+
+    // Same generic alternatives excludes self and sorts cheaper first
+    const alts = findSameGenericAlternatives(baseCatalog, 'Paracetamol', 'm1');
+    assert.strictEqual(alts.length, 1); // m3 is draft, excluded from public alternatives
+    assert.strictEqual(alts[0].id, 'm2');
+  });
+
+  it('গুণমান রিপোর্ট এবং ডুপ্লিকেট দল নির্ণয় করে একটি রেখে বাকিগুলো মার্ক করে', () => {
+    const report = computeLibraryQualityReport(baseCatalog);
+    assert.strictEqual(report.totalCount, 4);
+    assert.strictEqual(report.missingPriceCount, 2); // m3, m4
+    assert.strictEqual(report.missingGenericCount, 1); // m4 ('-')
+    assert.strictEqual(report.testDataCount, 1); // m4
+    assert.strictEqual(report.suspectedDuplicateGroupsCount, 1); // m1 + m3
+    assert.strictEqual(report.suspectedDuplicateItemsCount, 2);
+    assert.strictEqual(report.suspectedDuplicateExtraCount, 1);
+
+    const groups = findSuspectedDuplicateGroups(baseCatalog);
+    assert.strictEqual(groups.length, 1);
+    assert.strictEqual(groups[0].primaryId, 'm1'); // published + verified + has price
+    const toMark = pickDuplicateIdsKeepingOne(groups);
+    assert.deepStrictEqual(toMark, ['m3']);
+  });
+
+  it('মাল্টি-ফিল্টার, সক্রিয় চিপস, বাল্ক সম্পাদনা, পূর্বাবস্থায় ফেরানো ও UTF-8 BOM CSV রপ্তানি কাজ করে', () => {
+    const filtered = filterAndSortAdminMedicines(baseCatalog, {
+      ...DEFAULT_ADMIN_FILTERS,
+      priceStatus: 'has_price',
+      dosageForm: 'ট্যাবলেট',
+      sortBy: 'company',
+    });
+    assert.deepStrictEqual(
+      filtered.map((m) => m.id),
+      ['m1', 'm2']
+    );
+
+    const chips = getActiveAdminFilterChips({
+      ...DEFAULT_ADMIN_FILTERS,
+      priceStatus: 'no_price',
+      qualityFilter: 'test_data',
+    });
+    assert.strictEqual(chips.length, 2);
+
+    // Bulk patch company + price + priceUnit
+    const patched = applyBulkMedicinePatch(baseCatalog, new Set(['m3']), {
+      manufacturer: 'Incepta Pharmaceuticals Ltd.',
+      pricePerUnit: 1.5,
+      priceUnit: 'পিস',
+    });
+    const m3Updated = patched.find((m) => m.id === 'm3')!;
+    assert.strictEqual(m3Updated.manufacturer, 'Incepta Pharmaceuticals Ltd.');
+    assert.strictEqual(m3Updated.pricePerUnit, 1.5);
+    assert.strictEqual(m3Updated.priceUnit, 'পিস');
+
+    // Undo restore merges removed items back without duplicating existing ones
+    const afterDelete = baseCatalog.filter((m) => m.id !== 'm2');
+    const restored = mergeRestoredMedicines(afterDelete, [baseCatalog[1], baseCatalog[0]]);
+    assert.strictEqual(restored.length, 4);
+
+    // CSV starts with UTF-8 BOM and properly handles Bengali characters
+    const csv = buildMedicinesCsvWithBom([baseCatalog[0]]);
+    assert.ok(csv.startsWith('\uFEFF'), 'CSV must start with UTF-8 BOM');
+    assert.ok(csv.includes('ট্যাবলেট'));
+    assert.ok(csv.includes('পিস'));
+
+    // Pre-delete JSON backup
+    const backup = JSON.parse(buildPreDeleteBackupJson([baseCatalog[0]]));
+    assert.strictEqual(backup.count, 1);
+    assert.strictEqual(backup.reason, 'pre_delete_admin_backup');
+  });
+
+  it('ব্যবহারকারীর পছন্দের তালিকা, সম্প্রতি দেখা ও বর্ণক্রম সূচক কাজ করে', () => {
+    const store = new Map<string, string>();
+    const mockStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    saveLibraryFavoriteIds(['m1', 'm2'], mockStorage);
+    assert.deepStrictEqual(loadLibraryFavoriteIds(mockStorage), ['m1', 'm2']);
+
+    let recent: string[] = [];
+    recent = recordRecentlyViewedId('m1', recent, mockStorage);
+    recent = recordRecentlyViewedId('m2', recent, mockStorage);
+    recent = recordRecentlyViewedId('m1', recent, mockStorage);
+    assert.deepStrictEqual(recent, ['m1', 'm2']);
+
+    assert.strictEqual(getMedicineAlphabetLetter('napa'), 'N');
+    assert.strictEqual(getMedicineAlphabetLetter('নাপা'), '#');
+  });
+});
+
+describe('ধাপ ১৫: পরিবারের সদস্যকে সতর্কতা (যত্নকারী মোড)', () => {
+  it('আমন্ত্রণ কোড ফরম্যাট, ৪৮ ঘণ্টা মেয়াদ ও হোয়াটসঅ্যাপ লিংক ঠিকমতো তৈরি করে', () => {
+    const code = generateInviteCode(6);
+    assert.strictEqual(code.length, 6);
+    assert.ok(isValidInviteCode(code));
+    assert.strictEqual(normalizeInviteCodeInput(' a7k-9m2 '), 'A7K9M2');
+
+    const nowMs = Date.now();
+    assert.strictEqual(isInviteExpired(nowMs + CAREGIVER_INVITE_TTL_MS, nowMs), false);
+    assert.strictEqual(isInviteExpired(nowMs - 1000, nowMs), true);
+
+    const inviteUrl = buildCaregiverInviteWhatsAppUrl(code, 'যমুনা আপা');
+    assert.ok(inviteUrl.startsWith('https://wa.me/?text='));
+    assert.ok(decodeURIComponent(inviteUrl).includes(code));
+    assert.ok(decodeURIComponent(inviteUrl).includes('৪৮ ঘণ্টা'));
+
+    const checkInUrl = buildCaregiverAlertCheckInWhatsAppUrl(
+      '+8801711223344',
+      'যমুনা আপা',
+      'যমুনা আপা আজ সকালের Napa Extend খাননি'
+    );
+    assert.ok(checkInUrl.startsWith('https://wa.me/8801711223344?text='));
+  });
+
+  it('মিসড ডোজ (১৫/৩০/৬০ মিনিট), কম মজুদ (<৩ দিন), ডিটারমিনিস্টিক আইডি এবং সর্বোচ্চ ৩ যত্নকারী যাচাই করে', () => {
+    const meds: Medicine[] = [
+      {
+        id: 'med_napa',
+        brandName: 'Napa Extend',
+        genericName: 'Paracetamol',
+        strength: '665 mg',
+        isChronic: false,
+        type: 'ট্যাবলেট',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [
+          { id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
+          { id: 's2', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' },
+        ],
+        stock: 4, // 2/day -> 2 days (< 3 days) => low_stock alert
+        minStockAlert: 5,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        status: 'active',
+        colorTag: 'teal',
+      },
+    ];
+
+    const links = ['L1', 'L2', 'L3', 'L4'].map((suffix, idx) => ({
+      id: `CODE0${idx + 1}`,
+      inviteCode: `CODE0${idx + 1}`,
+      patientUid: 'p_uid_1',
+      patientName: 'যমুনা আপা',
+      patientPhone: '01700000000',
+      caregiverUid: `cg_uid_${idx + 1}`,
+      caregiverName: `যত্নকারী ${idx + 1}`,
+      status: 'active' as const,
+      allowFullView: false,
+      expiresAtMs: Date.now() + CAREGIVER_INVITE_TTL_MS,
+      createdAt: '2026-11-10T00:00:00.000Z',
+      updatedAt: '2026-11-10T00:00:00.000Z',
+    }));
+
+    const morningCheck = new Date(2026, 10, 13, 8, 25, 0); // 25 min past 08:00 AM
+
+    // Threshold 30 min -> not triggered yet, schedules device timer in ~5 min
+    const res30 = evaluateCaregiverTriggers({
+      patientUid: 'p_uid_1',
+      patientName: 'যমুনা আপা',
+      patientPhone: '01700000000',
+      medicines: meds,
+      doseLogs: [],
+      activeLinks: links,
+      thresholdMinutes: 30,
+      now: morningCheck,
+    });
+    assert.strictEqual(res30.alertsToSend.some((a) => a.type === 'missed_dose'), false);
+    assert.ok(res30.nextCheckDelayMs !== null && res30.nextCheckDelayMs > 0);
+    assert.strictEqual(res30.alertsToSend.some((a) => a.type === 'low_stock'), true);
+
+    // Max 3 caregivers enforced
+    const lowStockAlert = res30.alertsToSend.find((a) => a.type === 'low_stock')!;
+    assert.strictEqual(lowStockAlert.caregiverUids.length, MAX_CAREGIVERS);
+    assert.match(lowStockAlert.id, /^[a-zA-Z0-9_-]+$/);
+
+    // Threshold 15 min -> triggers missed_dose immediately!
+    const res15 = evaluateCaregiverTriggers({
+      patientUid: 'p_uid_1',
+      patientName: 'যমুনা আপা',
+      medicines: meds,
+      doseLogs: [],
+      activeLinks: links,
+      thresholdMinutes: 15,
+      now: morningCheck,
+    });
+    const missedAlert = res15.alertsToSend.find((a) => a.type === 'missed_dose');
+    assert.ok(missedAlert);
+    assert.strictEqual(missedAlert.message, 'যমুনা আপা আজ সকালের Napa Extend খাননি');
+    assert.strictEqual(
+      missedAlert.id,
+      buildDeterministicAlertId('p_uid_1', 'med_napa', '2026-11-13', 'missed_dose', 'সকাল')
+    );
+
+    // Same-day dedupe prevents sending duplicate alert when sentAlertIds contains alert ID
+    const resDeduped = evaluateCaregiverTriggers({
+      patientUid: 'p_uid_1',
+      patientName: 'যমুনা আপা',
+      medicines: meds,
+      doseLogs: [],
+      activeLinks: links,
+      thresholdMinutes: 15,
+      sentAlertIds: new Set([missedAlert.id, lowStockAlert.id]),
+      now: morningCheck,
+    });
+    assert.strictEqual(resDeduped.alertsToSend.length, 0);
+
+    // When morning dose is marked taken today, summary reflects taken=1, remaining=1
+    const resAfterTaken = evaluateCaregiverTriggers({
+      patientUid: 'p_uid_1',
+      patientName: 'যমুনা আপা',
+      medicines: meds,
+      doseLogs: [
+        {
+          id: 'log_1',
+          medicineId: 'med_napa',
+          medicineName: 'Napa Extend',
+          patientId: 'p1',
+          scheduledDate: '2026-11-13',
+          scheduledTime: '08:00 AM',
+          timeSlot: 'সকাল',
+          dosage: '১টি',
+          status: 'taken',
+          loggedAt: morningCheck.toISOString(),
+        },
+      ],
+      activeLinks: links,
+      thresholdMinutes: 15,
+      sentAlertIds: new Set([lowStockAlert.id]),
+      now: morningCheck,
+    });
+    assert.strictEqual(resAfterTaken.alertsToSend.length, 0);
+    assert.strictEqual(resAfterTaken.todaySummary.takenDoses, 1);
+    assert.strictEqual(resAfterTaken.todaySummary.remainingDoses, 1);
+    assert.ok(parseScheduleTimeForDate('০৮:৩০ PM', morningCheck));
+  });
+
+  it('অফলাইন বা কোটা ব্যর্থ হলে অ্যালার্ট স্থানীয়ভাবে সংরক্ষণ করে এবং পরে পুনরায় পাঠাতে পারে', () => {
+    const store = new Map<string, string>();
+    const mockStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+
+    const sampleAlert = {
+      id: 'p1_m1_2026-11-13_morning',
+      patientUid: 'p1',
+      caregiverUids: ['cg1'],
+      caregiverLinkIds: ['CODE01'],
+      type: 'missed_dose' as const,
+      medicineId: 'm1',
+      medicineName: 'Napa Extend',
+      date: '2026-11-13',
+      message: 'যমুনা আপা আজ সকালের Napa Extend খাননি',
+      createdAt: '2026-11-13T08:30:00.000Z',
+      createdAtMs: Date.now(),
+      seenBy: [],
+    };
+
+    enqueuePendingFamilyAlerts('p1', [sampleAlert], mockStorage);
+    assert.strictEqual(loadPendingFamilyAlerts('p1', mockStorage).length, 1);
+
+    markFamilyAlertSentLocally('p1', sampleAlert.id, mockStorage);
+    assert.ok(loadSentFamilyAlertIds('p1', mockStorage).has(sampleAlert.id));
+
+    removePendingFamilyAlert('p1', sampleAlert.id, mockStorage);
+    assert.strictEqual(loadPendingFamilyAlerts('p1', mockStorage).length, 0);
+  });
+});
+
+describe('বাংলা ভয়েস রিমাইন্ডার: ভয়েস অগ্রাধিকার, বাক্য গঠন, সেটিংস ও APK ব্রিজ', () => {
+  it('bn-BD → bn-IN → অন্যান্য bn → ডিফল্ট ভয়েস অগ্রাধিকার সঠিকভাবে কাজ করে', () => {
+    const pickedBd = findBengaliVoice([
+      { lang: 'bn-IN', name: 'IN' },
+      { lang: 'bn', name: 'Generic BN' },
+      { lang: 'bn-BD', name: 'BD' },
+    ]);
+    assert.strictEqual(pickedBd?.lang, 'bn-BD');
+
+    const pickedIn = findBengaliVoice([
+      { lang: 'bn', name: 'Generic BN' },
+      { lang: 'bn-IN', name: 'IN' },
+    ]);
+    assert.strictEqual(pickedIn?.lang, 'bn-IN');
+
+    const fallbackSelection = selectSpeechVoice([
+      { lang: 'en-US', name: 'English Default', default: true },
+    ]);
+    assert.strictEqual(fallbackSelection.isBengali, false);
+    assert.strictEqual(fallbackSelection.voice?.lang, 'en-US');
+    assert.ok(MISSING_BENGALI_VOICE_MESSAGE.includes('টেক্সট-টু-স্পিচ'));
+  });
+
+  it('ওষুধের বিবরণ, AI উত্তর ও ডোজ খাওয়ার নিশ্চিতকরণ বাক্য স্বাভাবিকভাবে তৈরি হয়', () => {
+    const medSpeech = buildMedicineDetailSpeechText({
+      brandName: 'Napa Extend',
+      indication: 'জ্বর ও ব্যথা উপশমে ব্যবহার হয়',
+      type: 'ট্যাবলেট',
+      mealTiming: 'খাওয়ার পরে',
+      schedules: [{ timeSlot: 'সকাল', dosage: '১টি' }],
+    });
+    assert.ok(medSpeech.includes('Napa Extend।'));
+    assert.ok(medSpeech.includes('কী কাজে লাগে: জ্বর ও ব্যথা উপশমে ব্যবহার হয়।'));
+    assert.ok(medSpeech.includes('খাওয়ার নিয়ম: সকালবেলা একটি ট্যাবলেট, খাবারের পরে।'));
+
+    const globalSpeech = buildGlobalMedicineDetailSpeechText({
+      brandName: 'Seclo',
+      strength: '20 mg',
+      dosageForm: 'Capsule',
+      indication: 'গ্যাস্ট্রিক ও অম্বল কমায়',
+      packageDescription: '১০টি ক্যাপসুল/পাতা',
+    });
+    assert.ok(globalSpeech.includes('Seclo, 20 mg, Capsule।'));
+    assert.ok(globalSpeech.includes('কী কাজে লাগে: গ্যাস্ট্রিক ও অম্বল কমায়।'));
+
+    const aiSpeech = buildAiResponseSpeechText(
+      'Napa',
+      '## ব্যবহার\n- **জ্বর ও ব্যথা**: দিনে ৩ বার খাবেন।'
+    );
+    assert.strictEqual(aiSpeech.includes('**'), false);
+    assert.strictEqual(aiSpeech.includes('##'), false);
+    assert.ok(aiSpeech.includes('Napa সম্পর্কে তথ্য।'));
+
+    assert.strictEqual(
+      buildDoseTakenSpeechText({ patientName: 'যমুনা আপা', brandName: 'Napa Extend' }),
+      'ভালো হয়েছে, যমুনা আপা, Napa Extend খাওয়া হয়েছে।'
+    );
+  });
+
+  it('ভয়েস সেটিংস ফোনে সংরক্ষণ হয় ও APK ব্রিজ অনুপস্থিত থাকলে ত্রুটি ছাড়া নিষ্ক্রিয় থাকে', () => {
+    const map = new Map<string, string>();
+    const mockStorage = {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+    };
+
+    const initial = loadVoiceSettings(mockStorage);
+    assert.deepStrictEqual(initial, DEFAULT_VOICE_SETTINGS);
+
+    const updated = saveVoiceSettings(
+      { enabled: false, speed: 'slow', confirmOnDoseTaken: true, apkAlarmVoiceEnabled: false },
+      mockStorage
+    );
+    assert.strictEqual(updated.enabled, false);
+    assert.strictEqual(updated.speed, 'slow');
+    assert.strictEqual(updated.confirmOnDoseTaken, true);
+    assert.strictEqual(updated.apkAlarmVoiceEnabled, false);
+    assert.strictEqual(VOICE_SPEED_RATE.slow < VOICE_SPEED_RATE.normal, true);
+    assert.strictEqual(VOICE_SPEED_RATE.fast > VOICE_SPEED_RATE.normal, true);
+
+    const reloaded = loadVoiceSettings(mockStorage);
+    assert.deepStrictEqual(reloaded, updated);
+
+    const brokenStorage = {
+      getItem: () => {
+        throw new Error('storage blocked');
+      },
+      setItem: () => {
+        throw new Error('quota exceeded');
+      },
+    };
+    assert.deepStrictEqual(loadVoiceSettings(brokenStorage), DEFAULT_VOICE_SETTINGS);
+    assert.doesNotThrow(() => saveVoiceSettings({ speed: 'fast' }, brokenStorage));
+    assert.strictEqual(setNativeAlarmVoiceEnabled(true), false);
+  });
+});
+
+describe('ডাক্তার/পরিবারের জন্য নিরাপদ রিপোর্ট শেয়ার লিংক (Shared Reports)', () => {
+  it('অনুমান-অযোগ্য >=১২০-বিট ক্রিপ্টোগ্রাফিক টোকেন ও /r/{token} URL তৈরি ও পার্স করে', () => {
+    const tokens = new Set<string>();
+    for (let i = 0; i < 25; i += 1) {
+      const tok = generateShareToken();
+      assert.strictEqual(isValidShareTokenFormat(tok), true);
+      assert.ok(tok.length >= 24);
+      assert.match(tok, /^[A-Za-z0-9_-]+$/);
+      tokens.add(tok);
+    }
+    assert.strictEqual(tokens.size, 25);
+
+    assert.strictEqual(isValidShareTokenFormat('short'), false);
+    assert.strictEqual(isValidShareTokenFormat('patient-1-report'), false);
+
+    const sampleToken = generateShareToken();
+    assert.strictEqual(extractSharedReportTokenFromPath(`/r/${sampleToken}`), sampleToken);
+    assert.strictEqual(extractSharedReportTokenFromPath(`/r/${sampleToken}/?print=1`), sampleToken);
+    assert.strictEqual(extractSharedReportTokenFromPath('/medicines'), null);
+    assert.strictEqual(
+      buildSharedReportUrl(sampleToken, 'https://shasthobondhu.app/'),
+      `https://shasthobondhu.app/r/${sampleToken}`
+    );
+
+    const waUrl = buildSharedReportWhatsAppUrl(
+      `https://shasthobondhu.app/r/${sampleToken}`,
+      'যমুনা আপা',
+      Date.now() + 7 * 24 * 60 * 60 * 1000
+    );
+    assert.ok(waUrl.startsWith('https://api.whatsapp.com/send?text='));
+    assert.ok(decodeURIComponent(waUrl).includes(sampleToken));
+    assert.ok(SHARED_REPORT_VIEWER_DISCLAIMER.includes('চিকিৎসার সিদ্ধান্তের আগে ডাক্তারের পরামর্শ নিন'));
+    assert.strictEqual(
+      SHARED_REPORT_UNAVAILABLE_MSG,
+      'এই লিংকের মেয়াদ শেষ হয়েছে বা বাতিল হয়েছে'
+    );
+  });
+
+  it('ডিফল্ট ও নির্বাচিত বিভাগ অনুযায়ী রোগীর স্থির স্ন্যাপশট তৈরি করে এবং অনির্বাচিত তথ্য বাদ দেয়', () => {
+    assert.deepStrictEqual(DEFAULT_SHARED_REPORT_SECTIONS, {
+      medicines: true,
+      allergiesEmergency: true,
+      recentReadings: false,
+      appointments: false,
+    });
+
+    const patient: PatientProfile = {
+      id: 'pat_1',
+      name: 'রহিম সাহেব',
+      relation: 'বাবা',
+      age: 64,
+      gender: 'পুরুষ',
+      bloodGroup: 'B+',
+      chronicConditions: ['উচ্চ রক্তচাপ'],
+      allergies: ['পেনিসিলিন'],
+      emergencyContact: '01711000000',
+    };
+
+    const meds: Medicine[] = [
+      {
+        id: 'm1',
+        brandName: 'Napa Extend',
+        genericName: 'Paracetamol',
+        strength: '665 mg',
+        type: 'ট্যাবলেট',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [{ id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }],
+        stock: 10,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        assignedPatientId: 'pat_1',
+        status: 'active',
+        colorTag: 'teal',
+      },
+      {
+        id: 'm2',
+        brandName: 'OldStoppedMed',
+        genericName: 'Cetirizine',
+        strength: '10 mg',
+        type: 'ট্যাবলেট',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [],
+        stock: 0,
+        minStockAlert: 0,
+        unit: 'টি',
+        startDate: '2026-10-01',
+        isChronic: false,
+        assignedPatientId: 'pat_1',
+        status: 'completed',
+        colorTag: 'teal',
+      },
+      {
+        id: 'm3',
+        brandName: 'OtherPatientMed',
+        genericName: 'Omeprazole',
+        strength: '20 mg',
+        type: 'ক্যাপসুল',
+        mealTiming: 'খাওয়ার আগে',
+        schedules: [],
+        stock: 5,
+        minStockAlert: 1,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        assignedPatientId: 'pat_other',
+        status: 'active',
+        colorTag: 'teal',
+      },
+    ];
+
+    const records: HealthRecord[] = [
+      {
+        id: 'hr1',
+        patientId: 'pat_1',
+        recordDate: '2026-11-12',
+        recordTime: '09:00 AM',
+        systolic: 130,
+        diastolic: 85,
+        createdAt: '2026-11-12T09:00:00Z',
+      },
+    ];
+
+    const appointments: DoctorAppointment[] = [
+      {
+        id: 'apt1',
+        patientId: 'pat_1',
+        doctorName: 'ডা. করিম',
+        appointmentDate: '2026-11-20',
+        appointmentTime: '05:00 PM',
+        location: 'ঢাকা',
+        status: 'upcoming',
+        createdAt: '2026-11-10T00:00:00Z',
+      },
+    ];
+
+    const nowMs = 1_763_000_000_000;
+    const defaultSnap = buildSharedReportSnapshot({
+      ownerUid: 'uid_owner_1',
+      token: generateShareToken(),
+      patient,
+      medicines: meds,
+      healthRecords: records,
+      appointments,
+      selection: DEFAULT_SHARED_REPORT_SECTIONS,
+      expiryHours: 168,
+      nowMs,
+    });
+
+    assert.strictEqual(defaultSnap.revoked, false);
+    assert.strictEqual(defaultSnap.expiresAtMs, nowMs + 168 * 60 * 60 * 1000);
+    assert.strictEqual(defaultSnap.sections.medicines?.length, 1);
+    assert.strictEqual(defaultSnap.sections.medicines?.[0].brandName, 'Napa Extend');
+    assert.strictEqual(defaultSnap.sections.allergiesEmergency?.bloodGroup, 'B+');
+    assert.strictEqual(defaultSnap.sections.recentReadings, undefined);
+    assert.strictEqual(defaultSnap.sections.appointments, undefined);
+    assert.deepStrictEqual(getIncludedSectionLabels(defaultSnap.sections), [
+      'চলমান ওষুধ',
+      'অ্যালার্জি ও জরুরি তথ্য',
+    ]);
+
+    const fullSnap = buildSharedReportSnapshot({
+      ownerUid: 'uid_owner_1',
+      token: generateShareToken(),
+      patient,
+      medicines: meds,
+      healthRecords: records,
+      appointments,
+      selection: {
+        medicines: true,
+        allergiesEmergency: true,
+        recentReadings: true,
+        appointments: true,
+      },
+      expiryHours: 24,
+      nowMs,
+    });
+    assert.strictEqual(fullSnap.sections.recentReadings?.length, 1);
+    assert.strictEqual(fullSnap.sections.appointments?.length, 1);
+    assert.strictEqual(fullSnap.expiresAtMs, nowMs + 24 * 60 * 60 * 1000);
+
+    assert.throws(() =>
+      buildSharedReportSnapshot({
+        ownerUid: 'uid_owner_1',
+        token: generateShareToken(),
+        patient,
+        medicines: meds,
+        healthRecords: records,
+        appointments,
+        selection: {
+          medicines: false,
+          allergiesEmergency: false,
+          recentReadings: false,
+          appointments: false,
+        },
+        expiryHours: 24,
+        nowMs,
+      })
+    );
+  });
+
+  it('রিপোর্টের অবস্থা (সক্রিয়/বাতিল/মেয়াদ শেষ) এবং মেয়াদোত্তীর্ণ হওয়ার ৩০ দিন পর মুছে ফেলার নিয়ম যাচাই করে', () => {
+    const nowMs = 1_763_000_000_000;
+    assert.strictEqual(
+      getSharedReportStatus({ revoked: false, expiresAt: null, expiresAtMs: nowMs + 60_000 }, nowMs),
+      'active'
+    );
+    assert.strictEqual(
+      getSharedReportStatus({ revoked: true, expiresAt: null, expiresAtMs: nowMs + 60_000 }, nowMs),
+      'revoked'
+    );
+    assert.strictEqual(
+      getSharedReportStatus({ revoked: false, expiresAt: null, expiresAtMs: nowMs - 1000 }, nowMs),
+      'expired'
+    );
+
+    // 29 days past expiry -> cannot delete
+    assert.strictEqual(
+      canDeleteExpiredSharedReport(
+        {
+          revoked: false,
+          expiresAt: null,
+          expiresAtMs: nowMs - (SHARED_REPORT_DELETE_AFTER_EXPIRY_MS - 24 * 60 * 60 * 1000),
+        },
+        nowMs
+      ),
+      false
+    );
+
+    // 31 days past expiry -> eligible to delete
+    assert.strictEqual(
+      canDeleteExpiredSharedReport(
+        {
+          revoked: false,
+          expiresAt: null,
+          expiresAtMs: nowMs - (SHARED_REPORT_DELETE_AFTER_EXPIRY_MS + 24 * 60 * 60 * 1000),
+        },
+        nowMs
+      ),
+      true
+    );
   });
 });
 

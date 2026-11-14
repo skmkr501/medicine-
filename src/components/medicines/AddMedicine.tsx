@@ -63,6 +63,7 @@ export const AddMedicine: React.FC = () => {
   const [unit, setUnit] = useState('টি');
   const [isChronic, setIsChronic] = useState(false);
   const [durationDays, setDurationDays] = useState<number>(7);
+  const [expiryDate, setExpiryDate] = useState<string>('');
 
   // Schedules state (Default: সকাল ১টি)
   const [schedules, setSchedules] = useState<DoseSchedule[]>([
@@ -276,6 +277,7 @@ export const AddMedicine: React.FC = () => {
       purpose: purpose.trim(),
       doctorName: doctorName.trim(),
       instructions: instructions.trim(),
+      expiryDate: expiryDate.trim() || undefined,
       status: 'active',
       colorTag: 'teal',
     });
@@ -887,17 +889,31 @@ export const AddMedicine: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
-                    বিশেষ নির্দেশনা
-                  </label>
-                  <input
-                    type="text"
-                    value={instructions}
-                    onChange={(e) => setInstructions(e.target.value)}
-                    placeholder="যেমন: বেশি করে পানি খাবেন"
-                    className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      বিশেষ নির্দেশনা
+                    </label>
+                    <input
+                      type="text"
+                      value={instructions}
+                      onChange={(e) => setInstructions(e.target.value)}
+                      placeholder="যেমন: বেশি করে পানি খাবেন"
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-base font-semibold text-slate-800 dark:text-slate-200 mb-1.5">
+                      প্যাকেটের মেয়াদ শেষের তারিখ (ঐচ্ছিক)
+                    </label>
+                    <input
+                      type="date"
+                      value={expiryDate}
+                      onChange={(e) => setExpiryDate(e.target.value)}
+                      className="min-h-[48px] w-full px-3.5 py-2 text-base bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                    />
+                  </div>
                 </div>
 
                 {/* AI Info & Drug Interaction Check */}

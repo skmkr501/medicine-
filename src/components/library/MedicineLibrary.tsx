@@ -28,8 +28,21 @@ import {
   Square,
   WifiOff,
   X,
+  Star,
+  History,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { isTestMedicine } from '../../utils/medicineImportParser';
+import {
+  ALPHABET_INDEX_LETTERS,
+  findSameGenericAlternatives,
+  getMedicineAlphabetLetter,
+  loadLibraryFavoriteIds,
+  loadRecentlyViewedIds,
+  matchMedicineBilingualFuzzy,
+  recordRecentlyViewedId,
+  saveLibraryFavoriteIds,
+} from '../../utils/libraryManagement';
 
 export const MedicineLibrary: React.FC = () => {
   const {
@@ -61,11 +74,35 @@ export const MedicineLibrary: React.FC = () => {
   const [selectedForm, setSelectedForm] = useState<string>('all');
   const [selectedManufacturer, setSelectedManufacturer] = useState<string>('all');
   const [selectedSource, setSelectedSource] = useState<string>('all');
+  const [priceFilter, setPriceFilter] = useState<'all' | 'has_price' | 'no_price'>('all');
+  const [favoritesOnly, setFavoritesOnly] = useState<boolean>(false);
+  const [selectedLetter, setSelectedLetter] = useState<string>('ALL');
   const [adminStatusFilter, setAdminStatusFilter] = useState<'published' | 'pending' | 'all'>('published');
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [isBulkPublishing, setIsBulkPublishing] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [visibleCount, setVisibleCount] = useState<number>(LIBRARY_PAGE_SIZE);
+
+  // Local persisted Favorites & Recently Viewed (zero Firestore cost)
+  const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadLibraryFavoriteIds());
+  const [recentlyViewedIds, setRecentlyViewedIds] = useState<string[]>(() => loadRecentlyViewedIds());
+
+  const favoriteIdSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
+
+  const toggleFavorite = (e: React.MouseEvent | null, medId: string) => {
+    if (e) e.stopPropagation();
+    setFavoriteIds((prev) => {
+      const exists = prev.includes(medId);
+      const next = exists ? prev.filter((id) => id !== medId) : [medId, ...prev];
+      saveLibraryFavoriteIds(next);
+      return next;
+    });
+  };
+
+  const handleOpenMedicineDetail = (med: GlobalMedicine) => {
+    setSelectedGlobalMedForDetail(med);
+    setRecentlyViewedIds((prev) => recordRecentlyViewedId(med.id, prev));
+  };
 
   // Safe Deletion & Selection States for Draft TEST DATA
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
@@ -96,88 +133,128 @@ export const MedicineLibrary: React.FC = () => {
     return Array.from(set).sort();
   }, [globalMedicines]);
 
-  // Filter medicines:
-  // Non-admin users ONLY see published and verified records (Requirement 6)
-  // Admin users can inspect pending/draft records and publish them
-  const filteredMedicines = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-
+  const roleScopedMedicines = useMemo(() => {
     return globalMedicines.filter((med) => {
-      // Role-based visibility enforcement
       if (!isAdmin) {
-        // Strict legal compliance: unverified records remain unpublished
-        if (med.status !== 'published') {
-          return false;
-        }
-      } else {
-        // Admin status filter: 'published' shows published, 'pending' shows draft/unverified, 'all' shows all
-        if (adminStatusFilter === 'published' && med.status !== 'published') {
-          return false;
-        }
-        if (adminStatusFilter === 'pending' && med.status === 'published') {
-          return false;
-        }
+        return med.status === 'published';
       }
-
-      // Search matching across brand, generic, strength, manufacturer, therapeutic class
-      if (query) {
-        const matchesBrand =
-          med.brandName.toLowerCase().includes(query) ||
-          (med.brandNameBn && med.brandNameBn.toLowerCase().includes(query));
-        const matchesGeneric =
-          med.genericName.toLowerCase().includes(query) ||
-          (med.genericNameBn && med.genericNameBn.toLowerCase().includes(query));
-        const matchesStrength = med.strength.toLowerCase().includes(query);
-        const matchesManufacturer = med.manufacturer.toLowerCase().includes(query);
-        const matchesIndication = med.indication?.toLowerCase().includes(query);
-        const matchesClass = med.therapeuticClass?.toLowerCase().includes(query);
-
-        if (
-          !matchesBrand &&
-          !matchesGeneric &&
-          !matchesStrength &&
-          !matchesManufacturer &&
-          !matchesIndication &&
-          !matchesClass
-        ) {
-          return false;
-        }
-      }
-
-      // Filter by dosage form
-      if (selectedForm !== 'all' && med.dosageForm !== selectedForm) {
+      if (adminStatusFilter === 'published' && med.status !== 'published') {
         return false;
       }
-
-      // Filter by manufacturer
-      if (selectedManufacturer !== 'all' && med.manufacturer !== selectedManufacturer) {
+      if (adminStatusFilter === 'pending' && med.status === 'published') {
         return false;
       }
-
-      // Filter by source
-      if (selectedSource !== 'all') {
-        if (selectedSource === 'DGDA' && med.source !== 'DGDA_GOV' && med.source !== 'DGDA_Official') return false;
-        if (selectedSource === 'MANUFACTURER' && med.source !== 'MANUFACTURER') return false;
-        if (selectedSource === 'INDEPENDENT' && med.source !== 'INDEPENDENT_VERIFIED') return false;
-        if (selectedSource === 'MEDEX' && med.source !== 'MEDEX_LICENSED' && med.source !== 'MedEx') return false;
-        if (selectedSource === 'DIMS' && med.source !== 'DIMS_LICENSED' && med.source !== 'DIMS') return false;
-      }
-
       return true;
     });
+  }, [globalMedicines, isAdmin, adminStatusFilter]);
+
+  const availableLetters = useMemo(() => {
+    const set = new Set<string>();
+    roleScopedMedicines.forEach((m) => {
+      set.add(getMedicineAlphabetLetter(m.brandName));
+    });
+    return set;
+  }, [roleScopedMedicines]);
+
+  const recentlyViewedMedicines = useMemo(() => {
+    if (recentlyViewedIds.length === 0) return [];
+    const byId = new Map(globalMedicines.map((m) => [m.id, m]));
+    return recentlyViewedIds
+      .map((id) => byId.get(id))
+      .filter((m): m is GlobalMedicine => Boolean(m && (isAdmin || m.status === 'published')));
+  }, [globalMedicines, recentlyViewedIds, isAdmin]);
+
+  // Filter medicines using bilingual fuzzy search, letter index, favorites & price filter
+  const { filteredMedicines, matchedByGenericSample } = useMemo(() => {
+    const query = searchQuery.trim();
+    const genericSampleMeds: GlobalMedicine[] = [];
+
+    const scored: Array<{ med: GlobalMedicine; score: number }> = [];
+
+    for (const med of roleScopedMedicines) {
+      if (favoritesOnly && !favoriteIdSet.has(med.id)) continue;
+
+      if (selectedLetter !== 'ALL' && getMedicineAlphabetLetter(med.brandName) !== selectedLetter) {
+        continue;
+      }
+
+      if (selectedForm !== 'all' && med.dosageForm !== selectedForm) continue;
+      if (selectedManufacturer !== 'all' && med.manufacturer !== selectedManufacturer) continue;
+
+      if (priceFilter === 'has_price' && (med.pricePerUnit === undefined || med.pricePerUnit <= 0)) {
+        continue;
+      }
+      if (priceFilter === 'no_price' && med.pricePerUnit !== undefined && med.pricePerUnit > 0) {
+        continue;
+      }
+
+      if (selectedSource !== 'all') {
+        if (selectedSource === 'DGDA' && med.source !== 'DGDA_GOV' && med.source !== 'DGDA_Official') continue;
+        if (selectedSource === 'MANUFACTURER' && med.source !== 'MANUFACTURER') continue;
+        if (selectedSource === 'INDEPENDENT' && med.source !== 'INDEPENDENT_VERIFIED') continue;
+        if (selectedSource === 'MEDEX' && med.source !== 'MEDEX_LICENSED' && med.source !== 'MedEx') continue;
+        if (selectedSource === 'DIMS' && med.source !== 'DIMS_LICENSED' && med.source !== 'DIMS') continue;
+      }
+
+      if (query) {
+        const res = matchMedicineBilingualFuzzy(med, query);
+        if (!res.matched) continue;
+        if (res.matchType === 'generic') {
+          genericSampleMeds.push(med);
+        }
+        scored.push({ med, score: res.score });
+      } else {
+        scored.push({ med, score: 1 });
+      }
+    }
+
+    if (query) {
+      scored.sort((a, b) => b.score - a.score || a.med.brandName.localeCompare(b.med.brandName));
+    } else {
+      scored.sort((a, b) => a.med.brandName.localeCompare(b.med.brandName));
+    }
+
+    const list = scored.map((s) => s.med);
+    const sameGenericExtra =
+      query && genericSampleMeds.length > 0
+        ? findSameGenericAlternatives(
+            globalMedicines,
+            genericSampleMeds[0].genericName,
+            undefined,
+            10
+          )
+        : [];
+
+    return {
+      filteredMedicines: list,
+      matchedByGenericSample: sameGenericExtra,
+    };
   }, [
+    roleScopedMedicines,
     globalMedicines,
-    isAdmin,
-    adminStatusFilter,
-    searchQuery,
+    favoritesOnly,
+    favoriteIdSet,
+    selectedLetter,
     selectedForm,
     selectedManufacturer,
+    priceFilter,
     selectedSource,
+    searchQuery,
   ]);
 
   useEffect(() => {
     setVisibleCount(LIBRARY_PAGE_SIZE);
-  }, [searchQuery, selectedForm, selectedManufacturer, selectedSource, adminStatusFilter, isAdmin]);
+  }, [
+    searchQuery,
+    selectedForm,
+    selectedManufacturer,
+    selectedSource,
+    priceFilter,
+    favoritesOnly,
+    selectedLetter,
+    adminStatusFilter,
+    isAdmin,
+  ]);
 
   useEffect(() => {
     if (!latestLibraryNotice) return;
@@ -380,7 +457,7 @@ export const MedicineLibrary: React.FC = () => {
           )}
 
           {isAdmin ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={openManualAddModal}
@@ -389,6 +466,16 @@ export const MedicineLibrary: React.FC = () => {
               >
                 <Plus className="w-4 h-4" />
                 <span>+ ম্যানুয়ালি ওষুধ যোগ</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCurrentPage('admin-library')}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-xl shadow-xs transition-colors cursor-pointer"
+                title="ওষুধ সম্পাদনা, ডুপ্লিকেট যাচাই ও নিরাপদ অপসারণ"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                <span>ওষুধ ব্যবস্থাপনা</span>
               </button>
 
               <button
@@ -589,14 +676,14 @@ export const MedicineLibrary: React.FC = () => {
       {/* Search and Collapsible Filters Bar */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
         <div className="flex flex-col sm:flex-row gap-3">
-          {/* Search Input */}
+          {/* Search Input (Bilingual Bangla + English Fuzzy) */}
           <div className="relative flex-1">
             <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ওষুধের নাম বা কোম্পানি দিয়ে খুঁজুন (যেমন: নাপা, সেক্লো)..."
+              placeholder="বাংলা বা ইংরেজিতে ওষুধ, জেনেরিক বা কোম্পানি লিখুন (যেমন: নাপা, Paracetamol)..."
               className="min-h-[48px] w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl pl-11 pr-20 py-2.5 text-base text-slate-900 dark:text-white placeholder:text-slate-500 focus:outline-hidden focus:ring-2 focus:ring-teal-500 font-medium"
             />
             {searchQuery && (
@@ -612,10 +699,27 @@ export const MedicineLibrary: React.FC = () => {
 
           <button
             type="button"
+            onClick={() => setFavoritesOnly((prev) => !prev)}
+            className={`min-h-[48px] px-4 py-2.5 rounded-xl border text-base font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shrink-0 ${
+              favoritesOnly
+                ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-500 text-amber-900 dark:text-amber-200'
+                : 'bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            <Star className={`w-5 h-5 ${favoritesOnly ? 'fill-amber-500 text-amber-500' : ''}`} />
+            <span>পছন্দের ({favoriteIds.length})</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setShowFilters((prev) => !prev)}
             aria-expanded={showFilters}
             className={`min-h-[48px] px-5 py-2.5 rounded-xl border text-base font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shrink-0 ${
-              showFilters || selectedForm !== 'all' || selectedManufacturer !== 'all' || selectedSource !== 'all'
+              showFilters ||
+              selectedForm !== 'all' ||
+              selectedManufacturer !== 'all' ||
+              selectedSource !== 'all' ||
+              priceFilter !== 'all'
                 ? 'bg-teal-50 dark:bg-teal-950/60 border-teal-500 text-teal-900 dark:text-teal-200'
                 : 'bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
             }`}
@@ -627,7 +731,7 @@ export const MedicineLibrary: React.FC = () => {
 
         {/* Filter Selectors Fold */}
         {showFilters && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-base">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-base">
             {/* Dosage Form Filter */}
             <div className="space-y-1">
               <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 block">
@@ -666,6 +770,24 @@ export const MedicineLibrary: React.FC = () => {
               </select>
             </div>
 
+            {/* Has Price Filter */}
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 block">
+                দামের অবস্থা
+              </label>
+              <select
+                value={priceFilter}
+                onChange={(e) =>
+                  setPriceFilter(e.target.value as 'all' | 'has_price' | 'no_price')
+                }
+                className="min-h-[48px] w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-base text-slate-900 dark:text-slate-100 focus:outline-hidden"
+              >
+                <option value="all">সব ওষুধ</option>
+                <option value="has_price">দাম আছে</option>
+                <option value="no_price">দাম উল্লেখ নেই</option>
+              </select>
+            </div>
+
             {/* Source Profile Filter */}
             <div className="space-y-1">
               <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 block">
@@ -686,18 +808,134 @@ export const MedicineLibrary: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* A–Z Quick Jump Bar */}
+        {roleScopedMedicines.length > 0 && (
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto pb-1">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0 mr-1">
+              বর্ণক্রম:
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedLetter('ALL')}
+              className={`min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 cursor-pointer transition-colors ${
+                selectedLetter === 'ALL'
+                  ? 'bg-teal-700 text-white'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
+              }`}
+            >
+              সব
+            </button>
+            {ALPHABET_INDEX_LETTERS.map((letter) => {
+              const hasItems = availableLetters.has(letter);
+              const isSelected = selectedLetter === letter;
+              return (
+                <button
+                  key={letter}
+                  type="button"
+                  disabled={!hasItems && !isSelected}
+                  onClick={() => setSelectedLetter((prev) => (prev === letter ? 'ALL' : letter))}
+                  className={`min-h-[36px] min-w-[32px] px-2 py-1 rounded-lg text-xs font-bold shrink-0 transition-colors ${
+                    isSelected
+                      ? 'bg-teal-700 text-white cursor-pointer'
+                      : hasItems
+                      ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-teal-50 dark:hover:bg-teal-950/60 cursor-pointer'
+                      : 'text-slate-300 dark:text-slate-700 cursor-not-allowed'
+                  }`}
+                >
+                  {letter}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
+      {/* Recently Viewed Strip ("সম্প্রতি দেখা") */}
+      {recentlyViewedMedicines.length > 0 && !searchQuery && !favoritesOnly && selectedLetter === 'ALL' && (
+        <section className="space-y-2">
+          <div className="flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-300 px-1">
+            <History className="w-4 h-4 text-teal-600" />
+            <span>সম্প্রতি দেখা</span>
+          </div>
+          <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
+            {recentlyViewedMedicines.slice(0, 8).map((med) => (
+              <button
+                key={`recent_${med.id}`}
+                type="button"
+                onClick={() => handleOpenMedicineDetail(med)}
+                className="min-w-[180px] max-w-[220px] p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-500 text-left shrink-0 cursor-pointer transition-colors"
+              >
+                <span className="text-sm font-bold text-slate-900 dark:text-white block truncate">
+                  {med.brandName} ({med.strength})
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 block truncate">
+                  {med.genericName}
+                </span>
+                {med.pricePerUnit !== undefined && (
+                  <span className="text-xs font-bold text-teal-700 dark:text-teal-300 mt-1 block tabular-nums">
+                    ৳{med.pricePerUnit.toFixed(2)}
+                    {med.priceUnit ? ` / ${med.priceUnit}` : ''}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Same Generic Alternatives Highlight when searching by generic name */}
+      {searchQuery.trim() && matchedByGenericSample.length > 0 && (
+        <section className="bg-teal-50/70 dark:bg-teal-950/30 rounded-2xl p-4 border border-teal-200 dark:border-teal-900/60 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-teal-950 dark:text-teal-200">
+              একই উপাদানের অন্যান্য ব্র্যান্ড ({matchedByGenericSample[0].genericName})
+            </h2>
+            <span className="text-xs text-teal-800 dark:text-teal-300">
+              দাম অনুযায়ী সাজানো
+            </span>
+          </div>
+          <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
+            {matchedByGenericSample.map((alt) => (
+              <button
+                key={`gen_alt_${alt.id}`}
+                type="button"
+                onClick={() => handleOpenMedicineDetail(alt)}
+                className="min-w-[190px] max-w-[230px] p-3 rounded-xl bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800 hover:border-teal-500 text-left shrink-0 cursor-pointer transition-colors"
+              >
+                <span className="text-sm font-bold text-slate-900 dark:text-white block truncate">
+                  {alt.brandName} ({alt.strength})
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400 block truncate">
+                  {alt.manufacturer}
+                </span>
+                <span className="text-xs font-bold text-teal-700 dark:text-teal-300 mt-1 block tabular-nums">
+                  {alt.pricePerUnit !== undefined
+                    ? `৳${alt.pricePerUnit.toFixed(2)}${alt.priceUnit ? ` / ${alt.priceUnit}` : ''}`
+                    : alt.dosageForm}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Results Header */}
-      <div className="flex items-center justify-between text-base text-slate-700 dark:text-slate-300 px-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-base text-slate-700 dark:text-slate-300 px-1">
         <span>
-          পাওয়া গেছে: <strong className="text-slate-900 dark:text-white font-bold">{filteredMedicines.length}</strong> টি ওষুধ
+          পাওয়া গেছে: <strong className="text-slate-900 dark:text-white font-bold tabular-nums">{filteredMedicines.length}</strong> টি ওষুধ
           {hasMore && (
             <span className="text-slate-500 dark:text-slate-400"> (দেখানো হচ্ছে {visibleMedicines.length} টি)</span>
           )}
           {isAdmin && adminStatusFilter === 'pending' && ' (অপেক্ষমাণ খসড়া)'}
         </span>
-        {(searchQuery || selectedForm !== 'all' || selectedManufacturer !== 'all' || selectedSource !== 'all') && (
+        {(searchQuery ||
+          selectedForm !== 'all' ||
+          selectedManufacturer !== 'all' ||
+          selectedSource !== 'all' ||
+          priceFilter !== 'all' ||
+          favoritesOnly ||
+          selectedLetter !== 'ALL') && (
           <button
             type="button"
             onClick={() => {
@@ -705,6 +943,9 @@ export const MedicineLibrary: React.FC = () => {
               setSelectedForm('all');
               setSelectedManufacturer('all');
               setSelectedSource('all');
+              setPriceFilter('all');
+              setFavoritesOnly(false);
+              setSelectedLetter('ALL');
             }}
             className="min-h-[48px] px-3 text-teal-800 dark:text-teal-300 hover:underline font-bold cursor-pointer"
           >
@@ -767,10 +1008,24 @@ export const MedicineLibrary: React.FC = () => {
                         </p>
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
-                        {med.strength}
-                      </span>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
+                          {med.strength}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => toggleFavorite(e, med.id)}
+                          aria-label={favoriteIdSet.has(med.id) ? 'পছন্দ থেকে সরান' : 'পছন্দে যোগ করুন'}
+                          className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
+                            favoriteIdSet.has(med.id)
+                              ? 'text-amber-500 bg-amber-50 dark:bg-amber-950/50'
+                              : 'text-slate-400 hover:text-amber-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          <Star className={`w-4 h-4 ${favoriteIdSet.has(med.id) ? 'fill-amber-500' : ''}`} />
+                        </button>
+                      </div>
                       <span className="text-[10px] text-slate-400 font-medium">
                         {med.dosageForm}
                       </span>
@@ -785,9 +1040,12 @@ export const MedicineLibrary: React.FC = () => {
                     </div>
                     
                     {med.pricePerUnit !== undefined && (
-                      <div className="flex items-center justify-between text-[11px]">
-                        <span className="text-slate-400">খুচরা মূল্য:</span>
-                        <span className="font-semibold text-teal-800 dark:text-teal-300">৳ {med.pricePerUnit.toFixed(2)}</span>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500 dark:text-slate-400">খুচরা মূল্য:</span>
+                        <span className="font-bold text-teal-800 dark:text-teal-300 tabular-nums">
+                          ৳ {med.pricePerUnit.toFixed(2)}
+                          {med.priceUnit ? ` / ${med.priceUnit}` : ''}
+                        </span>
                       </div>
                     )}
 
@@ -813,7 +1071,7 @@ export const MedicineLibrary: React.FC = () => {
                 <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setSelectedGlobalMedForDetail(med)}
+                    onClick={() => handleOpenMedicineDetail(med)}
                     className="min-h-[48px] flex-1 py-2.5 px-3 text-base font-semibold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors cursor-pointer text-center"
                   >
                     বিস্তারিত
@@ -936,6 +1194,14 @@ export const MedicineLibrary: React.FC = () => {
       {/* Global Medicine Detail Modal */}
       <GlobalMedicineDetailModal
         medicine={selectedGlobalMedForDetail}
+        allMedicines={globalMedicines}
+        isFavorite={
+          selectedGlobalMedForDetail
+            ? favoriteIdSet.has(selectedGlobalMedForDetail.id)
+            : false
+        }
+        onToggleFavorite={(id) => toggleFavorite(null, id)}
+        onSelectMedicine={(med) => handleOpenMedicineDetail(med)}
         onClose={() => setSelectedGlobalMedForDetail(null)}
         onAddToMyMedicines={(med) => openAddToPersonalModal(med)}
       />

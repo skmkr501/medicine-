@@ -24,7 +24,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activePage, onNavigate }) 
       id: 'medicines',
       label: 'ওষুধ',
       icon: Pill,
-      matchPages: ['medicines', 'add-medicine', 'library'],
+      matchPages: ['medicines', 'add-medicine', 'library', 'shopping-list'],
     },
     {
       id: 'ai-assistant',
@@ -41,7 +41,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activePage, onNavigate }) 
   ];
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 transition-colors shadow-lg">
+    <nav className="no-print md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 transition-colors shadow-lg">
       <div className="grid grid-cols-4 h-[72px] max-w-lg mx-auto">
         {items.map((item) => {
           const Icon = item.icon;

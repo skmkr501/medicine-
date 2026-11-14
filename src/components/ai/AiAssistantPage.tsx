@@ -3,6 +3,7 @@ import { useMedicine } from '../../context/MedicineContext';
 import { fetchMedicineInfo, MedicineInfoResponse } from '../../services/aiService';
 import { PrescriptionScannerModal } from '../medicines/PrescriptionScannerModal';
 import { PrescriptionScanResult } from '../../services/aiService';
+import { buildAiResponseSpeechText, useBengaliSpeech } from '../../utils/speechUtils';
 import {
   Sparkles,
   Search,
@@ -15,6 +16,8 @@ import {
   CheckCircle2,
   HelpCircle,
   FileText,
+  Volume2,
+  Square,
 } from 'lucide-react';
 
 const COMMON_PRESETS = [
@@ -35,11 +38,14 @@ export const AiAssistantPage: React.FC = () => {
   const [result, setResult] = useState<MedicineInfoResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const { hasBengaliVoice, isSpeaking, voiceSettings, speak, stop } = useBengaliSpeech();
+  const canSpeak = hasBengaliVoice && voiceSettings.enabled;
 
   const handleSearch = async (targetName?: string) => {
     const med = (targetName || query).trim();
     if (!med) return;
 
+    stop();
     setLoading(true);
     setError(null);
     setResult(null);
@@ -177,11 +183,36 @@ export const AiAssistantPage: React.FC = () => {
         {result && (
           <div className="mt-6 space-y-4">
             <div className="p-5 bg-teal-50/40 dark:bg-teal-950/20 border border-teal-200/90 dark:border-teal-800/60 rounded-xl">
-              <div className="flex items-center justify-between pb-3 mb-3 border-b border-teal-200/60 dark:border-teal-800/60">
+              <div className="flex items-center justify-between gap-3 flex-wrap pb-3 mb-3 border-b border-teal-200/60 dark:border-teal-800/60">
                 <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
                   <CheckCircle2 className="w-5 h-5 text-teal-600 dark:text-teal-400" />
                   {result.medicineName} — বাংলা তথ্য সংক্ষেপ
                 </h3>
+                {canSpeak && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isSpeaking) {
+                        stop();
+                      } else {
+                        speak(buildAiResponseSpeechText(result.medicineName, result.info));
+                      }
+                    }}
+                    className="min-h-[48px] px-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800 hover:bg-teal-50 text-teal-800 dark:text-teal-200 font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {isSpeaking ? (
+                      <>
+                        <Square className="w-4 h-4 fill-current" />
+                        <span>থামুন</span>
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="w-4 h-4" />
+                        <span>🔊 শুনুন</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
               <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-line">

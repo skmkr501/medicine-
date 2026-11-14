@@ -18,7 +18,7 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
   logs,
   onClose,
 }) => {
-  const { healthRecords } = useMedicine();
+  const { healthRecords, setCurrentPage } = useMedicine();
 
   const patientMedicines = patient
     ? medicines.filter((m) => !m.assignedPatientId || m.assignedPatientId === patient.id)
@@ -85,11 +85,22 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
             <span>ডাক্তার পরামর্শের জন্য ওষুধ সেবনের আনুষ্ঠানিক রিপোর্ট</span>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                setCurrentPage('share-report');
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] text-xs font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-900/60 rounded-lg shadow-2xs transition-colors cursor-pointer"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>নিরাপদ শেয়ার লিংক</span>
+            </button>
             <button
               type="button"
               onClick={handleShareWhatsApp}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-950/60 hover:bg-emerald-200 dark:hover:bg-emerald-900/80 rounded-lg shadow-2xs transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] text-xs font-semibold text-emerald-800 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-950/60 hover:bg-emerald-200 dark:hover:bg-emerald-900/80 rounded-lg shadow-2xs transition-colors cursor-pointer"
             >
               <Share2 className="w-3.5 h-3.5" />
               <span>WhatsApp এ শেয়ার</span>

@@ -36,7 +36,14 @@ export function parseDosageUnits(dosageStr?: string): number {
   const trimmed = dosageStr.trim().toLowerCase();
 
   // Fraction recognition
-  if (trimmed.includes('১/২') || trimmed.includes('1/2') || trimmed.includes('আধা')) {
+  if (
+    trimmed.includes('১/২') ||
+    trimmed.includes('1/2') ||
+    trimmed.includes('আধা') ||
+    trimmed.includes('অর্ধেক') ||
+    trimmed === 'half' ||
+    trimmed.includes('half ')
+  ) {
     return 0.5;
   }
   if (trimmed.includes('১/৪') || trimmed.includes('1/4') || trimmed.includes('এক চতুর্থাংশ')) {

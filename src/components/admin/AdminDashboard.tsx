@@ -39,6 +39,7 @@ import {
   Server,
   Wifi,
   Plus,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -47,11 +48,13 @@ export const AdminDashboard: React.FC = () => {
     isAdmin,
     adminEmail,
     globalMedicines,
+    libraryVersion,
     importBatches,
     patients,
     setCurrentPage,
     openAuthModal,
     openManualAddModal,
+    migrateLegacyLibraryAction,
     deleteGlobalMedicineAction,
     bulkDeleteGlobalMedicinesAction,
     publishGlobalMedicineAction,
@@ -68,6 +71,13 @@ export const AdminDashboard: React.FC = () => {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>('');
+  const [isMigratingLegacy, setIsMigratingLegacy] = useState<boolean>(false);
+  const [legacyMigrationResult, setLegacyMigrationResult] = useState<{
+    legacyFoundCount: number;
+    mergedTotalCount: number;
+    chunkCount: number;
+    newVersion: number;
+  } | null>(null);
 
   // Modals & User Details
   const [showUsersModal, setShowUsersModal] = useState<boolean>(false);
@@ -162,7 +172,20 @@ export const AdminDashboard: React.FC = () => {
     if (isAdmin) {
       loadDashboardData();
     }
-  }, [isAdmin, globalMedicines.length, importBatches.length]);
+  }, [isAdmin]);
+
+  const handleLegacyMigration = async () => {
+    if (isMigratingLegacy) return;
+    setIsMigratingLegacy(true);
+    try {
+      const res = await migrateLegacyLibraryAction();
+      if (res) {
+        setLegacyMigrationResult(res);
+      }
+    } finally {
+      setIsMigratingLegacy(false);
+    }
+  };
 
   // Non-admin Security Lockdown Screen
   if (!isAdmin) {
@@ -293,6 +316,15 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               type="button"
+              onClick={() => setCurrentPage('admin-library')}
+              className="flex items-center gap-2 px-5 py-2.5 bg-white text-teal-950 hover:bg-teal-50 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+              <span>ওষুধ ব্যবস্থাপনা</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('import')}
               className="flex items-center gap-2 px-5 py-2.5 bg-teal-500 hover:bg-teal-400 active:bg-teal-600 text-teal-950 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md"
             >
@@ -414,6 +446,41 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* 3.5 One-time Legacy Library Migration Card */}
+      <div className="bg-amber-50/70 dark:bg-amber-950/20 rounded-3xl p-5 border border-amber-200 dark:border-amber-900/60 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-amber-700 dark:text-amber-400" />
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              চাঙ্কড লাইব্রেরি সিঙ্ক ও পুরনো ডেটা মাইগ্রেশন
+            </h3>
+            {libraryVersion > 0 && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                সংস্করণ v{libraryVersion}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+            পুরনো ফরম্যাটে থাকা লাইব্রেরির সব ওষুধ একবারে পড়ে ২০০টি করে চাঙ্কে সংরক্ষণ করুন। এরপর সাধারণ ব্যবহারকারীদের ফোনে মাত্র ১টি মেটাডাটা রিডেই লাইব্রেরি সিঙ্ক হবে।
+          </p>
+          {legacyMigrationResult && (
+            <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+              মাইগ্রেশন সম্পন্ন: {legacyMigrationResult.legacyFoundCount}টি পুরনো রেকর্ড → {legacyMigrationResult.chunkCount}টি চাঙ্ক (মোট {legacyMigrationResult.mergedTotalCount}টি ওষুধ, সংস্করণ v{legacyMigrationResult.newVersion})
+            </p>
+          )}
+        </div>
+
+        <button
+          type="button"
+          disabled={isMigratingLegacy}
+          onClick={handleLegacyMigration}
+          className="flex items-center justify-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+        >
+          <RefreshCw className={`w-4 h-4 ${isMigratingLegacy ? 'animate-spin' : ''}`} />
+          <span>{isMigratingLegacy ? 'মাইগ্রেট হচ্ছে...' : 'পুরনো লাইব্রেরি নতুন ফরম্যাটে আনো'}</span>
+        </button>
+      </div>
+
       {/* 4. Core Statistical Metrics Grid (Requirements 1, 2, 3, 4, 5, 6) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         
@@ -514,7 +581,7 @@ export const AdminDashboard: React.FC = () => {
               ) : (
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-extrabold text-emerald-700 dark:text-emerald-400 font-mono">
-                    {stats?.totalPublishedMedicines ?? 0}
+                    {globalMedicines.filter((m) => m.status === 'published' && m.verifiedByAdmin).length}
                   </span>
                   <span className="text-xs text-slate-400 font-medium">টি ওষুধ</span>
                 </div>
@@ -556,7 +623,7 @@ export const AdminDashboard: React.FC = () => {
               ) : (
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-extrabold text-amber-600 dark:text-amber-400 font-mono">
-                    {stats?.totalUnpublishedMedicines ?? 0}
+                    {globalMedicines.filter((m) => m.status !== 'published' || !m.verifiedByAdmin).length}
                   </span>
                   <span className="text-xs text-slate-400 font-medium">টি খসড়া</span>
                 </div>
@@ -598,7 +665,7 @@ export const AdminDashboard: React.FC = () => {
               ) : (
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-extrabold text-purple-700 dark:text-purple-400 font-mono">
-                    {stats?.totalImportBatches ?? 0}
+                    {importBatches.length || stats?.totalImportBatches || 0}
                   </span>
                   <span className="text-xs text-slate-400 font-medium">টি ফাইল ব্যাচ</span>
                 </div>
@@ -640,7 +707,7 @@ export const AdminDashboard: React.FC = () => {
               ) : (
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-extrabold text-cyan-700 dark:text-cyan-400 font-mono">
-                    {stats?.pendingVerificationCount ?? 0}
+                    {globalMedicines.filter((m) => m.status === 'pending_verification' || (!m.verifiedByAdmin && m.status !== 'published')).length}
                   </span>
                   <span className="text-xs text-slate-400 font-medium">টি রেকর্ড</span>
                 </div>
@@ -738,18 +805,18 @@ export const AdminDashboard: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => setActiveTab('import')}
-            className="flex items-center gap-3 p-3.5 bg-white dark:bg-slate-900 hover:bg-rose-50 dark:hover:bg-slate-800/90 rounded-2xl border border-slate-200 dark:border-slate-800 transition-all cursor-pointer group shadow-2xs text-left"
+            onClick={() => setCurrentPage('admin-library')}
+            className="flex items-center gap-3 p-3.5 bg-white dark:bg-slate-900 hover:bg-teal-50 dark:hover:bg-slate-800/90 rounded-2xl border border-teal-300 dark:border-teal-800 transition-all cursor-pointer group shadow-2xs text-left"
           >
-            <div className="p-2.5 rounded-xl bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 group-hover:scale-105 transition-transform">
-              <Trash2 className="w-5 h-5" />
+            <div className="p-2.5 rounded-xl bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 group-hover:scale-105 transition-transform">
+              <SlidersHorizontal className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-xs font-bold text-slate-900 dark:text-white block group-hover:text-rose-600 dark:group-hover:text-rose-400">
-                টেস্ট ডাটা নিরাপদ ডিলিট
+              <span className="text-xs font-bold text-slate-900 dark:text-white block group-hover:text-teal-700 dark:group-hover:text-teal-400">
+                ওষুধ ব্যবস্থাপনা
               </span>
               <span className="text-[11px] text-slate-400 block mt-0.5">
-                খসড়া কিউ থেকে একক বা বাল্ক
+                সম্পাদনা, ডুপ্লিকেট ও নিরাপদ মুছা
               </span>
             </div>
           </button>

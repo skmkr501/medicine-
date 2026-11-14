@@ -11,11 +11,13 @@ import { Toast } from './components/ui/Toast';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { MedicineList } from './components/medicines/MedicineList';
 import { AddMedicine } from './components/medicines/AddMedicine';
+import { ShoppingListPage } from './components/medicines/ShoppingListPage';
 import { MedicineReminder } from './components/reminders/MedicineReminder';
 import { MedicineHistory } from './components/history/MedicineHistory';
 import { Settings } from './components/settings/Settings';
 import { MedicineLibrary } from './components/library/MedicineLibrary';
 import { AdminDashboard } from './components/admin/AdminDashboard';
+import { AdminLibraryManager } from './components/admin/AdminLibraryManager';
 import { AuthModal } from './components/auth/AuthModal';
 import { ProfileModal } from './components/profiles/ProfileModal';
 import { StockAdjustmentModal } from './components/medicines/StockAdjustmentModal';
@@ -31,6 +33,11 @@ import { ResetConfirmationModal } from './components/settings/ResetConfirmationM
 import { MePage } from './components/me/MePage';
 import { OnboardingModal } from './components/onboarding/OnboardingModal';
 import { markOnboardingDone, shouldShowOnboarding } from './utils/onboarding';
+import { loadVoiceSettings, stopBengaliSpeech } from './utils/speechUtils';
+import { setNativeAlarmVoiceEnabled } from './services/nativeReminders';
+import { SharedReportViewer } from './components/reports/SharedReportViewer';
+import { ShareReportPage } from './components/reports/ShareReportPage';
+import { extractSharedReportTokenFromPath } from './utils/sharedReports';
 
 const AppContent: React.FC = () => {
   const {
@@ -56,31 +63,43 @@ const AppContent: React.FC = () => {
     shouldShowOnboarding()
   );
 
+  React.useEffect(() => {
+    stopBengaliSpeech();
+  }, [currentPage]);
+
+  React.useEffect(() => {
+    const saved = loadVoiceSettings();
+    setNativeAlarmVoiceEnabled(saved.apkAlarmVoiceEnabled);
+  }, []);
+
   const handleCloseOnboarding = () => {
     markOnboardingDone();
     setShowOnboarding(false);
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors print-root-white print:bg-white print:text-black print:min-h-0">
       
       {/* Top Bar following Top Bar Contract */}
       <Navbar activePage={currentPage} onNavigate={setCurrentPage} />
 
       {/* Main Page Content */}
-      <main className="flex-1 pb-24 md:pb-12">
+      <main className="flex-1 pb-24 md:pb-12 print:pb-0 print:bg-white print:text-black">
         {currentPage === 'dashboard' && <Dashboard />}
         {currentPage === 'me' && <MePage />}
         {currentPage === 'checklist' && <DailyChecklist />}
         {currentPage === 'medicines' && <MedicineList />}
+        {currentPage === 'shopping-list' && <ShoppingListPage />}
         {currentPage === 'health-records' && <HealthRecordsPage />}
         {currentPage === 'appointments' && <AppointmentsPage />}
         {currentPage === 'add-medicine' && <AddMedicine />}
         {currentPage === 'ai-assistant' && <AiAssistantPage />}
         {currentPage === 'reminders' && <MedicineReminder />}
         {currentPage === 'history' && <MedicineHistory />}
+        {currentPage === 'share-report' && <ShareReportPage />}
         {currentPage === 'settings' && <Settings />}
         {currentPage === 'library' && <MedicineLibrary />}
+        {currentPage === 'admin-library' && <AdminLibraryManager />}
         {(currentPage === 'admin-import' || currentPage === 'admin-dashboard') && <AdminDashboard />}
       </main>
 
@@ -133,7 +152,7 @@ const AppContent: React.FC = () => {
       <OnboardingModal isOpen={showOnboarding} onComplete={handleCloseOnboarding} />
 
       {/* Quiet Footer */}
-      <footer className="hidden md:block border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 text-xs text-slate-500 dark:text-slate-400">
+      <footer className="no-print hidden md:block border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 text-xs text-slate-500 dark:text-slate-400">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <AppLogo size="sm" showText={false} />
@@ -159,6 +178,15 @@ const AppContent: React.FC = () => {
 };
 
 export default function App() {
+  const shareToken =
+    typeof window !== 'undefined'
+      ? extractSharedReportTokenFromPath(window.location.pathname)
+      : null;
+
+  if (shareToken) {
+    return <SharedReportViewer token={shareToken} />;
+  }
+
   return (
     <MedicineProvider>
       <AppContent />
