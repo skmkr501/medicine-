@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavigationPage } from '../../types';
-import { Home, Pill, Sparkles, User } from 'lucide-react';
+import { Home, Pill, Sparkles, Stethoscope, User } from 'lucide-react';
 
 interface MobileNavProps {
   activePage: NavigationPage;
@@ -24,7 +24,13 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activePage, onNavigate }) 
       id: 'medicines',
       label: 'ওষুধ',
       icon: Pill,
-      matchPages: ['medicines', 'add-medicine', 'library', 'shopping-list'],
+      matchPages: ['medicines', 'weekly-pillbox', 'add-medicine', 'library', 'shopping-list'],
+    },
+    {
+      id: 'doctors',
+      label: 'ডাক্তার',
+      icon: Stethoscope,
+      matchPages: ['doctors', 'appointments'],
     },
     {
       id: 'ai-assistant',
@@ -36,13 +42,13 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activePage, onNavigate }) 
       id: 'me',
       label: 'আমি',
       icon: User,
-      matchPages: ['me', 'settings', 'health-records', 'appointments', 'history'],
+      matchPages: ['me', 'settings', 'health-records', 'history'],
     },
   ];
 
   return (
-    <nav className="no-print md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 transition-colors shadow-lg">
-      <div className="grid grid-cols-4 h-[72px] max-w-lg mx-auto">
+    <nav className="no-print md:hidden fixed bottom-0 left-0 right-0 z-30 bg-surface/95 backdrop-blur-md border-t border-border transition-colors shadow-lg">
+      <div className="grid grid-cols-5 h-[72px] max-w-lg mx-auto">
         {items.map((item) => {
           const Icon = item.icon;
           const isActive = item.matchPages.includes(activePage);
@@ -53,8 +59,8 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activePage, onNavigate }) 
               onClick={() => onNavigate(item.id)}
               className={`min-h-[48px] flex flex-col items-center justify-center gap-1 text-sm transition-colors cursor-pointer ${
                 isActive
-                  ? 'text-teal-700 dark:text-teal-300 font-bold'
-                  : 'text-slate-600 dark:text-slate-400 font-medium hover:text-slate-900 dark:hover:text-white'
+                  ? 'text-primary font-bold'
+                  : 'text-text-muted font-medium hover:text-text'
               }`}
             >
               <Icon className={`w-6 h-6 ${isActive ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />

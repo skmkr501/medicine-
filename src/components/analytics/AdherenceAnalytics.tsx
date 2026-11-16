@@ -71,32 +71,32 @@ export const AdherenceAnalytics: React.FC = () => {
   }
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-6">
+    <div className="bg-surface border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-6">
       
       {/* Top Streak Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-xs">
-            <Flame className="w-7 h-7 fill-amber-500 stroke-amber-600" />
+          <div className="w-12 h-12 rounded-2xl bg-warning-soft text-warning-text flex items-center justify-center shadow-xs">
+            <Flame className="w-7 h-7 fill-warning stroke-warning-text" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+              <h2 className="text-lg font-bold text-text">
                 নিয়মিততার স্ট্রিক (Adherence Streak)
               </h2>
               {currentStreak > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-2xs font-extrabold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                <span className="px-2 py-0.5 rounded-full text-2xs font-extrabold bg-warning-soft text-warning-text">
                   সক্রিয়
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-text-muted">
               {totalLogsCount === 0 ? (
                 'ওষুধ সেবন শুরু করলে এখানে আপনার নিয়মিততার হিসাব দেখা যাবে।'
               ) : (
                 <>
                   {activePatient?.name || 'ব্যবহারকারী'} টানা{' '}
-                  <strong className="text-amber-600 dark:text-amber-400">
+                  <strong className="text-warning-text">
                     {toBengaliNumber(currentStreak)} দিন
                   </strong>{' '}
                   সঠিক সময়ে ওষুধ গ্রহণ করছেন!
@@ -106,17 +106,17 @@ export const AdherenceAnalytics: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/60 self-start sm:self-auto">
+        <div className="flex items-center gap-4 bg-surface-2 p-3 rounded-xl border border-border self-start sm:self-auto">
           <div>
-            <span className="text-2xs text-slate-400 block">গড় নিয়মিততা</span>
-            <span className="text-lg font-extrabold text-teal-700 dark:text-teal-400 tabular-nums">
+            <span className="text-2xs text-text-muted block">গড় নিয়মিততা</span>
+            <span className="text-lg font-extrabold text-primary tabular-nums">
               {toBengaliNumber(averageAdherence)}%
             </span>
           </div>
-          <div className="w-px h-8 bg-slate-200 dark:bg-slate-700" />
+          <div className="w-px h-8 bg-border" />
           <div>
-            <span className="text-2xs text-slate-400 block">মোট ডোজ গ্রহণ</span>
-            <span className="text-lg font-extrabold text-emerald-700 dark:text-emerald-400 tabular-nums">
+            <span className="text-2xs text-text-muted block">মোট ডোজ গ্রহণ</span>
+            <span className="text-lg font-extrabold text-success-text tabular-nums">
               {toBengaliNumber(totalTaken)} বার
             </span>
           </div>
@@ -126,32 +126,32 @@ export const AdherenceAnalytics: React.FC = () => {
       {/* 7-Day Visual SVG Bar Chart */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-            <TrendingUp className="w-4 h-4 text-teal-600" />
+          <span className="text-xs font-bold text-text flex items-center gap-1.5">
+            <TrendingUp className="w-4 h-4 text-primary" />
             গত ৭ দিনের দৈনিক গ্রহণের হার
           </span>
-          <span className="text-2xs text-slate-400">১০০% লক্ষ্যমাত্রা</span>
+          <span className="text-2xs text-text-muted">১০০% লক্ষ্যমাত্রা</span>
         </div>
 
-        <div className="grid grid-cols-7 gap-2 sm:gap-4 items-end h-36 pt-4 pb-2 px-2 bg-slate-50/70 dark:bg-slate-800/30 rounded-xl border border-slate-100 dark:border-slate-800">
+        <div className="grid grid-cols-7 gap-2 sm:gap-4 items-end h-36 pt-4 pb-2 px-2 bg-surface-2/60 rounded-xl border border-border">
           {last7DaysData.map((d, idx) => {
             const isToday = idx === last7DaysData.length - 1;
             const hasLogs = d.total > 0;
             const barHeight = hasLogs ? Math.max(15, d.percent) : 8;
 
-            let barColor = 'bg-slate-300 dark:bg-slate-600';
+            let barColor = 'bg-border';
             if (hasLogs) {
-              if (d.percent === 100) barColor = 'bg-emerald-600';
-              else if (d.percent < 70) barColor = 'bg-amber-500';
-              else barColor = 'bg-teal-600';
+              if (d.percent === 100) barColor = 'bg-success';
+              else if (d.percent < 70) barColor = 'bg-warning';
+              else barColor = 'bg-primary';
             }
 
             return (
               <div key={d.date} className="flex flex-col items-center h-full justify-end gap-1.5">
-                <span className="text-2xs font-bold text-slate-600 dark:text-slate-300 tabular-nums">
+                <span className="text-2xs font-bold text-text-muted tabular-nums">
                   {hasLogs ? `${toBengaliNumber(d.percent)}%` : '–'}
                 </span>
-                <div className="w-full max-w-[28px] bg-slate-200 dark:bg-slate-700 rounded-t-lg h-24 flex items-end overflow-hidden">
+                <div className="w-full max-w-[28px] bg-surface-2 rounded-t-lg h-24 flex items-end overflow-hidden">
                   <div
                     className={`w-full ${barColor} rounded-t-lg transition-all duration-500 ease-out`}
                     style={{ height: `${barHeight}%` }}
@@ -160,8 +160,8 @@ export const AdherenceAnalytics: React.FC = () => {
                 <span
                   className={`text-2xs ${
                     isToday
-                      ? 'font-bold text-teal-700 dark:text-teal-400'
-                      : 'text-slate-500 dark:text-slate-400'
+                      ? 'font-bold text-primary'
+                      : 'text-text-muted'
                   }`}
                 >
                   {d.dayBn}

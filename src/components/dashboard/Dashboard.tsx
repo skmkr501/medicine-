@@ -31,6 +31,7 @@ import {
   X,
   Volume2,
   Square,
+  Stethoscope,
 } from 'lucide-react';
 
 import { ExpiringStockSection } from './ExpiringStockSection';
@@ -49,6 +50,8 @@ import {
   useBengaliSpeech,
 } from '../../utils/speechUtils';
 import { CaregiverAlertBanners, CaregiverFamilyCard } from '../caregiver/CaregiverHomeSection';
+import { PatientSuggestionsSection } from '../caregiver/PatientSuggestionsSection';
+import { TimeGroupedMedicinesSection } from './TimeGroupedMedicinesSection';
 
 function parseScheduleMinutes(timeStr: string): number {
   const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
@@ -108,6 +111,7 @@ export const Dashboard: React.FC = () => {
     syncLocalToCloud,
     triggerManualSync,
     syncStatus,
+    isQuotaExceeded,
     lastSyncedAt,
     isSyncing,
     openCreateProfileModal,
@@ -312,22 +316,23 @@ export const Dashboard: React.FC = () => {
     return (
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-5">
         <CaregiverAlertBanners />
+        <PatientSuggestionsSection />
         <div className="grid grid-cols-1 gap-5">
           {/* 1. আজকের ওষুধ */}
           <button
             type="button"
             onClick={() => setShowEasyDosesModal(true)}
-            className="min-h-[120px] w-full p-6 rounded-3xl bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
+            className="min-h-[120px] w-full p-6 rounded-3xl bg-primary hover:bg-primary-hover text-on-primary shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
-                <Pill className="w-9 h-9 text-white" />
+                <Pill className="w-9 h-9" />
               </div>
               <div>
                 <span className="block text-2xl sm:text-3xl font-bold leading-tight">
                   আজকের ওষুধ
                 </span>
-                <span className="block text-base sm:text-lg text-teal-100 mt-1 font-medium">
+                <span className="block text-base sm:text-lg opacity-90 mt-1 font-medium">
                   {totalToday === 0
                     ? 'কোনো ওষুধ যোগ করা হয়নি'
                     : pendingDoses.length > 0
@@ -336,14 +341,14 @@ export const Dashboard: React.FC = () => {
                 </span>
               </div>
             </div>
-            <ChevronRight className="w-8 h-8 text-teal-100 shrink-0" />
+            <ChevronRight className="w-8 h-8 opacity-90 shrink-0" />
           </button>
 
           {/* 2. ওষুধ যোগ */}
           <button
             type="button"
             onClick={() => setCurrentPage('add-medicine')}
-            className="min-h-[120px] w-full p-6 rounded-3xl bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
+            className="min-h-[120px] w-full p-6 rounded-3xl bg-[#15803D] hover:bg-[#166534] text-white shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
@@ -353,19 +358,19 @@ export const Dashboard: React.FC = () => {
                 <span className="block text-2xl sm:text-3xl font-bold leading-tight">
                   ওষুধ যোগ
                 </span>
-                <span className="block text-base sm:text-lg text-emerald-100 mt-1 font-medium">
+                <span className="block text-base sm:text-lg text-white/90 mt-1 font-medium">
                   নতুন ওষুধ বা ছবি থেকে যোগ করুন
                 </span>
               </div>
             </div>
-            <ChevronRight className="w-8 h-8 text-emerald-100 shrink-0" />
+            <ChevronRight className="w-8 h-8 text-white/90 shrink-0" />
           </button>
 
           {/* 3. জরুরি কল */}
           <button
             type="button"
             onClick={() => setShowEasyEmergencyModal(true)}
-            className="min-h-[120px] w-full p-6 rounded-3xl bg-rose-700 hover:bg-rose-800 active:bg-rose-900 text-white shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
+            className="min-h-[120px] w-full p-6 rounded-3xl bg-[#B91C1C] hover:bg-[#991B1B] text-white shadow-md flex items-center justify-between gap-4 text-left transition-colors cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
@@ -375,12 +380,12 @@ export const Dashboard: React.FC = () => {
                 <span className="block text-2xl sm:text-3xl font-bold leading-tight">
                   জরুরি কল
                 </span>
-                <span className="block text-base sm:text-lg text-rose-100 mt-1 font-medium">
+                <span className="block text-base sm:text-lg text-white/90 mt-1 font-medium">
                   পরিবার, ১৬২৬৩ বা ৯৯৯ নম্বরে কল করুন
                 </span>
               </div>
             </div>
-            <ChevronRight className="w-8 h-8 text-rose-100 shrink-0" />
+            <ChevronRight className="w-8 h-8 text-white/90 shrink-0" />
           </button>
         </div>
 
@@ -389,9 +394,9 @@ export const Dashboard: React.FC = () => {
         {/* Easy Mode: আজকের ওষুধ Modal */}
         {showEasyDosesModal && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
-              <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
-                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+            <div className="bg-surface border border-border rounded-3xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-5 border-b border-border flex items-center justify-between gap-3">
+                <h2 className="text-2xl font-bold text-text">
                   আজকের ওষুধ
                 </h2>
                 <button
@@ -402,7 +407,7 @@ export const Dashboard: React.FC = () => {
                     setShowEasyDosesModal(false);
                   }}
                   aria-label="বন্ধ করুন"
-                  className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
+                  className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-surface-2 text-text cursor-pointer"
                 >
                   <X className="w-6 h-6" />
                 </button>
@@ -411,7 +416,7 @@ export const Dashboard: React.FC = () => {
               <div className="p-5 overflow-y-auto space-y-4">
                 {todayDoses.length === 0 ? (
                   <div className="text-center py-8 space-y-4">
-                    <p className="text-xl font-bold text-slate-800 dark:text-slate-100">
+                    <p className="text-xl font-bold text-text">
                       আজকের কোনো ওষুধ নেই
                     </p>
                     <button
@@ -420,16 +425,16 @@ export const Dashboard: React.FC = () => {
                         setShowEasyDosesModal(false);
                         setCurrentPage('add-medicine');
                       }}
-                      className="min-h-[56px] px-7 py-3 bg-teal-700 hover:bg-teal-800 text-white font-bold text-lg rounded-2xl cursor-pointer inline-flex items-center gap-2"
+                      className="min-h-[56px] px-7 py-3 bg-primary hover:bg-primary-hover text-on-primary font-bold text-lg rounded-2xl cursor-pointer inline-flex items-center gap-2"
                     >
                       <Plus className="w-6 h-6" />
                       <span>ওষুধ যোগ করুন</span>
                     </button>
                   </div>
                 ) : pendingDoses.length === 0 ? (
-                  <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl p-6 text-center space-y-2">
-                    <CheckCircle2 className="w-12 h-12 text-emerald-700 dark:text-emerald-400 mx-auto" />
-                    <p className="text-2xl font-bold text-emerald-950 dark:text-emerald-100">
+                  <div className="bg-success-soft border border-success/30 rounded-2xl p-6 text-center space-y-2">
+                    <CheckCircle2 className="w-12 h-12 text-success-text mx-auto" />
+                    <p className="text-2xl font-bold text-success-text">
                       আজকের সব ওষুধ খাওয়া হয়েছে ✓
                     </p>
                   </div>
@@ -437,17 +442,17 @@ export const Dashboard: React.FC = () => {
                   pendingDoses.map((dose) => (
                     <div
                       key={dose.key}
-                      className="p-5 rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 space-y-3"
+                      className="p-5 rounded-2xl border-2 border-border bg-surface-2/70 space-y-3"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <div className="text-base font-bold text-teal-800 dark:text-teal-300">
+                        <div className="text-base font-bold text-primary">
                           {dose.timeSlot} · {formatBengaliTime(dose.time)}
                         </div>
                         {canSpeakDose && (
                           <button
                             type="button"
                             onClick={() => handleSpeakDose(dose)}
-                            className="min-h-[48px] px-4 py-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-200 font-bold text-base inline-flex items-center gap-1.5 cursor-pointer"
+                            className="min-h-[48px] px-4 py-2 rounded-xl bg-primary-soft border border-primary/25 text-primary font-bold text-base inline-flex items-center gap-1.5 cursor-pointer"
                           >
                             {isSpeaking && speakingDoseKey === dose.key ? (
                               <>
@@ -463,16 +468,16 @@ export const Dashboard: React.FC = () => {
                           </button>
                         )}
                       </div>
-                      <div className="text-2xl font-bold text-slate-900 dark:text-white">
+                      <div className="text-2xl font-bold text-text">
                         {dose.brandName}
                       </div>
-                      <div className="text-lg font-semibold text-slate-700 dark:text-slate-200">
+                      <div className="text-lg font-semibold text-text-muted">
                         ডোজ: {dose.dosage} · {dose.mealTiming}
                       </div>
                       <button
                         type="button"
                         onClick={() => handleTakeDose(dose)}
-                        className="min-h-[56px] w-full flex items-center justify-center gap-2 px-6 py-3 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xl rounded-2xl cursor-pointer"
+                        className="min-h-[56px] w-full flex items-center justify-center gap-2 px-6 py-3 bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xl rounded-2xl cursor-pointer"
                       >
                         <CheckCircle2 className="w-6 h-6" />
                         <span>খেয়েছি</span>
@@ -488,16 +493,16 @@ export const Dashboard: React.FC = () => {
         {/* Easy Mode: জরুরি কল Modal */}
         {showEasyEmergencyModal && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
-              <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
-                <h2 className="text-2xl font-bold text-rose-700 dark:text-rose-400">
+            <div className="bg-surface border border-border rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
+              <div className="p-5 border-b border-border flex items-center justify-between gap-3">
+                <h2 className="text-2xl font-bold text-danger-text">
                   জরুরি কল
                 </h2>
                 <button
                   type="button"
                   onClick={() => setShowEasyEmergencyModal(false)}
                   aria-label="বন্ধ করুন"
-                  className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
+                  className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-surface-2 text-text cursor-pointer"
                 >
                   <X className="w-6 h-6" />
                 </button>
@@ -507,7 +512,7 @@ export const Dashboard: React.FC = () => {
                 {cleanEmergencyPhone ? (
                   <a
                     href={`tel:${cleanEmergencyPhone}`}
-                    className="min-h-[64px] w-full p-4 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xl flex items-center justify-between gap-3"
+                    className="min-h-[64px] w-full p-4 rounded-2xl bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xl flex items-center justify-between gap-3"
                   >
                     <span className="flex items-center gap-3">
                       <PhoneCall className="w-6 h-6 shrink-0" />
@@ -523,7 +528,7 @@ export const Dashboard: React.FC = () => {
                       setShowEasyEmergencyModal(false);
                       setCurrentPage('settings');
                     }}
-                    className="min-h-[56px] w-full p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-100 font-bold text-lg text-center cursor-pointer"
+                    className="min-h-[56px] w-full p-4 rounded-2xl bg-warning-soft border border-warning/40 text-warning-text font-bold text-lg text-center cursor-pointer"
                   >
                     পরিবারের জরুরি নম্বর সেটিংস থেকে যোগ করুন
                   </button>
@@ -531,7 +536,7 @@ export const Dashboard: React.FC = () => {
 
                 <a
                   href="tel:16263"
-                  className="min-h-[64px] w-full p-4 rounded-2xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xl flex items-center gap-3"
+                  className="min-h-[64px] w-full p-4 rounded-2xl bg-primary hover:bg-primary-hover text-on-primary font-bold text-xl flex items-center gap-3"
                 >
                   <PhoneCall className="w-6 h-6 shrink-0" />
                   <span>স্বাস্থ্য বাতায়ন (১৬২৬৩)</span>
@@ -539,7 +544,7 @@ export const Dashboard: React.FC = () => {
 
                 <a
                   href="tel:999"
-                  className="min-h-[64px] w-full p-4 rounded-2xl bg-rose-700 hover:bg-rose-800 text-white font-bold text-xl flex items-center gap-3"
+                  className="min-h-[64px] w-full p-4 rounded-2xl bg-[#B91C1C] hover:bg-[#991B1B] text-white font-bold text-xl flex items-center gap-3"
                 >
                   <PhoneCall className="w-6 h-6 shrink-0" />
                   <span>জাতীয় জরুরি সেবা (৯৯৯)</span>
@@ -557,15 +562,17 @@ export const Dashboard: React.FC = () => {
 
       {/* Unseen Caregiver Alert Banner & Patient Offline Alert Fallback */}
       <CaregiverAlertBanners />
+      {/* Pending Caregiver Medicine Suggestions (only visible when pending items exist) */}
+      <PatientSuggestionsSection />
 
       {/* Compact Top Context Row: Date + Active Patient Switcher + Sync */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-base font-bold text-slate-900 dark:text-white">
+          <p className="text-base font-bold text-text">
             {formatBengaliDate(todayStr)}
           </p>
           {activePatient && (
-            <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
+            <p className="text-sm text-text-muted mt-0.5">
               {activePatient.name} ({activePatient.relation})
             </p>
           )}
@@ -583,7 +590,7 @@ export const Dashboard: React.FC = () => {
                 }
               }}
               aria-label="সদস্য পরিবর্তন"
-              className="min-h-[48px] text-base font-semibold text-teal-900 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl px-3.5 py-2 focus:outline-hidden cursor-pointer"
+              className="min-h-[48px] text-base font-semibold text-primary bg-primary-soft border border-primary/25 rounded-xl px-3.5 py-2 focus:outline-hidden cursor-pointer"
             >
               {patients.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -601,33 +608,33 @@ export const Dashboard: React.FC = () => {
               disabled={syncStatus === 'syncing' || isSyncing}
               className={`min-h-[48px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors cursor-pointer ${
                 syncStatus === 'synced'
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60'
+                  ? 'bg-success-soft text-success-text border-success/30'
                   : syncStatus === 'syncing' || isSyncing
-                  ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 border-teal-200 dark:border-teal-800/60'
+                  ? 'bg-primary-soft text-primary border-primary/30'
                   : syncStatus === 'offline'
-                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800/60'
-                  : 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800/60'
+                  ? 'bg-warning-soft text-warning-text border-warning/30'
+                  : 'bg-danger-soft text-danger-text border-danger/30'
               }`}
               title={lastSyncedAt ? `শেষ সিঙ্ক: ${lastSyncedAt}` : 'সিঙ্ক অবস্থা'}
             >
               {syncStatus === 'synced' ? (
                 <>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
+                  <CheckCircle2 className="w-4 h-4 text-success-text" />
                   <span>সিঙ্ক করা</span>
                 </>
               ) : syncStatus === 'syncing' || isSyncing ? (
                 <>
-                  <RefreshCw className="w-4 h-4 animate-spin text-teal-700 dark:text-teal-400" />
+                  <RefreshCw className="w-4 h-4 animate-spin text-primary" />
                   <span>সিঙ্ক হচ্ছে</span>
                 </>
-              ) : syncStatus === 'offline' ? (
+              ) : syncStatus === 'offline' || isQuotaExceeded ? (
                 <>
-                  <CloudOff className="w-4 h-4 text-amber-700 dark:text-amber-400" />
-                  <span>অফলাইন</span>
+                  <CloudOff className="w-4 h-4 text-warning-text" />
+                  <span>{isQuotaExceeded ? 'ফোনে সেভ' : 'অফলাইন'}</span>
                 </>
               ) : (
                 <>
-                  <AlertCircle className="w-4 h-4 text-rose-700 dark:text-rose-400" />
+                  <AlertCircle className="w-4 h-4 text-danger-text" />
                   <span>আবার চেষ্টা</span>
                 </>
               )}
@@ -636,34 +643,57 @@ export const Dashboard: React.FC = () => {
             <button
               type="button"
               onClick={openAuthModal}
-              className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-surface text-text border border-border hover:bg-surface-2 transition-colors cursor-pointer"
             >
-              <Lock className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+              <Lock className="w-4 h-4 text-primary" />
               <span>লগইন করুন</span>
             </button>
           )}
         </div>
       </div>
 
+      {/* Daily Cloud Quota Notice Banner */}
+      {isQuotaExceeded && currentUser && (
+        <section
+          aria-label="ক্লাউড সীমা বিজ্ঞপ্তি"
+          className="bg-warning-soft border border-warning/35 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-3">
+            <CloudOff className="w-5 h-5 text-warning-text shrink-0 mt-0.5" />
+            <p className="text-sm sm:text-base text-text font-medium">
+              আজকের ক্লাউড সীমা শেষ হয়েছে — আপনার সব পরিবর্তন ফোনেই নিরাপদে সংরক্ষিত হচ্ছে এবং আগামীকাল সীমা রিসেট হলে সিঙ্ক হবে।
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={triggerManualSync}
+            disabled={isSyncing}
+            className="min-h-[44px] shrink-0 px-4 py-2 bg-surface border border-warning/40 text-warning-text rounded-xl text-sm font-bold hover:bg-surface-2 transition-colors cursor-pointer disabled:opacity-50"
+          >
+            আবার চেষ্টা করুন
+          </button>
+        </section>
+      )}
+
       {/* Native Alarm Permission Alert Banner */}
       {hasMissingPermissions && (
-        <section className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/80 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <section className="bg-warning-soft border border-warning/35 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-3">
-            <AlertTriangle className="w-6 h-6 text-amber-700 dark:text-amber-300 shrink-0 mt-0.5" />
+            <AlertTriangle className="w-6 h-6 text-warning-text shrink-0 mt-0.5" />
             <div>
-              <h3 className="text-base font-bold text-amber-950 dark:text-amber-100">
+              <h3 className="text-base font-bold text-text">
                 ঠিক সময়ে অ্যালার্ম বাজতে এই অনুমতিগুলো দিন
               </h3>
-              <div className="flex flex-wrap items-center gap-2 mt-1.5 text-sm text-amber-900 dark:text-amber-200 font-medium">
-                <span className={nativePerms.exactAlarm ? 'text-emerald-800 dark:text-emerald-300 font-semibold' : 'text-rose-700 dark:text-rose-300 font-bold'}>
+              <div className="flex flex-wrap items-center gap-2 mt-1.5 text-sm text-text-muted font-medium">
+                <span className={nativePerms.exactAlarm ? 'text-success-text font-semibold' : 'text-danger-text font-bold'}>
                   সঠিক সময়ে অ্যালার্ম {nativePerms.exactAlarm ? '✓' : '✕'}
                 </span>
                 <span>·</span>
-                <span className={nativePerms.notifications ? 'text-emerald-800 dark:text-emerald-300 font-semibold' : 'text-rose-700 dark:text-rose-300 font-bold'}>
+                <span className={nativePerms.notifications ? 'text-success-text font-semibold' : 'text-danger-text font-bold'}>
                   নোটিফিকেশন {nativePerms.notifications ? '✓' : '✕'}
                 </span>
                 <span>·</span>
-                <span className={nativePerms.batteryUnrestricted ? 'text-emerald-800 dark:text-emerald-300 font-semibold' : 'text-rose-700 dark:text-rose-300 font-bold'}>
+                <span className={nativePerms.batteryUnrestricted ? 'text-success-text font-semibold' : 'text-danger-text font-bold'}>
                   ব্যাটারি সেভার থেকে ছাড় {nativePerms.batteryUnrestricted ? '✓' : '✕'}
                 </span>
               </div>
@@ -673,7 +703,7 @@ export const Dashboard: React.FC = () => {
           <button
             type="button"
             onClick={() => setCurrentPage('settings')}
-            className="min-h-[48px] px-5 py-2.5 bg-amber-700 hover:bg-amber-800 text-white font-bold text-base rounded-xl transition-colors shrink-0 cursor-pointer"
+            className="min-h-[48px] px-5 py-2.5 bg-[#B45309] hover:bg-[#92400E] text-white font-bold text-base rounded-xl transition-colors shrink-0 cursor-pointer"
           >
             অনুমতি ঠিক করুন
           </button>
@@ -682,22 +712,22 @@ export const Dashboard: React.FC = () => {
 
       {/* Upcoming Doctor Appointments Alert */}
       {urgentAppointments.length > 0 && (
-        <section className="bg-teal-50 dark:bg-teal-950/40 border border-teal-300 dark:border-teal-700 rounded-2xl p-4 sm:p-5">
+        <section className="bg-primary-soft border border-primary/30 rounded-2xl p-4 sm:p-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-teal-700 text-white shrink-0">
+              <div className="p-2.5 rounded-xl bg-primary text-on-primary shrink-0">
                 <Calendar className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-teal-950 dark:text-teal-100">
+                <h3 className="text-base font-bold text-text">
                   ডাক্তারের সাথে দেখা ({toBengaliNumber(urgentAppointments.length)}টি)
                 </h3>
                 <div className="mt-1 space-y-1">
                   {urgentAppointments.map((app) => {
                     const isToday = app.appointmentDate === realTodayStr;
                     return (
-                      <p key={app.id} className="text-sm text-teal-900 dark:text-teal-200 font-medium">
-                        <strong>{app.doctorName}</strong> — {isToday ? 'আজ' : 'আগামীকাল'} {toBengaliNumber(app.appointmentTime)}
+                      <p key={app.id} className="text-sm text-text-muted font-medium">
+                        <strong className="text-text">{app.doctorName}</strong> — {isToday ? 'আজ' : 'আগামীকাল'} {toBengaliNumber(app.appointmentTime)}
                         {app.location ? ` (${app.location})` : ''}
                       </p>
                     );
@@ -709,7 +739,7 @@ export const Dashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => setCurrentPage('appointments')}
-              className="min-h-[48px] px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-base rounded-xl transition-colors shrink-0 cursor-pointer"
+              className="min-h-[48px] px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-base rounded-xl transition-colors shrink-0 cursor-pointer"
             >
               দেখুন
             </button>
@@ -719,17 +749,17 @@ export const Dashboard: React.FC = () => {
 
       {/* Overdue Dose Family Alert */}
       {overdueDoses.length > 0 && (
-        <section className="bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 rounded-2xl p-4 sm:p-5">
+        <section className="bg-danger-soft border-2 border-danger/35 rounded-2xl p-4 sm:p-5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="p-2.5 rounded-xl bg-rose-700 text-white shrink-0">
+              <div className="p-2.5 rounded-xl bg-[#B91C1C] text-white shrink-0">
                 <Bell className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-rose-950 dark:text-rose-100">
+                <h3 className="text-base font-bold text-danger-text">
                   ওষুধ খাওয়ার সময় পার হয়েছে ({toBengaliNumber(overdueDoses.length)}টি)
                 </h3>
-                <p className="text-sm text-rose-900 dark:text-rose-200 mt-1">
+                <p className="text-sm text-text mt-1">
                   <strong>{overdueDoses.map((d) => `${d.brandName} (${toBengaliNumber(d.time)})`).join(', ')}</strong> — নির্ধারিত সময়ের ৩০ মিনিট পার হয়েছে।
                 </p>
               </div>
@@ -739,7 +769,7 @@ export const Dashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleNotifyFamily(overdueDoses[0], 'whatsapp')}
-                className="min-h-[48px] px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+                className="min-h-[48px] px-4 py-2 bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
               >
                 <Share2 className="w-4 h-4" />
                 <span>পরিবারকে জানান</span>
@@ -747,7 +777,7 @@ export const Dashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleNotifyFamily(overdueDoses[0], 'sms')}
-                className="min-h-[48px] px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+                className="min-h-[48px] px-4 py-2 bg-surface hover:bg-surface-2 border border-border text-text font-bold text-sm rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
               >
                 <PhoneCall className="w-4 h-4" />
                 <span>মেসেজ পাঠান</span>
@@ -761,18 +791,18 @@ export const Dashboard: React.FC = () => {
           STEP 1 MAIN FOCUS: "এখন খাবেন" / EMPTY / ALL DONE CARD
          ======================================================== */}
       {patientMedicines.length === 0 ? (
-        <section className="bg-white dark:bg-slate-900 border-2 border-teal-200 dark:border-teal-800 rounded-2xl p-6 sm:p-10 text-center shadow-sm space-y-5">
-          <div className="w-16 h-16 rounded-2xl bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300 flex items-center justify-center mx-auto">
+        <section className="bg-surface border-2 border-primary/25 rounded-2xl p-6 sm:p-10 text-center shadow-sm space-y-5">
+          <div className="w-16 h-16 rounded-2xl bg-primary-soft text-primary flex items-center justify-center mx-auto">
             <Pill className="w-9 h-9" />
           </div>
 
           <div className="space-y-2 max-w-lg mx-auto">
-            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
+            <h1 className="text-2xl sm:text-3xl font-bold text-text">
               {medicines.length === 0
                 ? 'আপনার প্রথম ওষুধ যোগ করুন'
                 : 'এই সদস্যের কোনো চলমান ওষুধ নেই'}
             </h1>
-            <p className="text-base text-slate-600 dark:text-slate-300 leading-relaxed">
+            <p className="text-base text-text-muted leading-relaxed">
               সহজ ৪ ধাপে ওষুধের নাম ও খাওয়ার সময় যোগ করলে ঠিক সময়ে অ্যালার্ম পাবেন।
             </p>
           </div>
@@ -781,7 +811,7 @@ export const Dashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => setCurrentPage('add-medicine')}
-              className="min-h-[56px] inline-flex items-center justify-center gap-2.5 px-8 py-4 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-bold text-lg rounded-2xl shadow-sm transition-colors cursor-pointer"
+              className="min-h-[56px] inline-flex items-center justify-center gap-2.5 px-8 py-4 bg-primary hover:bg-primary-hover text-on-primary font-bold text-lg rounded-2xl shadow-sm transition-colors cursor-pointer"
             >
               <Plus className="w-6 h-6" />
               <span>ওষুধ যোগ করুন</span>
@@ -791,46 +821,47 @@ export const Dashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={openCreateProfileModal}
-                className="min-h-[56px] inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 font-semibold text-base rounded-2xl transition-colors cursor-pointer"
+                className="min-h-[56px] inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-surface-2 hover:bg-border/60 text-text font-semibold text-base rounded-2xl transition-colors cursor-pointer"
               >
-                <UserPlus className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+                <UserPlus className="w-5 h-5 text-primary" />
                 <span>সদস্য প্রোফাইল তৈরি করুন</span>
               </button>
             )}
           </div>
         </section>
       ) : todayDoses.length === 0 ? (
-        <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center shadow-xs space-y-4">
-          <CheckCircle2 className="w-12 h-12 text-teal-700 dark:text-teal-400 mx-auto" />
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+        <section className="bg-surface border border-border rounded-2xl p-8 text-center shadow-xs space-y-4">
+          <CheckCircle2 className="w-12 h-12 text-primary mx-auto" />
+          <h2 className="text-xl font-bold text-text">
             আজকের কোনো ওষুধের সময়সূচি নেই
           </h2>
           <button
             type="button"
             onClick={() => setCurrentPage('add-medicine')}
-            className="min-h-[52px] inline-flex items-center justify-center gap-2 px-7 py-3 bg-teal-700 hover:bg-teal-800 text-white font-bold text-base rounded-2xl shadow-xs transition-colors cursor-pointer"
+            className="min-h-[52px] inline-flex items-center justify-center gap-2 px-7 py-3 bg-primary hover:bg-primary-hover text-on-primary font-bold text-base rounded-2xl shadow-xs transition-colors cursor-pointer"
           >
             <Plus className="w-5 h-5" />
             <span>ওষুধ যোগ করুন</span>
           </button>
         </section>
       ) : !nextDueDose ? (
-        <section className="bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-300 dark:border-emerald-800 rounded-2xl p-7 sm:p-9 text-center shadow-xs space-y-3">
-          <div className="w-16 h-16 rounded-full bg-emerald-700 text-white flex items-center justify-center mx-auto">
+        <section className="bg-success-soft border-2 border-success/40 rounded-2xl p-7 sm:p-9 text-center shadow-xs space-y-3">
+          <div className="w-16 h-16 rounded-full bg-[#15803D] text-white flex items-center justify-center mx-auto">
             <CheckCircle2 className="w-9 h-9" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-emerald-950 dark:text-emerald-100">
+          <h1 className="text-2xl sm:text-3xl font-bold text-success-text">
             আজকের সব ওষুধ খাওয়া হয়েছে ✓
           </h1>
-          <p className="text-base text-emerald-800 dark:text-emerald-200">
+          <p className="text-base text-text-muted">
             মোট {toBengaliNumber(totalToday)}টি ডোজের মধ্যে {toBengaliNumber(takenCount)}টি সম্পন্ন হয়েছে।
           </p>
         </section>
       ) : (
-        <section className="bg-white dark:bg-slate-900 border-2 border-teal-500 dark:border-teal-600 rounded-2xl p-5 sm:p-7 shadow-md space-y-5">
+        <section className="bg-surface border-2 border-primary rounded-2xl p-5 sm:p-7 shadow-md space-y-5">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span className="inline-flex items-center gap-2 text-base font-bold text-teal-800 dark:text-teal-300">
-              <Clock className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-accent-soft text-accent-text border border-accent/25 text-sm font-bold">
+              <span className="w-2 h-2 rounded-full bg-accent" aria-hidden="true" />
+              <Clock className="w-4 h-4 text-accent-text" />
               <span>এখন খাবেন</span>
             </span>
 
@@ -839,7 +870,7 @@ export const Dashboard: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleSpeakDose(nextDueDose)}
-                  className="min-h-[48px] px-4 py-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 text-teal-800 dark:text-teal-200 font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer"
+                  className="min-h-[48px] px-4 py-2 rounded-xl bg-primary-soft border border-primary/25 hover:bg-primary/15 text-primary font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer"
                 >
                   {isSpeaking && speakingDoseKey === nextDueDose.key ? (
                     <>
@@ -854,23 +885,23 @@ export const Dashboard: React.FC = () => {
                   )}
                 </button>
               )}
-              <span className="text-sm font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-xl">
+              <span className="text-sm font-bold text-text bg-surface-2 px-3 py-1.5 rounded-xl">
                 {nextDueDose.timeSlot} · {formatBengaliTime(nextDueDose.time)}
               </span>
             </div>
           </div>
 
           <div className="space-y-2">
-            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white leading-snug">
+            <h1 className="text-2xl sm:text-3xl font-bold text-text leading-snug">
               {nextDueDose.brandName}
             </h1>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-lg font-semibold text-slate-700 dark:text-slate-200">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-lg font-semibold text-text-muted">
               <span>ডোজ: {nextDueDose.dosage}</span>
-              <span className="text-slate-300 dark:text-slate-600">·</span>
+              <span className="opacity-50">·</span>
               <span>{nextDueDose.mealTiming}</span>
             </div>
             {deferredDoseKeys.includes(nextDueDose.key) && (
-              <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+              <p className="text-sm font-medium text-warning-text">
                 পরে খাওয়ার জন্য রাখা হয়েছিল
               </p>
             )}
@@ -881,7 +912,7 @@ export const Dashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => handleTakeDose(nextDueDose)}
-              className="sm:col-span-2 min-h-[56px] w-full flex items-center justify-center gap-2.5 px-6 py-3.5 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold text-xl rounded-2xl shadow-sm transition-colors cursor-pointer"
+              className="sm:col-span-2 min-h-[56px] w-full flex items-center justify-center gap-2.5 px-6 py-3.5 bg-[#15803D] hover:bg-[#166534] text-white font-bold text-xl rounded-2xl shadow-sm transition-colors cursor-pointer"
             >
               <CheckCircle2 className="w-6 h-6" />
               <span>খেয়েছি</span>
@@ -890,7 +921,7 @@ export const Dashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => handleDeferDose(nextDueDose)}
-              className="min-h-[56px] w-full flex items-center justify-center gap-2 px-5 py-3.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-900 dark:text-slate-100 font-bold text-lg rounded-2xl transition-colors cursor-pointer"
+              className="min-h-[56px] w-full flex items-center justify-center gap-2 px-5 py-3.5 bg-surface-2 hover:bg-border text-text font-bold text-lg rounded-2xl transition-colors cursor-pointer"
             >
               <Clock className="w-5 h-5" />
               <span>পরে</span>
@@ -905,14 +936,14 @@ export const Dashboard: React.FC = () => {
       {todayDoses.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">
+            <h2 className="text-lg sm:text-xl font-bold text-text">
               আজকের বাকি ডোজ ({toBengaliNumber(remainingListDoses.length)}টি)
             </h2>
             {takenCount > 0 && (
               <button
                 type="button"
                 onClick={() => setShowTakenDoses((v) => !v)}
-                className="min-h-[48px] px-3.5 py-2 text-sm font-semibold text-teal-800 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40 rounded-xl transition-colors cursor-pointer"
+                className="min-h-[48px] px-3.5 py-2 text-sm font-semibold text-primary hover:bg-primary-soft rounded-xl transition-colors cursor-pointer"
               >
                 {showTakenDoses
                   ? 'খাওয়া শেষ ডোজ লুকান'
@@ -922,7 +953,7 @@ export const Dashboard: React.FC = () => {
           </div>
 
           {remainingListDoses.length === 0 && !showTakenDoses ? (
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 text-center text-base text-slate-600 dark:text-slate-300">
+            <div className="bg-surface border border-border rounded-2xl p-5 text-center text-base text-text-muted">
               {nextDueDose
                 ? 'এই মুহূর্তে উপরের ডোজটি ছাড়া আর কোনো বাকি ডোজ নেই।'
                 : 'আজকের সব ওষুধ খাওয়া শেষ হয়েছে।'}
@@ -936,33 +967,33 @@ export const Dashboard: React.FC = () => {
                 return (
                   <div
                     key={dose.key}
-                    className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs ${
+                    className={`bg-surface border border-border rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs ${
                       isSkipped ? 'opacity-75' : ''
                     }`}
                   >
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-bold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-2.5 py-1 rounded-lg">
+                        <span className="text-sm font-bold text-primary bg-primary-soft px-2.5 py-1 rounded-lg">
                           {dose.timeSlot} · {formatBengaliTime(dose.time)}
                         </span>
                         {isDeferred && (
-                          <span className="text-sm font-semibold text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 px-2.5 py-1 rounded-lg">
+                          <span className="text-sm font-semibold text-warning-text bg-warning-soft px-2.5 py-1 rounded-lg">
                             পরে খাবেন
                           </span>
                         )}
                         {isSkipped && (
-                          <span className="text-sm font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg">
+                          <span className="text-sm font-semibold text-text-muted bg-surface-2 px-2.5 py-1 rounded-lg">
                             বাদ দেওয়া
                           </span>
                         )}
                       </div>
 
-                      <h3 className="text-lg font-bold text-slate-900 dark:text-white pt-1">
+                      <h3 className="text-lg font-bold text-text pt-1">
                         {dose.brandName}
                       </h3>
 
-                      <p className="text-base text-slate-600 dark:text-slate-300">
-                        ডোজ: <strong className="text-slate-900 dark:text-white">{dose.dosage}</strong> · {dose.mealTiming}
+                      <p className="text-base text-text-muted">
+                        ডোজ: <strong className="text-text">{dose.dosage}</strong> · {dose.mealTiming}
                       </p>
                     </div>
 
@@ -971,7 +1002,7 @@ export const Dashboard: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => handleSpeakDose(dose)}
-                          className="min-h-[48px] px-4 py-2.5 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 text-teal-800 dark:text-teal-200 font-bold text-sm rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                          className="min-h-[48px] px-4 py-2.5 bg-primary-soft border border-primary/25 hover:bg-primary/15 text-primary font-bold text-sm rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
                         >
                           {isSpeaking && speakingDoseKey === dose.key ? (
                             <>
@@ -989,7 +1020,7 @@ export const Dashboard: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleTakeDose(dose)}
-                        className="min-h-[48px] px-6 py-3 bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white font-bold text-base rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2"
+                        className="min-h-[48px] px-6 py-3 bg-[#15803D] hover:bg-[#166534] text-white font-bold text-base rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-2"
                       >
                         <CheckCircle2 className="w-5 h-5" />
                         <span>খেয়েছি</span>
@@ -1003,16 +1034,16 @@ export const Dashboard: React.FC = () => {
                 takenDoses.map((dose) => (
                   <div
                     key={`taken-${dose.key}`}
-                    className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/60 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    className="bg-success-soft/60 border border-success/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                   >
                     <div>
                       <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0" />
-                        <span className="text-lg font-bold text-slate-900 dark:text-white">
+                        <CheckCircle2 className="w-5 h-5 text-success-text shrink-0" />
+                        <span className="text-lg font-bold text-text">
                           {dose.brandName}
                         </span>
                       </div>
-                      <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
+                      <p className="text-base text-text-muted mt-1">
                         {dose.timeSlot} ({formatBengaliTime(dose.time)}) · {dose.dosage} · খাওয়া হয়েছে
                       </p>
                     </div>
@@ -1020,7 +1051,7 @@ export const Dashboard: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => markDose(dose.medicineId, dose.timeSlot, dose.time, 'skipped', 'পূর্বাবস্থায় ফেরানো')}
-                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-text bg-surface border border-border rounded-xl hover:bg-surface-2 cursor-pointer shrink-0"
                     >
                       ফিরিয়ে আনুন
                     </button>
@@ -1030,6 +1061,9 @@ export const Dashboard: React.FC = () => {
           )}
         </section>
       )}
+
+      {/* Time-Grouped Medicines Summary + Printable Daily Slip */}
+      <TimeGroupedMedicinesSection todayStr={todayStr} />
 
       {/* Caregiver "পরিবার" Card (যাদের দেখাশোনা করছেন) */}
       <CaregiverFamilyCard />
@@ -1042,13 +1076,13 @@ export const Dashboard: React.FC = () => {
           type="button"
           onClick={() => setShowMoreWidgets((prev) => !prev)}
           aria-expanded={showMoreWidgets}
-          className="min-h-[52px] w-full flex items-center justify-between px-5 py-3.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-teal-500 rounded-2xl text-base font-bold text-slate-900 dark:text-white shadow-2xs transition-colors cursor-pointer"
+          className="min-h-[52px] w-full flex items-center justify-between px-5 py-3.5 bg-surface border border-border hover:border-primary rounded-2xl text-base font-bold text-text shadow-2xs transition-colors cursor-pointer"
         >
           <span>{showMoreWidgets ? 'কম দেখুন' : 'আরও দেখুন (পরিবার, মজুত, চার্ট ও জরুরি তথ্য)'}</span>
           {showMoreWidgets ? (
-            <ChevronUp className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+            <ChevronUp className="w-5 h-5 text-primary" />
           ) : (
-            <ChevronDown className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+            <ChevronDown className="w-5 h-5 text-primary" />
           )}
         </button>
 
@@ -1056,30 +1090,30 @@ export const Dashboard: React.FC = () => {
           <div className="mt-5 space-y-6">
             {/* Active Patient Progress & Quick Tools */}
             {activePatient && (
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+              <div className="bg-surface border border-border rounded-2xl p-5 shadow-xs space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div className="flex items-center gap-3.5">
                     <img
                       src={activePatient.avatarUrl || '/src/assets/images/avatar_patient_bengali_1793655801544.jpg'}
                       alt={activePatient.name}
                       referrerPolicy="no-referrer"
-                      className="w-14 h-14 rounded-full object-cover border-2 border-teal-600/30"
+                      className="w-14 h-14 rounded-full object-cover border-2 border-primary/30"
                     />
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                        <h3 className="text-lg font-bold text-text">
                           {activePatient.name}
                         </h3>
                         <button
                           type="button"
                           onClick={() => openEditProfileModal(activePatient)}
-                          className="p-2 text-slate-500 hover:text-teal-700 dark:hover:text-teal-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          className="p-2 text-text-muted hover:text-primary rounded-lg hover:bg-surface-2 cursor-pointer"
                           title="প্রোফাইল সম্পাদনা"
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
                       </div>
-                      <p className="text-sm text-slate-600 dark:text-slate-300">
+                      <p className="text-sm text-text-muted">
                         {activePatient.relation} · {toBengaliNumber(activePatient.age)} বছর · রক্ত: {activePatient.bloodGroup}
                       </p>
                     </div>
@@ -1089,7 +1123,7 @@ export const Dashboard: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setCurrentPage('checklist')}
-                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl hover:bg-teal-100 flex items-center gap-1.5 cursor-pointer"
+                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-primary bg-primary-soft border border-primary/25 rounded-xl hover:bg-primary/15 flex items-center gap-1.5 cursor-pointer"
                     >
                       <ListChecks className="w-4 h-4" />
                       <span>দৈনিক চেকলিস্ট</span>
@@ -1097,7 +1131,7 @@ export const Dashboard: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setCurrentPage('reminders')}
-                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl hover:bg-teal-100 flex items-center gap-1.5 cursor-pointer"
+                      className="min-h-[48px] px-4 py-2 text-sm font-semibold text-primary bg-primary-soft border border-primary/25 rounded-xl hover:bg-primary/15 flex items-center gap-1.5 cursor-pointer"
                     >
                       <Bell className="w-4 h-4" />
                       <span>সব রিমাইন্ডার</span>
@@ -1106,34 +1140,34 @@ export const Dashboard: React.FC = () => {
                 </div>
 
                 {/* Adherence Progress Bar */}
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-                  <div className="flex justify-between items-center text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2">
+                <div className="pt-3 border-t border-border">
+                  <div className="flex justify-between items-center text-sm font-semibold text-text mb-2">
                     <span>আজকের ওষুধ খাওয়ার অগ্রগতি</span>
-                    <span className="tabular-nums text-teal-700 dark:text-teal-400">
+                    <span className="tabular-nums text-primary">
                       {toBengaliNumber(adherencePercent)}% ({toBengaliNumber(takenCount)}/{toBengaliNumber(totalToday)})
                     </span>
                   </div>
-                  <div className="w-full bg-slate-200 dark:bg-slate-800 h-3 rounded-full overflow-hidden">
+                  <div className="w-full bg-surface-2 h-3 rounded-full overflow-hidden">
                     <div
-                      className="bg-teal-600 h-full rounded-full transition-all duration-500"
+                      className="bg-primary h-full rounded-full transition-all duration-500"
                       style={{ width: `${adherencePercent}%` }}
                     />
                   </div>
                 </div>
 
                 {/* Cloud Backup Summary */}
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-sm">
+                <div className="pt-3 border-t border-border flex flex-wrap items-center justify-between gap-3 text-sm">
                   {currentUser ? (
                     <>
-                      <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
-                        <Cloud className="w-4 h-4 text-emerald-600" />
+                      <div className="flex items-center gap-2 text-text-muted">
+                        <Cloud className="w-4 h-4 text-success-text" />
                         <span>ক্লাউড ব্যাকআপ চালু ({currentUser.displayName || currentUser.email})</span>
                       </div>
                       <button
                         type="button"
                         onClick={syncLocalToCloud}
                         disabled={isSyncing}
-                        className="min-h-[48px] px-4 py-2 text-sm font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 rounded-xl hover:bg-teal-100 cursor-pointer flex items-center gap-1.5"
+                        className="min-h-[48px] px-4 py-2 text-sm font-semibold text-primary bg-primary-soft border border-primary/25 rounded-xl hover:bg-primary/15 cursor-pointer flex items-center gap-1.5"
                       >
                         <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
                         <span>এখনই সিঙ্ক করুন</span>
@@ -1141,13 +1175,13 @@ export const Dashboard: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      <span className="text-slate-600 dark:text-slate-300">
+                      <span className="text-text-muted">
                         তথ্য সুরক্ষিত রাখতে লগইন করুন
                       </span>
                       <button
                         type="button"
                         onClick={openAuthModal}
-                        className="min-h-[48px] px-4 py-2 text-sm font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl cursor-pointer flex items-center gap-1.5"
+                        className="min-h-[48px] px-4 py-2 text-sm font-bold text-on-primary bg-primary hover:bg-primary-hover rounded-xl cursor-pointer flex items-center gap-1.5"
                       >
                         <Lock className="w-4 h-4" />
                         <span>লগইন বা রেজিস্টার</span>
@@ -1159,29 +1193,37 @@ export const Dashboard: React.FC = () => {
             )}
 
             {/* Quick Action Links */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <button
+                type="button"
+                onClick={() => setCurrentPage('doctors')}
+                className="min-h-[52px] px-4 py-3 bg-surface border border-border hover:border-primary rounded-2xl text-base font-semibold text-text flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Stethoscope className="w-5 h-5 text-primary" />
+                <span>আমার ডাক্তার</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setCurrentPage('library')}
-                className="min-h-[52px] px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl text-base font-semibold text-slate-900 dark:text-white flex items-center justify-center gap-2 cursor-pointer"
+                className="min-h-[52px] px-4 py-3 bg-surface border border-border hover:border-primary rounded-2xl text-base font-semibold text-text flex items-center justify-center gap-2 cursor-pointer"
               >
-                <BookOpen className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+                <BookOpen className="w-5 h-5 text-primary" />
                 <span>ওষুধ লাইব্রেরি</span>
               </button>
               <button
                 type="button"
                 onClick={() => setCurrentPage('health-records')}
-                className="min-h-[52px] px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl text-base font-semibold text-slate-900 dark:text-white flex items-center justify-center gap-2 cursor-pointer"
+                className="min-h-[52px] px-4 py-3 bg-surface border border-border hover:border-primary rounded-2xl text-base font-semibold text-text flex items-center justify-center gap-2 cursor-pointer"
               >
-                <HeartPulse className="w-5 h-5 text-rose-600" />
+                <HeartPulse className="w-5 h-5 text-accent" />
                 <span>স্বাস্থ্য রেকর্ড</span>
               </button>
               <button
                 type="button"
                 onClick={() => setCurrentPage('history')}
-                className="min-h-[52px] px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-500 rounded-2xl text-base font-semibold text-slate-900 dark:text-white flex items-center justify-center gap-2 cursor-pointer"
+                className="min-h-[52px] px-4 py-3 bg-surface border border-border hover:border-primary rounded-2xl text-base font-semibold text-text flex items-center justify-center gap-2 cursor-pointer"
               >
-                <ChevronRight className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+                <ChevronRight className="w-5 h-5 text-primary" />
                 <span>ডাক্তারকে দেখানোর ইতিহাস</span>
               </button>
             </div>
@@ -1192,19 +1234,19 @@ export const Dashboard: React.FC = () => {
             {/* Stock Predictor & Low Stock Summary */}
             <ExpiringStockSection />
 
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+            <div className="bg-surface border border-border rounded-2xl p-5 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5 text-amber-600" />
-                  <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  <AlertTriangle className="w-5 h-5 text-warning-text" />
+                  <h3 className="text-base font-bold text-text">
                     ওষুধের মজুত সতর্কতা ({toBengaliNumber(lowStockMedicines.length)}টি কম)
                   </h3>
                 </div>
               </div>
 
               {lowStockMedicines.length === 0 ? (
-                <div className="p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-xl flex items-center gap-2 text-sm font-semibold text-emerald-900 dark:text-emerald-300">
-                  <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
+                <div className="p-4 bg-success-soft border border-success/30 rounded-xl flex items-center gap-2 text-sm font-semibold text-success-text">
+                  <ShieldCheck className="w-5 h-5 text-success-text shrink-0" />
                   <span>সব ওষুধের পর্যাপ্ত মজুত আছে</span>
                 </div>
               ) : (
@@ -1212,20 +1254,20 @@ export const Dashboard: React.FC = () => {
                   {lowStockMedicines.map((med) => (
                     <div
                       key={med.id}
-                      className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 flex items-center justify-between gap-3"
+                      className="p-3.5 rounded-xl bg-warning-soft/70 border border-warning/30 flex items-center justify-between gap-3"
                     >
                       <div>
-                        <div className="text-base font-bold text-slate-900 dark:text-white">
+                        <div className="text-base font-bold text-text">
                           {med.brandName}
                         </div>
-                        <div className="text-sm text-amber-900 dark:text-amber-300">
+                        <div className="text-sm text-warning-text">
                           বাকি: {toBengaliNumber(med.stock)} {med.unit}
                         </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => openStockAdjustmentModal(med.id)}
-                        className="min-h-[48px] px-4 py-2 text-sm font-bold text-amber-950 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 rounded-xl cursor-pointer shrink-0"
+                        className="min-h-[48px] px-4 py-2 text-sm font-bold text-warning-text bg-warning-soft hover:bg-warning/25 rounded-xl cursor-pointer shrink-0"
                       >
                         আপডেট
                       </button>
@@ -1238,7 +1280,7 @@ export const Dashboard: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsBuyListOpen(true)}
-                  className="min-h-[48px] py-2.5 px-4 text-sm font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+                  className="min-h-[48px] py-2.5 px-4 text-sm font-bold text-white bg-[#B45309] hover:bg-[#92400E] rounded-xl flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <ShoppingCart className="w-4 h-4" />
                   <span>কিনতে হবে তালিকা</span>
@@ -1246,7 +1288,7 @@ export const Dashboard: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setCurrentPage('medicines')}
-                  className="min-h-[48px] py-2.5 px-4 text-sm font-semibold text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+                  className="min-h-[48px] py-2.5 px-4 text-sm font-semibold text-text border border-border hover:bg-surface-2 rounded-xl flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Package className="w-4 h-4" />
                   <span>সব ওষুধ দেখুন</span>

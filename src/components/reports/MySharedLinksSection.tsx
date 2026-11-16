@@ -140,15 +140,15 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+    <div className="bg-surface border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <Link2 className="w-5 h-5 text-teal-700 dark:text-teal-400 shrink-0" />
+          <Link2 className="w-5 h-5 text-primary shrink-0" />
           <div>
-            <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+            <h3 className="text-base sm:text-lg font-bold text-text">
               আমার শেয়ার করা লিংক
             </h3>
-            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+            <p className="text-xs sm:text-sm text-text-muted">
               তৈরি করা রিপোর্ট লিংক দেখুন বা প্রয়োজনে বাতিল করুন
             </p>
           </div>
@@ -159,7 +159,7 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
             <button
               type="button"
               onClick={() => setIsOpen(true)}
-              className="min-h-[48px] px-4 py-2 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-teal-900 dark:text-teal-200 font-bold text-sm rounded-xl hover:bg-teal-100 cursor-pointer"
+              className="min-h-[48px] px-4 py-2 bg-primary-soft border border-primary/25 text-primary font-bold text-sm rounded-xl hover:bg-primary-soft/80 cursor-pointer"
             >
               তালিকা দেখুন
             </button>
@@ -169,7 +169,7 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
                 type="button"
                 onClick={loadReports}
                 disabled={loading}
-                className="min-h-[48px] px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                className="min-h-[48px] px-4 py-2 bg-surface-2 hover:bg-border/60 text-text font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
               >
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                 <span>রিফ্রেশ</span>
@@ -180,41 +180,41 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
       </div>
 
       {isOpen && (
-        <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="space-y-3 pt-2 border-t border-border">
           {!currentUser ? (
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <p className="text-sm text-slate-700 dark:text-slate-200">
+            <div className="p-4 rounded-xl bg-surface-2 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p className="text-sm text-text-muted">
                 শেয়ার করা লিংকগুলো দেখতে আপনার অ্যাকাউন্টে লগইন করুন।
               </p>
               <button
                 type="button"
                 onClick={openAuthModal}
-                className="min-h-[48px] px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer shrink-0"
+                className="min-h-[48px] px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer shrink-0"
               >
                 <Lock className="w-4 h-4" />
                 <span>লগইন করুন</span>
               </button>
             </div>
           ) : loading && !hasLoadedOnce ? (
-            <div className="py-6 text-center text-sm text-slate-600 dark:text-slate-300">
+            <div className="py-6 text-center text-sm text-text-muted">
               শেয়ার করা লিংকগুলো আনা হচ্ছে...
             </div>
           ) : errorMsg ? (
-            <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-sm flex items-start gap-2.5">
+            <div className="p-4 rounded-xl bg-danger-soft border border-danger/30 text-danger-text text-sm flex items-start gap-2.5">
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
               <div className="space-y-2">
                 <p className="font-semibold">{errorMsg}</p>
                 <button
                   type="button"
                   onClick={loadReports}
-                  className="min-h-[44px] px-4 py-1.5 bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-700 rounded-xl font-bold text-xs cursor-pointer"
+                  className="min-h-[44px] px-4 py-1.5 bg-surface border border-danger/30 rounded-xl font-bold text-xs cursor-pointer"
                 >
                   আবার চেষ্টা করুন
                 </button>
               </div>
             </div>
           ) : reports.length === 0 ? (
-            <div className="p-5 text-center rounded-xl bg-slate-50 dark:bg-slate-800/50 text-sm text-slate-600 dark:text-slate-300">
+            <div className="p-5 text-center rounded-xl bg-surface-2 text-sm text-text-muted">
               এখনো কোনো রিপোর্ট শেয়ার লিংক তৈরি করা হয়নি।
             </div>
           ) : (
@@ -230,21 +230,21 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
                 return (
                   <div
                     key={report.token}
-                    className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-3"
+                    className="p-4 rounded-xl border border-border bg-surface-2/70 space-y-3"
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-base text-slate-900 dark:text-white">
+                          <span className="font-bold text-base text-text">
                             {report.patientName}
                           </span>
                           <span
                             className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
                               status === 'active'
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                ? 'bg-success-soft text-success-text'
                                 : status === 'revoked'
-                                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
-                                : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                                ? 'bg-danger-soft text-danger-text'
+                                : 'bg-surface text-text-muted border border-border'
                             }`}
                           >
                             {status === 'active'
@@ -254,12 +254,12 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
                               : 'মেয়াদ শেষ'}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+                        <p className="text-xs text-text-muted mt-1">
                           অন্তর্ভুক্ত তথ্য: {sectionLabels.join(', ') || '—'}
                         </p>
                       </div>
 
-                      <div className="text-xs text-slate-600 dark:text-slate-300 space-y-0.5 sm:text-right">
+                      <div className="text-xs text-text-muted space-y-0.5 sm:text-right">
                         <div>তৈরি: {formatSharedReportDateTime(createdMs)}</div>
                         <div className="flex items-center gap-1 sm:justify-end">
                           <Clock className="w-3.5 h-3.5" />
@@ -269,8 +269,8 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
                     </div>
 
                     {manualCopyToken === report.token && (
-                      <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 space-y-1">
-                        <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                      <div className="p-2.5 rounded-lg bg-warning-soft border border-warning/30 space-y-1">
+                        <p className="text-xs font-semibold text-warning-text">
                           নিচের লিংকটি লম্বা চেপে ধরে কপি করুন:
                         </p>
                         <input
@@ -278,7 +278,7 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
                           readOnly
                           value={reportUrl}
                           onFocus={(e) => e.currentTarget.select()}
-                          className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 rounded text-xs font-mono text-slate-900 dark:text-slate-100"
+                          className="w-full px-2.5 py-1.5 bg-surface border border-warning/30 rounded text-xs font-mono text-text"
                         />
                       </div>
                     )}
@@ -289,16 +289,16 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
                           <button
                             type="button"
                             onClick={() => handleCopy(report.token)}
-                            className="min-h-[48px] px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-teal-500 text-slate-800 dark:text-slate-100 font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+                            className="min-h-[48px] px-4 py-2 bg-surface border border-border hover:border-primary text-text font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
                           >
                             {copiedToken === report.token ? (
                               <>
-                                <Check className="w-4 h-4 text-emerald-600" />
+                                <Check className="w-4 h-4 text-success-text" />
                                 <span>কপি হয়েছে</span>
                               </>
                             ) : (
                               <>
-                                <Copy className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+                                <Copy className="w-4 h-4 text-primary" />
                                 <span>লিংক কপি করুন</span>
                               </>
                             )}
@@ -308,7 +308,7 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
                             type="button"
                             disabled={busyToken === report.token}
                             onClick={() => handleRevoke(report.token)}
-                            className="min-h-[48px] px-4 py-2 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 hover:bg-rose-100 text-rose-800 dark:text-rose-200 font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                            className="min-h-[48px] px-4 py-2 bg-danger-soft border border-danger/30 hover:opacity-90 text-danger-text font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                           >
                             <XCircle className="w-4 h-4" />
                             <span>বাতিল করুন</span>
@@ -321,7 +321,7 @@ export const MySharedLinksSection: React.FC<MySharedLinksSectionProps> = ({
                           type="button"
                           disabled={busyToken === report.token}
                           onClick={() => handleDeleteExpired(report.token)}
-                          className="min-h-[48px] px-4 py-2 bg-slate-200 dark:bg-slate-700 hover:bg-rose-100 dark:hover:bg-rose-950 text-slate-800 dark:text-slate-100 hover:text-rose-800 font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                          className="min-h-[48px] px-4 py-2 bg-surface-2 hover:bg-danger-soft text-text hover:text-danger-text font-bold text-sm rounded-xl border border-border inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
                         >
                           <Trash2 className="w-4 h-4" />
                           <span>

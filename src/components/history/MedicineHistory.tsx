@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber, formatBengaliDate, formatBengaliTime } from '../../utils/bengaliUtils';
 import { DoctorReportModal } from './DoctorReportModal';
@@ -14,6 +14,7 @@ import {
   FileSpreadsheet,
   TrendingUp,
   Share2,
+  Loader2,
 } from 'lucide-react';
 
 export const MedicineHistory: React.FC = () => {
@@ -24,12 +25,21 @@ export const MedicineHistory: React.FC = () => {
     markDose,
     showToast,
     setCurrentPage,
+    loadOlderDoseLogs,
+    isLoadingOlderDoseLogs,
   } = useMedicine();
 
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | '7days' | '30days'>('7days');
   const [statusFilter, setStatusFilter] = useState<'all' | 'taken' | 'skipped'>('all');
   const [showDoctorReport, setShowDoctorReport] = useState(false);
   const [showManualLogModal, setShowManualLogModal] = useState(false);
+
+  // Lazy-load doseLogs older than 45 days only when user selects "সবগুলো"
+  useEffect(() => {
+    if (dateFilter === 'all') {
+      loadOlderDoseLogs();
+    }
+  }, [dateFilter]);
 
   // Manual log state
   const [manualMedId, setManualMedId] = useState(medicines[0]?.id || '');
@@ -103,10 +113,10 @@ export const MedicineHistory: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+          <h1 className="text-2xl font-bold tracking-tight text-text">
             ওষুধ সেবনের ইতিহাস ও লগ
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+          <p className="text-xs sm:text-sm text-text-muted mt-1">
             {activePatient ? `${activePatient.name} এর` : 'সকল রোগীর'} পূর্ববর্তী ডোজ রেকর্ড ও নিয়মানুবর্তিতা
           </p>
         </div>
@@ -115,7 +125,7 @@ export const MedicineHistory: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowManualLogModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-text bg-surface-2 hover:bg-border/60 rounded-lg transition-colors cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>অতীতের ডোজ লগ করুন</span>
@@ -124,7 +134,7 @@ export const MedicineHistory: React.FC = () => {
           <button
             type="button"
             onClick={() => setCurrentPage('share-report')}
-            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] text-xs font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-900/60 rounded-lg shadow-2xs transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] text-xs font-semibold text-primary bg-primary-soft border border-primary/25 hover:opacity-90 rounded-lg shadow-2xs transition-colors cursor-pointer"
           >
             <Share2 className="w-4 h-4" />
             <span>শেয়ার লিংক বানান</span>
@@ -133,7 +143,7 @@ export const MedicineHistory: React.FC = () => {
           <button
             type="button"
             onClick={() => setShowDoctorReport(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-xs transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[44px] text-xs font-semibold text-on-primary bg-primary hover:bg-primary-hover rounded-lg shadow-xs transition-colors cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             <span>ডাক্তার রিপোর্ট (প্রিন্ট)</span>
@@ -144,54 +154,54 @@ export const MedicineHistory: React.FC = () => {
       {/* KPI Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
+        <div className="bg-surface border border-border rounded-xl p-4 shadow-xs">
+          <div className="flex items-center justify-between text-text-muted mb-2">
             <span className="text-xs font-semibold">নিয়মানুবর্তিতা হার</span>
-            <TrendingUp className="w-4 h-4 text-teal-600" />
+            <TrendingUp className="w-4 h-4 text-primary" />
           </div>
-          <div className="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">
+          <div className="text-2xl font-bold text-text tabular-nums">
             {toBengaliNumber(adherenceRate)}%
           </div>
-          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+          <span className="text-[11px] text-success-text font-medium">
             উত্তম স্বাস্থ্য লক্ষ্যমাত্রা বজায় আছে
           </span>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
+        <div className="bg-surface border border-border rounded-xl p-4 shadow-xs">
+          <div className="flex items-center justify-between text-text-muted mb-2">
             <span className="text-xs font-semibold">সম্পন্ন ডোজ</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <CheckCircle2 className="w-4 h-4 text-success-text" />
           </div>
-          <div className="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">
+          <div className="text-2xl font-bold text-text tabular-nums">
             {toBengaliNumber(takenCount)}টি
           </div>
-          <span className="text-[11px] text-slate-400">
+          <span className="text-[11px] text-text-muted">
             সময়মতো নিয়মিত গৃহীত
           </span>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
+        <div className="bg-surface border border-border rounded-xl p-4 shadow-xs">
+          <div className="flex items-center justify-between text-text-muted mb-2">
             <span className="text-xs font-semibold">বাদ দেওয়া ডোজ</span>
-            <XCircle className="w-4 h-4 text-amber-600" />
+            <XCircle className="w-4 h-4 text-warning-text" />
           </div>
-          <div className="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">
+          <div className="text-2xl font-bold text-text tabular-nums">
             {toBengaliNumber(skippedCount)}টি
           </div>
-          <span className="text-[11px] text-slate-400">
+          <span className="text-[11px] text-text-muted">
             শারীরিক সুস্থতা বা ভুলে বাদ
           </span>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
+        <div className="bg-surface border border-border rounded-xl p-4 shadow-xs">
+          <div className="flex items-center justify-between text-text-muted mb-2">
             <span className="text-xs font-semibold">চলমান ওষুধ</span>
-            <FileSpreadsheet className="w-4 h-4 text-blue-600" />
+            <FileSpreadsheet className="w-4 h-4 text-primary" />
           </div>
-          <div className="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">
+          <div className="text-2xl font-bold text-text tabular-nums">
             {toBengaliNumber(patientMedicines.length)}টি
           </div>
-          <span className="text-[11px] text-slate-400">
+          <span className="text-[11px] text-text-muted">
             প্রেসক্রিপশন সক্রিয় ওষুধ
           </span>
         </div>
@@ -199,18 +209,18 @@ export const MedicineHistory: React.FC = () => {
       </div>
 
       {/* Filter Segmented Controls */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div className="bg-surface border border-border rounded-xl p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
         
         {/* Date Filter */}
         <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto text-xs">
-          <span className="text-slate-400 mr-1 hidden sm:inline">সময়কাল:</span>
+          <span className="text-text-muted mr-1 hidden sm:inline">সময়কাল:</span>
           <button
             type="button"
             onClick={() => setDateFilter('today')}
             className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap cursor-pointer transition-colors ${
               dateFilter === 'today'
-                ? 'bg-teal-700 text-white shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                ? 'bg-primary text-on-primary shadow-xs'
+                : 'bg-surface-2 text-text-muted hover:text-text'
             }`}
           >
             আজ
@@ -220,8 +230,8 @@ export const MedicineHistory: React.FC = () => {
             onClick={() => setDateFilter('7days')}
             className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap cursor-pointer transition-colors ${
               dateFilter === '7days'
-                ? 'bg-teal-700 text-white shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                ? 'bg-primary text-on-primary shadow-xs'
+                : 'bg-surface-2 text-text-muted hover:text-text'
             }`}
           >
             গত ৭ দিন
@@ -231,8 +241,8 @@ export const MedicineHistory: React.FC = () => {
             onClick={() => setDateFilter('30days')}
             className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap cursor-pointer transition-colors ${
               dateFilter === '30days'
-                ? 'bg-teal-700 text-white shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                ? 'bg-primary text-on-primary shadow-xs'
+                : 'bg-surface-2 text-text-muted hover:text-text'
             }`}
           >
             গত ৩০ দিন
@@ -242,8 +252,8 @@ export const MedicineHistory: React.FC = () => {
             onClick={() => setDateFilter('all')}
             className={`px-3 py-1.5 rounded-lg font-medium whitespace-nowrap cursor-pointer transition-colors ${
               dateFilter === 'all'
-                ? 'bg-teal-700 text-white shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                ? 'bg-primary text-on-primary shadow-xs'
+                : 'bg-surface-2 text-text-muted hover:text-text'
             }`}
           >
             সবগুলো
@@ -252,12 +262,12 @@ export const MedicineHistory: React.FC = () => {
 
         {/* Status Filter */}
         <div className="flex items-center gap-1.5 self-end sm:self-auto text-xs">
-          <span className="text-slate-400 mr-1">স্ট্যাটাস:</span>
+          <span className="text-text-muted mr-1">স্ট্যাটাস:</span>
           <button
             type="button"
             onClick={() => setStatusFilter('all')}
             className={`px-2.5 py-1 rounded-md cursor-pointer ${
-              statusFilter === 'all' ? 'font-bold text-teal-800 dark:text-teal-300 underline' : 'text-slate-500'
+              statusFilter === 'all' ? 'font-bold text-primary underline' : 'text-text-muted'
             }`}
           >
             সব
@@ -266,7 +276,7 @@ export const MedicineHistory: React.FC = () => {
             type="button"
             onClick={() => setStatusFilter('taken')}
             className={`px-2.5 py-1 rounded-md cursor-pointer ${
-              statusFilter === 'taken' ? 'font-bold text-emerald-700 dark:text-emerald-400 underline' : 'text-slate-500'
+              statusFilter === 'taken' ? 'font-bold text-success-text underline' : 'text-text-muted'
             }`}
           >
             গৃহীত
@@ -275,7 +285,7 @@ export const MedicineHistory: React.FC = () => {
             type="button"
             onClick={() => setStatusFilter('skipped')}
             className={`px-2.5 py-1 rounded-md cursor-pointer ${
-              statusFilter === 'skipped' ? 'font-bold text-amber-700 dark:text-amber-400 underline' : 'text-slate-500'
+              statusFilter === 'skipped' ? 'font-bold text-warning-text underline' : 'text-text-muted'
             }`}
           >
             বাদ দেওয়া
@@ -284,14 +294,21 @@ export const MedicineHistory: React.FC = () => {
 
       </div>
 
+      {isLoadingOlderDoseLogs && dateFilter === 'all' && (
+        <div className="bg-surface border border-border rounded-xl px-4 py-3 flex items-center gap-2.5 text-xs font-medium text-text-muted">
+          <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
+          <span>৪৫ দিনের আগের পুরনো ইতিহাস লোড হচ্ছে…</span>
+        </div>
+      )}
+
       {/* History Log List Grouped by Date */}
       {datesSorted.length === 0 ? (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-12 text-center">
-          <History className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
-          <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200">
+        <div className="bg-surface border border-border rounded-xl p-12 text-center">
+          <History className="w-12 h-12 text-text-muted mx-auto mb-3 opacity-60" />
+          <h3 className="text-base font-semibold text-text">
             নির্বাচিত সময়কালে কোনো সেবনের রেকর্ড নেই
           </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 mb-4">
+          <p className="text-xs text-text-muted mt-1 mb-4">
             ফিল্টার পরিবর্তন করুন অথবা ম্যানুয়ালি একটি রেকর্ড যোগ করুন।
           </p>
         </div>
@@ -303,21 +320,21 @@ export const MedicineHistory: React.FC = () => {
             return (
               <div
                 key={dateStr}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs"
+                className="bg-surface border border-border rounded-xl overflow-hidden shadow-xs"
               >
                 {/* Date header */}
-                <div className="bg-slate-50 dark:bg-slate-800/60 px-5 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 font-bold text-slate-800 dark:text-slate-200">
-                    <Calendar className="w-4 h-4 text-teal-600" />
+                <div className="bg-surface-2 px-5 py-3 border-b border-border flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 font-bold text-text">
+                    <Calendar className="w-4 h-4 text-primary" />
                     <span>{formatBengaliDate(dateStr)}</span>
                   </div>
-                  <span className="text-slate-400">
+                  <span className="text-text-muted">
                     মোট {toBengaliNumber(dateLogs.length)}টি ডোজ রেকর্ড
                   </span>
                 </div>
 
                 {/* Items */}
-                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                <div className="divide-y divide-border">
                   {dateLogs.map((log) => {
                     const isTaken = log.status === 'taken';
 
@@ -330,8 +347,8 @@ export const MedicineHistory: React.FC = () => {
                           <div
                             className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
                               isTaken
-                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
-                                : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                                ? 'bg-success-soft text-success-text'
+                                : 'bg-surface-2 text-text-muted'
                             }`}
                           >
                             {isTaken ? (
@@ -343,18 +360,18 @@ export const MedicineHistory: React.FC = () => {
 
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-slate-900 dark:text-white">
+                              <span className="text-sm font-bold text-text">
                                 {log.medicineName}
                               </span>
                               {log.genericName && (
-                                <span className="text-slate-400 hidden sm:inline">
+                                <span className="text-text-muted hidden sm:inline">
                                   ({log.genericName})
                                 </span>
                               )}
                             </div>
 
-                            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 mt-1">
-                              <span className="font-semibold text-teal-800 dark:text-teal-300">
+                            <div className="flex items-center gap-2 text-text-muted mt-1">
+                              <span className="font-semibold text-primary">
                                 {log.timeSlot} ({toBengaliNumber(log.scheduledTime)})
                               </span>
                               <span>·</span>
@@ -362,7 +379,7 @@ export const MedicineHistory: React.FC = () => {
                               {log.notes && (
                                 <>
                                   <span>·</span>
-                                  <span className="text-slate-400 italic">নোট: {log.notes}</span>
+                                  <span className="text-text-muted italic">নোট: {log.notes}</span>
                                 </>
                               )}
                             </div>
@@ -374,8 +391,8 @@ export const MedicineHistory: React.FC = () => {
                           <span
                             className={`px-2.5 py-1 rounded-md font-semibold ${
                               isTaken
-                                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700'
+                                ? 'bg-success-soft text-success-text border border-success/30'
+                                : 'bg-surface-2 text-text-muted border border-border'
                             }`}
                           >
                             {isTaken ? '✓ গ্রহণ সম্পন্ন' : '✕ বাদ দেওয়া'}
@@ -393,27 +410,27 @@ export const MedicineHistory: React.FC = () => {
 
       {/* Manual Dose Log Modal */}
       {showManualLogModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
           <div
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-xl relative"
+            className="bg-surface border border-border rounded-2xl max-w-md w-full p-6 shadow-xl relative"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-3">
+            <h3 className="text-base font-bold text-text mb-3">
               পূর্বে খাওয়া ওষুধ লগ করুন
             </h3>
-            <p className="text-xs text-slate-500 mb-4">
+            <p className="text-xs text-text-muted mb-4">
               ভুলে নির্ধারিত সময়ে অ্যাপে না জানালে এখন রেকর্ড করে রাখতে পারেন।
             </p>
 
             <form onSubmit={handleSaveManualLog} className="space-y-3.5 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block font-semibold text-text mb-1">
                   ওষুধ নির্বাচন করুন
                 </label>
                 <select
                   value={manualMedId}
                   onChange={(e) => setManualMedId(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden"
+                  className="w-full px-3 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:border-primary"
                 >
                   {patientMedicines.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -425,13 +442,13 @@ export const MedicineHistory: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block font-semibold text-text mb-1">
                     সময় স্লট
                   </label>
                   <select
                     value={manualSlot}
                     onChange={(e) => setManualSlot(e.target.value as TimeSlot)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden"
+                    className="w-full px-3 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:border-primary"
                   >
                     <option value="সকাল">সকাল</option>
                     <option value="দুপুর">দুপুর</option>
@@ -441,13 +458,13 @@ export const MedicineHistory: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block font-semibold text-text mb-1">
                     স্ট্যাটাস
                   </label>
                   <select
                     value={manualStatus}
                     onChange={(e) => setManualStatus(e.target.value as 'taken' | 'skipped')}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden"
+                    className="w-full px-3 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:border-primary"
                   >
                     <option value="taken">গ্রহণ সম্পন্ন</option>
                     <option value="skipped">বাদ দেওয়া হয়েছিল</option>
@@ -456,7 +473,7 @@ export const MedicineHistory: React.FC = () => {
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block font-semibold text-text mb-1">
                   মন্তব্য / কারণ
                 </label>
                 <input
@@ -464,7 +481,7 @@ export const MedicineHistory: React.FC = () => {
                   value={manualNotes}
                   onChange={(e) => setManualNotes(e.target.value)}
                   placeholder="যেমন: খাবারের ১০ মিনিট পর খাওয়া হয়েছিল"
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden"
+                  className="w-full px-3 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:border-primary"
                 />
               </div>
 
@@ -472,13 +489,13 @@ export const MedicineHistory: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowManualLogModal(false)}
-                  className="px-3.5 py-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100"
+                  className="px-3.5 py-1.5 rounded-lg text-text-muted hover:bg-surface-2 cursor-pointer"
                 >
                   বাতিল
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 rounded-lg font-semibold bg-teal-700 text-white hover:bg-teal-800"
+                  className="px-4 py-1.5 rounded-lg font-semibold bg-primary text-on-primary hover:bg-primary-hover cursor-pointer"
                 >
                   সংরক্ষণ করুন
                 </button>

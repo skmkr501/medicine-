@@ -104,6 +104,32 @@ service cloud.firestore {
         && (!('status' in data) || (data.status is string && data.status.size() <= 32));
     }
 
+    function isValidDoctor(data, doctorId) {
+      return data.keys().hasAll(['id', 'name', 'isEmergency', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'name', 'specialty', 'phone', 'whatsapp',
+          'hospital', 'address', 'visitingHours', 'forConditions',
+          'patientIds', 'lastVisitDate', 'nextVisitDate', 'notes',
+          'isEmergency', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == doctorId && data.id.size() > 0 && data.id.size() <= 128
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 128
+        && data.isEmergency is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (!('specialty' in data) || (data.specialty is string && data.specialty.size() <= 500))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 500))
+        && (!('whatsapp' in data) || (data.whatsapp is string && data.whatsapp.size() <= 500))
+        && (!('hospital' in data) || (data.hospital is string && data.hospital.size() <= 500))
+        && (!('address' in data) || (data.address is string && data.address.size() <= 500))
+        && (!('visitingHours' in data) || (data.visitingHours is string && data.visitingHours.size() <= 500))
+        && (!('forConditions' in data) || (data.forConditions is string && data.forConditions.size() <= 500))
+        && (!('lastVisitDate' in data) || (data.lastVisitDate is string && data.lastVisitDate.size() <= 500))
+        && (!('nextVisitDate' in data) || (data.nextVisitDate is string && data.nextVisitDate.size() <= 500))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && (!('patientIds' in data) || (data.patientIds is list && data.patientIds.size() <= 20));
+    }
+
     function isAdmin() {
       return isSignedIn() && request.auth.token.email == 'sarashatikmkr501@gmail.com';
     }
@@ -155,6 +181,22 @@ service cloud.firestore {
         allow get, list: if isOwner(userId);
         allow create, update: if isOwner(userId) && isValidId(appointmentId) && isValidAppointment(incoming());
         allow delete: if isOwner(userId) && isValidId(appointmentId);
+      }
+
+      // Personal Doctors Directory Subcollection (Strictly private to the owner; never shared with caregivers)
+      match /doctors/{doctorId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidId(doctorId)
+          && isValidDoctor(incoming(), doctorId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidId(doctorId)
+          && isValidDoctor(incoming(), doctorId)
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time;
+        allow delete: if isOwner(userId) && isValidId(doctorId);
       }
     }
 
@@ -260,7 +302,7 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'id', 'inviteCode', 'patientUid', 'patientName', 'patientPhone', 'caregiverUid',
-          'caregiverName', 'status', 'allowFullView', 'expiresAtMs', 'createdAt',
+          'caregiverName', 'status', 'allowFullView', 'allowSuggestions', 'expiresAtMs', 'createdAt',
           'linkedAt', 'updatedAt', 'todaySummary', 'sharedMedicines'
         ])
         && data.id is string && data.id.matches('^[A-Z0-9]{6}$')
@@ -272,6 +314,7 @@ service cloud.firestore {
         && data.caregiverName is string && data.caregiverName.size() <= 128
         && data.status in ['pending', 'active']
         && data.allowFullView is bool
+        && (!('allowSuggestions' in data) || data.allowSuggestions is bool)
         && data.expiresAtMs is number && data.expiresAtMs > 0
         && data.createdAt is string && data.createdAt.size() <= 64
         && data.updatedAt is string && data.updatedAt.size() <= 64
@@ -292,6 +335,7 @@ service cloud.firestore {
         && data.caregiverName == ''
         && data.status == 'pending'
         && data.allowFullView == false
+        && (!('allowSuggestions' in data) || data.allowSuggestions == false)
         && data.expiresAtMs > request.time.toMillis()
         && data.expiresAtMs <= request.time.toMillis() + 259200000;
     }
@@ -370,7 +414,7 @@ service cloud.firestore {
           incoming().status == existing().status &&
           incoming().createdAt == existing().createdAt &&
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'patientName', 'patientPhone', 'allowFullView', 'todaySummary', 'sharedMedicines', 'updatedAt'
+            'patientName', 'patientPhone', 'allowFullView', 'allowSuggestions', 'todaySummary', 'sharedMedicines', 'updatedAt'
           ])
         ) ||
         // Case 2: Caregiver redeems pending unexpired invite once
@@ -493,6 +537,186 @@ service cloud.firestore {
       allow delete: if isSignedIn()
         && isValidSharedReportToken(token)
         && existing().ownerUid == request.auth.uid;
+    }
+
+    // =========================================================================
+    // জরুরি কার্ড QR (emergency_cards) — গোপনীয়তা ও নিরাপত্তা বিধি
+    // =========================================================================
+
+    function isValidEmergencyCardToken(token) {
+      return token is string
+        && token.size() >= 20
+        && token.size() <= 128
+        && token.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEmergencyCard(data, tokenId) {
+      return data.keys().hasAll([
+          'ownerUid', 'token', 'createdAt', 'patientName', 'active'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'token', 'createdAt', 'patientName', 'age',
+          'bloodGroup', 'allergies', 'conditions',
+          'contactName', 'contactPhone', 'medicines', 'doctorName', 'active'
+        ])
+        && data.ownerUid is string && data.ownerUid.size() > 0 && data.ownerUid.size() <= 128
+        && data.token is string && data.token == tokenId && isValidEmergencyCardToken(data.token)
+        && data.createdAt is timestamp
+        && data.patientName is string && data.patientName.size() > 0 && data.patientName.size() <= 500
+        && (!('age' in data) || (data.age is number && data.age >= 0 && data.age <= 150))
+        && (!('bloodGroup' in data) || (data.bloodGroup is string && data.bloodGroup.size() <= 500))
+        && (!('allergies' in data) || (data.allergies is string && data.allergies.size() <= 500))
+        && (!('conditions' in data) || (data.conditions is string && data.conditions.size() <= 500))
+        && (!('contactName' in data) || (data.contactName is string && data.contactName.size() <= 500))
+        && (!('contactPhone' in data) || (data.contactPhone is string && data.contactPhone.size() <= 500))
+        && (!('medicines' in data) || (data.medicines is string && data.medicines.size() <= 500))
+        && (!('doctorName' in data) || (data.doctorName is string && data.doctorName.size() <= 500))
+        && data.active is bool;
+    }
+
+    match /emergency_cards/{token} {
+      // Anyone holding the exact >=20-char token can read ONE active emergency card without login
+      allow get: if isValidEmergencyCardToken(token)
+        && resource.data.active == true;
+
+      // Only signed-in owner can list their own emergency cards
+      allow list: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+
+      // Only signed-in owner can create an active emergency card with server timestamp
+      allow create: if isSignedIn()
+        && isValidEmergencyCardToken(token)
+        && isValidEmergencyCard(incoming(), token)
+        && incoming().ownerUid == request.auth.uid
+        && incoming().active == true
+        && incoming().createdAt == request.time;
+
+      // Owner can update chosen fields (same link) or revoke (active = false); identity & createdAt immutable
+      allow update: if isSignedIn()
+        && isValidEmergencyCardToken(token)
+        && isValidEmergencyCard(incoming(), token)
+        && existing().ownerUid == request.auth.uid
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().token == existing().token
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'patientName', 'age', 'bloodGroup', 'allergies', 'conditions',
+          'contactName', 'contactPhone', 'medicines', 'doctorName', 'active'
+        ]);
+
+      // Only owner can permanently delete their card
+      allow delete: if isSignedIn()
+        && isValidEmergencyCardToken(token)
+        && existing().ownerUid == request.auth.uid;
+    }
+
+    // =========================================================================
+    // যত্নকারীর ওষুধের প্রস্তাব (caregiver_suggestions) — রোগীর অনুমোদন সাপেক্ষে
+    // =========================================================================
+
+    function canCaregiverSuggestForLink(linkId, pUid, cUid) {
+      return linkId is string
+        && linkId.matches('^[A-Z0-9]{6}$')
+        && exists(/databases/$(database)/documents/caregiver_links/$(linkId))
+        && get(/databases/$(database)/documents/caregiver_links/$(linkId)).data.patientUid == pUid
+        && get(/databases/$(database)/documents/caregiver_links/$(linkId)).data.caregiverUid == cUid
+        && get(/databases/$(database)/documents/caregiver_links/$(linkId)).data.status == 'active'
+        && ('allowSuggestions' in get(/databases/$(database)/documents/caregiver_links/$(linkId)).data)
+        && get(/databases/$(database)/documents/caregiver_links/$(linkId)).data.allowSuggestions == true;
+    }
+
+    function isValidSuggestionMedicine(med) {
+      return med is map
+        && med.keys().hasAll(['brandName', 'type', 'dosage', 'timeSlots', 'mealTiming', 'stock', 'unit'])
+        && med.keys().hasOnly([
+          'brandName', 'genericName', 'strength', 'type', 'dosage', 'timeSlots',
+          'schedules', 'mealTiming', 'durationDays', 'isChronic', 'stock', 'unit'
+        ])
+        && med.brandName is string && med.brandName.size() > 0 && med.brandName.size() <= 128
+        && (!('genericName' in med) || (med.genericName is string && med.genericName.size() <= 256))
+        && (!('strength' in med) || (med.strength is string && med.strength.size() <= 64))
+        && med.type is string && med.type.size() > 0 && med.type.size() <= 64
+        && med.dosage is string && med.dosage.size() > 0 && med.dosage.size() <= 64
+        && med.timeSlots is list && med.timeSlots.size() >= 1 && med.timeSlots.size() <= 6
+        && (!('schedules' in med) || (med.schedules is list && med.schedules.size() <= 6))
+        && med.mealTiming is string && med.mealTiming.size() > 0 && med.mealTiming.size() <= 64
+        && (!('durationDays' in med) || (med.durationDays is number && med.durationDays >= 1 && med.durationDays <= 365))
+        && (!('isChronic' in med) || med.isChronic is bool)
+        && med.stock is number && med.stock >= 0 && med.stock <= 9999
+        && med.unit is string && med.unit.size() > 0 && med.unit.size() <= 32;
+    }
+
+    function isValidCaregiverSuggestionShape(data, suggestionId) {
+      return data.keys().hasAll([
+          'id', 'patientUid', 'caregiverUid', 'linkId', 'caregiverName',
+          'kind', 'medicine', 'status', 'createdAt', 'createdAtMs'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientUid', 'caregiverUid', 'linkId', 'caregiverName', 'patientName',
+          'kind', 'medicine', 'targetMedicineId', 'targetMedicineName', 'note',
+          'status', 'createdAt', 'createdAtMs'
+        ])
+        && data.id == suggestionId
+        && isValidId(suggestionId)
+        && data.patientUid is string && data.patientUid.size() > 0 && data.patientUid.size() <= 128
+        && data.caregiverUid is string && data.caregiverUid.size() > 0 && data.caregiverUid.size() <= 128
+        && data.patientUid != data.caregiverUid
+        && data.linkId is string && data.linkId.matches('^[A-Z0-9]{6}$')
+        && data.caregiverName is string && data.caregiverName.size() > 0 && data.caregiverName.size() <= 128
+        && (!('patientName' in data) || (data.patientName is string && data.patientName.size() <= 128))
+        && data.kind in ['add', 'edit', 'stop']
+        && isValidSuggestionMedicine(data.medicine)
+        && (!('targetMedicineId' in data) || (data.targetMedicineId is string && data.targetMedicineId.size() <= 128))
+        && (!('targetMedicineName' in data) || (data.targetMedicineName is string && data.targetMedicineName.size() <= 128))
+        && (!('note' in data) || (data.note is string && data.note.size() <= 500))
+        && data.status in ['pending', 'accepted', 'rejected', 'cancelled']
+        && data.createdAt is timestamp
+        && data.createdAtMs is number && data.createdAtMs > 0;
+    }
+
+    match /caregiver_suggestions/{suggestionId} {
+      // Only the patient or the sending caregiver can read or query their own suggestions
+      allow get: if isSignedIn() && isValidId(suggestionId) && (
+        existing().patientUid == request.auth.uid ||
+        existing().caregiverUid == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        existing().patientUid == request.auth.uid ||
+        existing().caregiverUid == request.auth.uid
+      );
+
+      // Only an active linked caregiver with patient's allowSuggestions == true can submit pending suggestions
+      allow create: if isSignedIn()
+        && isValidId(suggestionId)
+        && isValidCaregiverSuggestionShape(incoming(), suggestionId)
+        && incoming().caregiverUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && canCaregiverSuggestForLink(incoming().linkId, incoming().patientUid, incoming().caregiverUid);
+
+      // Split-action state transition ONLY (pending -> accepted/rejected by patient, pending -> cancelled by caregiver)
+      allow update: if isSignedIn()
+        && isValidId(suggestionId)
+        && isValidCaregiverSuggestionShape(incoming(), suggestionId)
+        && existing().status == 'pending'
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status'])
+        && incoming().id == existing().id
+        && incoming().patientUid == existing().patientUid
+        && incoming().caregiverUid == existing().caregiverUid
+        && incoming().linkId == existing().linkId
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdAtMs == existing().createdAtMs
+        && (
+          (existing().patientUid == request.auth.uid && incoming().status in ['accepted', 'rejected']) ||
+          (existing().caregiverUid == request.auth.uid && incoming().status == 'cancelled')
+        );
+
+      // Patient or caregiver can clean up old/resolved suggestions
+      allow delete: if isSignedIn()
+        && isValidId(suggestionId)
+        && (
+          existing().patientUid == request.auth.uid ||
+          existing().caregiverUid == request.auth.uid
+        );
     }
   }
 }

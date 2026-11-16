@@ -237,15 +237,15 @@ export const AdminLibraryManager: React.FC = () => {
   if (!isAdmin) {
     return (
       <div className="min-h-[75vh] flex items-center justify-center px-4 py-12">
-        <div className="bg-white dark:bg-slate-900 rounded-3xl p-8 border border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-5 max-w-lg w-full">
-          <div className="w-16 h-16 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+        <div className="bg-surface rounded-3xl p-8 border border-border shadow-xl text-center space-y-5 max-w-lg w-full">
+          <div className="w-16 h-16 rounded-2xl bg-danger-soft text-danger-text flex items-center justify-center mx-auto">
             <Lock className="w-8 h-8" />
           </div>
           <div className="space-y-2">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+            <h2 className="text-xl font-bold text-text">
               অ্যাডমিন অনুমতি প্রয়োজন
             </h2>
-            <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+            <p className="text-sm text-text-muted leading-relaxed">
               ওষুধ ব্যবস্থাপনা পাতাটি শুধুমাত্র অনুমোদিত অ্যাডমিনের জন্য সংরক্ষিত।
             </p>
           </div>
@@ -254,7 +254,7 @@ export const AdminLibraryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={openAuthModal}
-                className="min-h-[48px] flex items-center gap-2 px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm rounded-xl cursor-pointer"
+                className="min-h-[48px] flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-sm rounded-xl cursor-pointer"
               >
                 <LogIn className="w-4 h-4" />
                 <span>অ্যাডমিন হিসেবে লগইন করুন</span>
@@ -263,7 +263,7 @@ export const AdminLibraryManager: React.FC = () => {
             <button
               type="button"
               onClick={() => setCurrentPage('library')}
-              className="min-h-[48px] px-5 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl cursor-pointer"
+              className="min-h-[48px] px-5 py-2.5 text-sm font-semibold text-text bg-surface-2 hover:bg-border/60 rounded-xl cursor-pointer"
             >
               ওষুধ লাইব্রেরিতে ফিরুন
             </button>
@@ -483,27 +483,27 @@ export const AdminLibraryManager: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-28 space-y-5">
       {/* Top Bar */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-border pb-4">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setCurrentPage('admin-dashboard')}
-              className="min-h-[44px] inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 rounded-xl cursor-pointer transition-colors"
+              className="min-h-[44px] inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-primary bg-primary-soft hover:bg-primary/15 rounded-xl cursor-pointer transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>ড্যাশবোর্ড</span>
             </button>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <h1 className="text-xl sm:text-2xl font-bold text-text flex items-center gap-2">
               <span>ওষুধ ব্যবস্থাপনা</span>
             </h1>
             {libraryVersion > 0 && (
-              <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+              <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-lg bg-surface-2 text-text-muted">
                 সংস্করণ {libraryVersion}
               </span>
             )}
           </div>
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+          <p className="text-sm text-text-muted">
             ফোনে লোড করা তালিকা থেকেই তাৎক্ষণিক অনুসন্ধান, ডুপ্লিকেট বাছাই, সম্পাদনা ও নিরাপদ অপসারণ করুন।
           </p>
         </div>
@@ -516,8 +516,8 @@ export const AdminLibraryManager: React.FC = () => {
             }
             className={`min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm border transition-colors cursor-pointer ${
               viewMode === 'duplicates'
-                ? 'bg-amber-600 text-white border-amber-700'
-                : 'bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-800 hover:bg-amber-100'
+                ? 'bg-warning text-white border-warning'
+                : 'bg-warning-soft text-warning-text border-warning/35 hover:opacity-90'
             }`}
           >
             <Copy className="w-4 h-4" />
@@ -531,7 +531,7 @@ export const AdminLibraryManager: React.FC = () => {
           <button
             type="button"
             onClick={() => handleExportCsv(false)}
-            className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+            className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm bg-surface-2 text-text border border-border hover:bg-border/50 cursor-pointer"
           >
             <Download className="w-4 h-4" />
             <span>CSV রপ্তানি ({filteredMedicines.length})</span>
@@ -540,7 +540,7 @@ export const AdminLibraryManager: React.FC = () => {
           <button
             type="button"
             onClick={openManualAddModal}
-            className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm bg-teal-700 hover:bg-teal-800 text-white shadow-xs cursor-pointer"
+            className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm bg-primary hover:bg-primary-hover text-on-primary shadow-xs cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>নতুন ওষুধ যোগ</span>
@@ -552,7 +552,7 @@ export const AdminLibraryManager: React.FC = () => {
       {undoBanner && (
         <div
           role="status"
-          className="p-4 rounded-2xl bg-slate-900 dark:bg-slate-800 text-white border border-slate-700 shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+          className="p-4 rounded-2xl bg-[#1E1B4B] dark:bg-surface-2 text-white border border-indigo-900/50 dark:border-border shadow-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3"
         >
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl bg-amber-500/20 text-amber-300 shrink-0">
@@ -562,7 +562,7 @@ export const AdminLibraryManager: React.FC = () => {
               <p className="text-sm font-bold">
                 {undoBanner.items.length}টি ওষুধ লাইব্রেরি থেকে মুছে ফেলা হয়েছে
               </p>
-              <p className="text-xs text-slate-300 tabular-nums">
+              <p className="text-xs text-indigo-200 tabular-nums">
                 ভুল হলে {undoBanner.secondsLeft} সেকেন্ডের মধ্যে পূর্বাবস্থায় ফেরাতে পারবেন
               </p>
             </div>
@@ -572,7 +572,7 @@ export const AdminLibraryManager: React.FC = () => {
               type="button"
               disabled={undoBanner.isRestoring}
               onClick={handleUndoDelete}
-              className="min-h-[44px] inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm rounded-xl cursor-pointer disabled:opacity-50"
+              className="min-h-[44px] inline-flex items-center gap-2 px-4 py-2 bg-success hover:opacity-90 text-white font-bold text-sm rounded-xl cursor-pointer disabled:opacity-50"
             >
               <RotateCcw className="w-4 h-4" />
               <span>
@@ -582,7 +582,7 @@ export const AdminLibraryManager: React.FC = () => {
             <button
               type="button"
               onClick={() => setUndoBanner(null)}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-300 hover:bg-slate-800 cursor-pointer"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-indigo-200 hover:bg-white/10 cursor-pointer"
               aria-label="বার্তা বন্ধ করুন"
             >
               <X className="w-5 h-5" />
@@ -594,16 +594,16 @@ export const AdminLibraryManager: React.FC = () => {
       {/* Single Data Quality Report Card ("গুণমান রিপোর্ট") */}
       <section
         aria-label="গুণমান রিপোর্ট"
-        className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-3"
+        className="bg-surface rounded-2xl border border-border p-4 sm:p-5 space-y-3"
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-teal-600" />
-            <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            <ShieldCheck className="w-5 h-5 text-primary" />
+            <h2 className="text-base font-bold text-text">
               গুণমান রিপোর্ট
             </h2>
           </div>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="text-xs text-text-muted">
             যেকোনো সংখ্যায় ট্যাপ করলে সরাসরি সেই তালিকা ফিল্টার হবে
           </span>
         </div>
@@ -624,14 +624,14 @@ export const AdminLibraryManager: React.FC = () => {
               viewMode === 'list' &&
               filters.priceStatus === 'all' &&
               filters.qualityFilter === 'all'
-                ? 'bg-teal-50 dark:bg-teal-950/50 border-teal-500'
-                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 hover:border-teal-400'
+                ? 'bg-primary-soft border-primary'
+                : 'bg-surface-2 border-border hover:border-primary/60'
             }`}
           >
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
+            <span className="text-xs font-semibold text-text-muted block">
               মোট ওষুধ
             </span>
-            <span className="text-2xl font-extrabold text-slate-900 dark:text-white tabular-nums mt-1 block">
+            <span className="text-2xl font-extrabold text-text tabular-nums mt-1 block">
               {qualityReport.totalCount}
             </span>
           </button>
@@ -648,14 +648,14 @@ export const AdminLibraryManager: React.FC = () => {
             }}
             className={`min-h-[76px] p-3 rounded-xl border text-left transition-colors cursor-pointer ${
               filters.priceStatus === 'no_price'
-                ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-500'
-                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 hover:border-amber-400'
+                ? 'bg-warning-soft border-warning'
+                : 'bg-surface-2 border-border hover:border-warning/60'
             }`}
           >
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
+            <span className="text-xs font-semibold text-text-muted block">
               দাম ছাড়া
             </span>
-            <span className="text-2xl font-extrabold text-amber-700 dark:text-amber-400 tabular-nums mt-1 block">
+            <span className="text-2xl font-extrabold text-warning-text tabular-nums mt-1 block">
               {qualityReport.missingPriceCount}
             </span>
           </button>
@@ -673,14 +673,14 @@ export const AdminLibraryManager: React.FC = () => {
             }}
             className={`min-h-[76px] p-3 rounded-xl border text-left transition-colors cursor-pointer ${
               filters.qualityFilter === 'missing_generic'
-                ? 'bg-amber-50 dark:bg-amber-950/50 border-amber-500'
-                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 hover:border-amber-400'
+                ? 'bg-warning-soft border-warning'
+                : 'bg-surface-2 border-border hover:border-warning/60'
             }`}
           >
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
+            <span className="text-xs font-semibold text-text-muted block">
               জেনেরিক ছাড়া
             </span>
-            <span className="text-2xl font-extrabold text-amber-700 dark:text-amber-400 tabular-nums mt-1 block">
+            <span className="text-2xl font-extrabold text-warning-text tabular-nums mt-1 block">
               {qualityReport.missingGenericCount}
             </span>
           </button>
@@ -698,14 +698,14 @@ export const AdminLibraryManager: React.FC = () => {
             }}
             className={`min-h-[76px] p-3 rounded-xl border text-left transition-colors cursor-pointer ${
               filters.qualityFilter === 'duplicates'
-                ? 'bg-orange-50 dark:bg-orange-950/50 border-orange-500'
-                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 hover:border-orange-400'
+                ? 'bg-warning-soft border-warning'
+                : 'bg-surface-2 border-border hover:border-warning/60'
             }`}
           >
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
+            <span className="text-xs font-semibold text-text-muted block">
               সম্ভাব্য ডুপ্লিকেট
             </span>
-            <span className="text-2xl font-extrabold text-orange-700 dark:text-orange-400 tabular-nums mt-1 block">
+            <span className="text-2xl font-extrabold text-warning-text tabular-nums mt-1 block">
               {qualityReport.suspectedDuplicateItemsCount}
             </span>
           </button>
@@ -722,14 +722,14 @@ export const AdminLibraryManager: React.FC = () => {
             }}
             className={`min-h-[76px] p-3 rounded-xl border text-left transition-colors cursor-pointer ${
               filters.qualityFilter === 'test_data'
-                ? 'bg-rose-50 dark:bg-rose-950/50 border-rose-500'
-                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 hover:border-rose-400'
+                ? 'bg-danger-soft border-danger'
+                : 'bg-surface-2 border-border hover:border-danger/60'
             }`}
           >
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
+            <span className="text-xs font-semibold text-text-muted block">
               টেস্ট ডেটা
             </span>
-            <span className="text-2xl font-extrabold text-rose-700 dark:text-rose-400 tabular-nums mt-1 block">
+            <span className="text-2xl font-extrabold text-danger-text tabular-nums mt-1 block">
               {qualityReport.testDataCount}
             </span>
           </button>
@@ -738,13 +738,13 @@ export const AdminLibraryManager: React.FC = () => {
 
       {/* Duplicate Finder Mode */}
       {viewMode === 'duplicates' ? (
-        <section className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <section className="bg-surface rounded-2xl border border-border p-4 sm:p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
             <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+              <h2 className="text-lg font-bold text-text">
                 সম্ভাব্য ডুপ্লিকেট দল ({duplicateGroups.length}টি)
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              <p className="text-xs text-text-muted mt-0.5">
                 একই ব্র্যান্ড নাম, মাত্রা ও কোম্পানির একাধিক রেকর্ড একসাথে দেখানো হচ্ছে।
               </p>
             </div>
@@ -752,7 +752,7 @@ export const AdminLibraryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleMarkDuplicatesKeepingOne()}
-                className="min-h-[48px] inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm rounded-xl shadow-xs cursor-pointer shrink-0"
+                className="min-h-[48px] inline-flex items-center gap-2 px-5 py-2.5 bg-warning hover:opacity-90 text-white font-bold text-sm rounded-xl shadow-xs cursor-pointer shrink-0"
               >
                 <CheckSquare className="w-4 h-4" />
                 <span>
@@ -763,9 +763,9 @@ export const AdminLibraryManager: React.FC = () => {
           </div>
 
           {duplicateGroups.length === 0 ? (
-            <div className="p-8 text-center space-y-2 text-slate-500 dark:text-slate-400">
-              <ShieldCheck className="w-10 h-10 text-emerald-600 mx-auto" />
-              <p className="text-base font-bold text-slate-800 dark:text-slate-200">
+            <div className="p-8 text-center space-y-2 text-text-muted">
+              <ShieldCheck className="w-10 h-10 text-success-text mx-auto" />
+              <p className="text-base font-bold text-text">
                 কোনো ডুপ্লিকেট ওষুধ পাওয়া যায়নি
               </p>
               <p className="text-xs">আপনার লাইব্রেরি পরিষ্কার রয়েছে।</p>
@@ -779,27 +779,27 @@ export const AdminLibraryManager: React.FC = () => {
                 return (
                   <div
                     key={group.signature}
-                    className="rounded-xl border border-slate-200 dark:border-slate-800 p-3.5 space-y-2.5 bg-slate-50/70 dark:bg-slate-800/30"
+                    className="rounded-xl border border-border p-3.5 space-y-2.5 bg-surface-2/60"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <span className="text-base font-bold text-slate-900 dark:text-white">
+                        <span className="text-base font-bold text-text">
                           {group.brandName} ({group.strength})
                         </span>
-                        <span className="text-xs text-slate-500 dark:text-slate-400 block">
+                        <span className="text-xs text-text-muted block">
                           {group.manufacturer} · {group.items.length}টি রেকর্ড
                         </span>
                       </div>
                       <button
                         type="button"
                         onClick={() => handleMarkDuplicatesKeepingOne(extraIds)}
-                        className="min-h-[40px] px-3 py-1.5 text-xs font-bold text-amber-800 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/60 hover:bg-amber-200 rounded-lg cursor-pointer"
+                        className="min-h-[40px] px-3 py-1.5 text-xs font-bold text-warning-text bg-warning-soft hover:opacity-90 rounded-lg cursor-pointer"
                       >
                         একটি রেখে বাকিগুলো মার্ক করুন
                       </button>
                     </div>
 
-                    <div className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                    <div className="divide-y divide-border bg-surface rounded-lg border border-border">
                       {group.items.map((item) => {
                         const isPrimary = item.id === group.primaryId;
                         const isMarked = markedIds.has(item.id);
@@ -814,25 +814,25 @@ export const AdminLibraryManager: React.FC = () => {
                                 checked={isMarked}
                                 onChange={() => toggleRowMark(item.id)}
                                 aria-label={`${item.brandName} মার্ক করুন`}
-                                className="w-5 h-5 rounded text-teal-600 cursor-pointer shrink-0"
+                                className="w-5 h-5 rounded text-primary focus:ring-primary cursor-pointer shrink-0"
                               />
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-1.5">
-                                  <span className="font-bold text-sm text-slate-900 dark:text-white">
+                                  <span className="font-bold text-sm text-text">
                                     {item.brandName}
                                   </span>
                                   {isPrimary && (
-                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-success-soft text-success-text">
                                       মূল (রাখার জন্য প্রস্তাবিত)
                                     </span>
                                   )}
                                   {item.status !== 'published' && (
-                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                                    <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-warning-soft text-warning-text">
                                       খসড়া
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">
+                                <p className="text-xs text-text-muted">
                                   {item.genericName} · {item.dosageForm}
                                   {item.pricePerUnit !== undefined
                                     ? ` · ৳${item.pricePerUnit.toFixed(2)}`
@@ -845,14 +845,14 @@ export const AdminLibraryManager: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => openEditGlobalMedicineModal(item)}
-                                className="min-h-[40px] px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg cursor-pointer"
+                                className="min-h-[40px] px-3 py-1.5 text-xs font-semibold text-text bg-surface-2 hover:bg-border/60 rounded-lg cursor-pointer"
                               >
                                 সম্পাদনা
                               </button>
                               <button
                                 type="button"
                                 onClick={() => openDeleteConfirmation([item])}
-                                className="min-h-[40px] px-3 py-1.5 text-xs font-semibold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 rounded-lg cursor-pointer"
+                                className="min-h-[40px] px-3 py-1.5 text-xs font-semibold text-danger-text bg-danger-soft hover:bg-danger/20 rounded-lg cursor-pointer"
                               >
                                 মুছুন
                               </button>
@@ -870,10 +870,10 @@ export const AdminLibraryManager: React.FC = () => {
       ) : (
         <>
           {/* Search + Multi-Filter + Sort Panel */}
-          <section className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-5 space-y-3">
+          <section className="bg-surface rounded-2xl border border-border p-4 sm:p-5 space-y-3">
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="relative flex-1">
-                <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                 <input
                   type="text"
                   value={filters.search}
@@ -881,13 +881,13 @@ export const AdminLibraryManager: React.FC = () => {
                     setFilters((prev) => ({ ...prev, search: e.target.value }))
                   }
                   placeholder="ব্র্যান্ড নাম, জেনেরিক বা কোম্পানি লিখুন..."
-                  className="min-h-[48px] w-full pl-11 pr-20 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-base text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-teal-500"
+                  className="min-h-[48px] w-full pl-11 pr-20 py-2.5 rounded-xl bg-surface-2 border border-border text-base text-text placeholder:text-text-muted focus:outline-hidden focus:ring-2 focus:ring-primary"
                 />
                 {filters.search && (
                   <button
                     type="button"
                     onClick={() => setFilters((prev) => ({ ...prev, search: '' }))}
-                    className="min-h-[44px] px-3 absolute right-1 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+                    className="min-h-[44px] px-3 absolute right-1 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted hover:text-text cursor-pointer"
                   >
                     মুছুন
                   </button>
@@ -904,7 +904,7 @@ export const AdminLibraryManager: React.FC = () => {
                     }))
                   }
                   aria-label="সাজানোর ক্রম"
-                  className="min-h-[48px] px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm font-semibold text-slate-800 dark:text-slate-200 cursor-pointer"
+                  className="min-h-[48px] px-3.5 py-2.5 rounded-xl bg-surface-2 border border-border text-sm font-semibold text-text cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-primary"
                 >
                   <option value="name">সাজান: নাম অনুযায়ী</option>
                   <option value="company">সাজান: কোম্পানি অনুযায়ী</option>
@@ -916,8 +916,8 @@ export const AdminLibraryManager: React.FC = () => {
                   onClick={() => setShowAdvancedFilters((prev) => !prev)}
                   className={`min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-bold cursor-pointer transition-colors ${
                     showAdvancedFilters || activeChips.length > 0
-                      ? 'bg-teal-50 dark:bg-teal-950/50 border-teal-500 text-teal-900 dark:text-teal-200'
-                      : 'bg-slate-50 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200'
+                      ? 'bg-primary-soft border-primary text-primary'
+                      : 'bg-surface-2 border-border text-text'
                   }`}
                 >
                   <SlidersHorizontal className="w-4 h-4" />
@@ -928,9 +928,9 @@ export const AdminLibraryManager: React.FC = () => {
 
             {/* Collapsible Multi-Filters */}
             {showAdvancedFilters && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-3 border-t border-border">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block">
+                  <label className="text-xs font-bold text-text-muted block">
                     কোম্পানি
                   </label>
                   <select
@@ -938,7 +938,7 @@ export const AdminLibraryManager: React.FC = () => {
                     onChange={(e) =>
                       setFilters((prev) => ({ ...prev, manufacturer: e.target.value }))
                     }
-                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100"
+                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                   >
                     <option value="all">সকল কোম্পানি</option>
                     {uniqueManufacturers.map((mfg) => (
@@ -950,7 +950,7 @@ export const AdminLibraryManager: React.FC = () => {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block">
+                  <label className="text-xs font-bold text-text-muted block">
                     ওষুধের ধরন
                   </label>
                   <select
@@ -958,7 +958,7 @@ export const AdminLibraryManager: React.FC = () => {
                     onChange={(e) =>
                       setFilters((prev) => ({ ...prev, dosageForm: e.target.value }))
                     }
-                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100"
+                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                   >
                     <option value="all">সকল ধরন</option>
                     {uniqueDosageForms.map((f) => (
@@ -970,7 +970,7 @@ export const AdminLibraryManager: React.FC = () => {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block">
+                  <label className="text-xs font-bold text-text-muted block">
                     জেনেরিক নাম
                   </label>
                   <select
@@ -978,7 +978,7 @@ export const AdminLibraryManager: React.FC = () => {
                     onChange={(e) =>
                       setFilters((prev) => ({ ...prev, genericName: e.target.value }))
                     }
-                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100"
+                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                   >
                     <option value="all">সকল জেনেরিক</option>
                     {uniqueGenerics.map((g) => (
@@ -990,7 +990,7 @@ export const AdminLibraryManager: React.FC = () => {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block">
+                  <label className="text-xs font-bold text-text-muted block">
                     দামের অবস্থা
                   </label>
                   <select
@@ -1001,7 +1001,7 @@ export const AdminLibraryManager: React.FC = () => {
                         priceStatus: e.target.value as AdminLibraryFilters['priceStatus'],
                       }))
                     }
-                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100"
+                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                   >
                     <option value="all">সবগুলো</option>
                     <option value="has_price">দাম আছে</option>
@@ -1010,7 +1010,7 @@ export const AdminLibraryManager: React.FC = () => {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block">
+                  <label className="text-xs font-bold text-text-muted block">
                     বিশেষ মান যাচাই
                   </label>
                   <select
@@ -1021,7 +1021,7 @@ export const AdminLibraryManager: React.FC = () => {
                         qualityFilter: e.target.value as AdminLibraryFilters['qualityFilter'],
                       }))
                     }
-                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100"
+                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                   >
                     <option value="all">সব ওষুধ</option>
                     <option value="missing_generic">জেনেরিক নাম নেই</option>
@@ -1035,20 +1035,20 @@ export const AdminLibraryManager: React.FC = () => {
 
             {/* Active Removable Filter Chips */}
             {activeChips.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border">
+                <span className="text-xs font-semibold text-text-muted">
                   সক্রিয় ফিল্টার:
                 </span>
                 {activeChips.map((chip) => (
                   <span
                     key={chip.key}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-xs font-semibold text-teal-900 dark:text-teal-200"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-soft border border-primary/25 text-xs font-semibold text-primary"
                   >
                     <span>{chip.label}</span>
                     <button
                       type="button"
                       onClick={() => removeFilterChip(chip.key)}
-                      className="px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-900 hover:bg-teal-200 text-teal-900 dark:text-teal-100 font-bold cursor-pointer"
+                      className="px-1.5 py-0.5 rounded bg-primary/15 hover:bg-primary/25 text-primary font-bold cursor-pointer"
                     >
                       মুছুন
                     </button>
@@ -1057,7 +1057,7 @@ export const AdminLibraryManager: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setFilters(DEFAULT_ADMIN_FILTERS)}
-                  className="text-xs font-bold text-rose-700 dark:text-rose-400 hover:underline px-2 py-1 cursor-pointer"
+                  className="text-xs font-bold text-danger-text hover:underline px-2 py-1 cursor-pointer"
                 >
                   সব মুছুন
                 </button>
@@ -1066,18 +1066,18 @@ export const AdminLibraryManager: React.FC = () => {
           </section>
 
           {/* Selection & Result Count Bar */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="bg-surface rounded-2xl border border-border p-3.5 sm:px-5 flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={toggleMarkCurrentPage}
                 disabled={paginatedMedicines.length === 0}
-                className="min-h-[44px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 text-sm font-bold text-slate-800 dark:text-slate-200 cursor-pointer disabled:opacity-50"
+                className="min-h-[44px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-border bg-surface-2 hover:bg-border/50 text-sm font-bold text-text cursor-pointer disabled:opacity-50"
               >
                 {allOnPageMarked ? (
-                  <CheckSquare className="w-5 h-5 text-teal-600" />
+                  <CheckSquare className="w-5 h-5 text-primary" />
                 ) : (
-                  <Square className="w-5 h-5 text-slate-400" />
+                  <Square className="w-5 h-5 text-text-muted" />
                 )}
                 <span>সব মার্ক করুন</span>
               </button>
@@ -1086,7 +1086,7 @@ export const AdminLibraryManager: React.FC = () => {
                 <button
                   type="button"
                   onClick={markAllFiltered}
-                  className="min-h-[44px] px-3.5 py-2 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-300 dark:border-teal-800 text-xs sm:text-sm font-bold text-teal-900 dark:text-teal-200 hover:bg-teal-100 cursor-pointer"
+                  className="min-h-[44px] px-3.5 py-2 rounded-xl bg-primary-soft border border-primary/30 text-xs sm:text-sm font-bold text-primary hover:bg-primary/15 cursor-pointer"
                 >
                   ফিল্টারে মিলে যাওয়া সব {filteredMedicines.length} টি ওষুধ মার্ক করুন
                 </button>
@@ -1096,45 +1096,45 @@ export const AdminLibraryManager: React.FC = () => {
                 <button
                   type="button"
                   onClick={clearAllMarks}
-                  className="min-h-[44px] px-3 py-2 text-sm font-bold text-rose-700 dark:text-rose-400 hover:underline cursor-pointer"
+                  className="min-h-[44px] px-3 py-2 text-sm font-bold text-danger-text hover:underline cursor-pointer"
                 >
                   মার্ক বাতিল ({markedIds.size})
                 </button>
               )}
             </div>
 
-            <div className="text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
+            <div className="text-sm font-semibold text-text-muted tabular-nums">
               মোট {filteredMedicines.length}টি · পাতা {safePage}/{totalPages}
             </div>
           </div>
 
           {/* Medicine List: Table on Desktop, Touch Cards on Mobile */}
           {paginatedMedicines.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3">
-              <Pill className="w-10 h-10 text-slate-400 mx-auto" />
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+            <div className="bg-surface rounded-2xl border border-border p-10 text-center space-y-3">
+              <Pill className="w-10 h-10 text-text-muted mx-auto" />
+              <h3 className="text-lg font-bold text-text">
                 কোনো ওষুধ পাওয়া যায়নি
               </h3>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
+              <p className="text-sm text-text-muted">
                 অনুসন্ধান বা ফিল্টার বদলে আবার চেষ্টা করুন।
               </p>
               {activeChips.length > 0 && (
                 <button
                   type="button"
                   onClick={() => setFilters(DEFAULT_ADMIN_FILTERS)}
-                  className="min-h-[48px] px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm rounded-xl cursor-pointer"
+                  className="min-h-[48px] px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-sm rounded-xl cursor-pointer"
                 >
                   সব ফিল্টার মুছুন
                 </button>
               )}
             </div>
           ) : (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="bg-surface rounded-2xl border border-border overflow-hidden">
               {/* Desktop Table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-600 dark:text-slate-300">
+                    <tr className="bg-surface-2 border-b border-border text-xs font-bold text-text-muted">
                       <th className="py-3 px-4 w-12">মার্ক</th>
                       <th className="py-3 px-4">ওষুধ ও মাত্রা</th>
                       <th className="py-3 px-4">জেনেরিক নাম</th>
@@ -1144,7 +1144,7 @@ export const AdminLibraryManager: React.FC = () => {
                       <th className="py-3 px-4 text-right">কাজ</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
+                  <tbody className="divide-y divide-border text-sm">
                     {paginatedMedicines.map((med) => {
                       const isMarked = markedIds.has(med.id);
                       const isTest = isTestMedicine(med);
@@ -1152,8 +1152,8 @@ export const AdminLibraryManager: React.FC = () => {
                       return (
                         <tr
                           key={med.id}
-                          className={`hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors ${
-                            isMarked ? 'bg-teal-50/60 dark:bg-teal-950/20' : ''
+                          className={`hover:bg-surface-2/60 transition-colors ${
+                            isMarked ? 'bg-primary-soft/50' : ''
                           }`}
                         >
                           <td className="py-3 px-4">
@@ -1162,47 +1162,47 @@ export const AdminLibraryManager: React.FC = () => {
                               checked={isMarked}
                               onChange={() => toggleRowMark(med.id)}
                               aria-label={`${med.brandName} মার্ক করুন`}
-                              className="w-5 h-5 rounded text-teal-600 cursor-pointer"
+                              className="w-5 h-5 rounded text-primary focus:ring-primary cursor-pointer"
                             />
                           </td>
                           <td className="py-3 px-4">
-                            <div className="font-bold text-slate-900 dark:text-white flex flex-wrap items-center gap-1.5">
+                            <div className="font-bold text-text flex flex-wrap items-center gap-1.5">
                               <span>{med.brandName}</span>
-                              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
+                              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary-soft text-primary">
                                 {med.strength}
                               </span>
                               {med.status !== 'published' && (
-                                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-warning-soft text-warning-text">
                                   খসড়া
                                 </span>
                               )}
                               {isTest && (
-                                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
+                                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-danger-soft text-danger-text">
                                   টেস্ট
                                 </span>
                               )}
                             </div>
                           </td>
-                          <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
+                          <td className="py-3 px-4 text-text-muted">
                             {missingGen ? (
-                              <span className="text-xs font-bold text-amber-700 dark:text-amber-400">
+                              <span className="text-xs font-bold text-warning-text">
                                 জেনেরিক নেই
                               </span>
                             ) : (
                               med.genericName
                             )}
                           </td>
-                          <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
+                          <td className="py-3 px-4 text-text-muted">
                             {med.dosageForm}
                           </td>
-                          <td className="py-3 px-4 text-slate-700 dark:text-slate-300 max-w-[200px] truncate">
+                          <td className="py-3 px-4 text-text-muted max-w-[200px] truncate">
                             {med.manufacturer}
                           </td>
                           <td className="py-3 px-4 text-right font-semibold tabular-nums">
                             {isMissingPrice(med) ? (
-                              <span className="text-xs text-slate-400">নেই</span>
+                              <span className="text-xs text-text-muted">নেই</span>
                             ) : (
-                              <span className="text-teal-700 dark:text-teal-300">
+                              <span className="text-primary">
                                 ৳{med.pricePerUnit!.toFixed(2)}
                                 {med.priceUnit ? ` / ${med.priceUnit}` : ''}
                               </span>
@@ -1213,7 +1213,7 @@ export const AdminLibraryManager: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => openEditGlobalMedicineModal(med)}
-                                className="min-h-[38px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg cursor-pointer"
+                                className="min-h-[38px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-text bg-surface-2 hover:bg-border/60 rounded-lg cursor-pointer"
                               >
                                 <Edit3 className="w-3.5 h-3.5" />
                                 <span>সম্পাদনা</span>
@@ -1221,7 +1221,7 @@ export const AdminLibraryManager: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => openDeleteConfirmation([med])}
-                                className="min-h-[38px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 rounded-lg cursor-pointer"
+                                className="min-h-[38px] inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-danger-text bg-danger-soft hover:bg-danger/20 rounded-lg cursor-pointer"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                                 <span>মুছুন</span>
@@ -1236,14 +1236,14 @@ export const AdminLibraryManager: React.FC = () => {
               </div>
 
               {/* Mobile Card List */}
-              <div className="md:hidden divide-y divide-slate-200 dark:divide-slate-800">
+              <div className="md:hidden divide-y divide-border">
                 {paginatedMedicines.map((med) => {
                   const isMarked = markedIds.has(med.id);
                   return (
                     <div
                       key={med.id}
                       className={`p-4 space-y-3 ${
-                        isMarked ? 'bg-teal-50/60 dark:bg-teal-950/20' : ''
+                        isMarked ? 'bg-primary-soft/50' : ''
                       }`}
                     >
                       <div className="flex items-start gap-3">
@@ -1252,29 +1252,29 @@ export const AdminLibraryManager: React.FC = () => {
                           checked={isMarked}
                           onChange={() => toggleRowMark(med.id)}
                           aria-label={`${med.brandName} মার্ক করুন`}
-                          className="mt-1 w-6 h-6 rounded text-teal-600 cursor-pointer shrink-0"
+                          className="mt-1 w-6 h-6 rounded text-primary focus:ring-primary cursor-pointer shrink-0"
                         />
                         <div className="flex-1 min-w-0 space-y-1">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-base font-bold text-slate-900 dark:text-white">
+                            <span className="text-base font-bold text-text">
                               {med.brandName}
                             </span>
-                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary-soft text-primary">
                               {med.strength}
                             </span>
                             {isTestMedicine(med) && (
-                              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">
+                              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-danger-soft text-danger-text">
                                 টেস্ট
                               </span>
                             )}
                           </div>
-                          <p className="text-sm text-slate-600 dark:text-slate-300">
+                          <p className="text-sm text-text-muted">
                             {isMissingGeneric(med) ? 'জেনেরিক নেই' : med.genericName} ·{' '}
                             {med.dosageForm}
                           </p>
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
                             <span className="truncate">{med.manufacturer}</span>
-                            <span className="font-bold text-teal-700 dark:text-teal-300 tabular-nums">
+                            <span className="font-bold text-primary tabular-nums">
                               {isMissingPrice(med)
                                 ? 'দাম নেই'
                                 : `৳${med.pricePerUnit!.toFixed(2)}${
@@ -1289,7 +1289,7 @@ export const AdminLibraryManager: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => openEditGlobalMedicineModal(med)}
-                          className="min-h-[44px] flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-bold text-slate-800 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 rounded-xl cursor-pointer"
+                          className="min-h-[44px] flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-bold text-text bg-surface-2 rounded-xl cursor-pointer"
                         >
                           <Edit3 className="w-4 h-4" />
                           <span>সম্পাদনা</span>
@@ -1297,7 +1297,7 @@ export const AdminLibraryManager: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => openDeleteConfirmation([med])}
-                          className="min-h-[44px] flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 rounded-xl cursor-pointer"
+                          className="min-h-[44px] flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-bold text-danger-text bg-danger-soft rounded-xl cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
                           <span>মুছুন</span>
@@ -1310,18 +1310,18 @@ export const AdminLibraryManager: React.FC = () => {
 
               {/* Pagination Footer */}
               {totalPages > 1 && (
-                <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900">
+                <div className="p-4 border-t border-border flex items-center justify-between gap-3 bg-surface-2/60">
                   <button
                     type="button"
                     disabled={safePage <= 1}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-sm text-slate-800 dark:text-slate-200 cursor-pointer disabled:opacity-40"
+                    className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border bg-surface font-bold text-sm text-text cursor-pointer disabled:opacity-40"
                   >
                     <ChevronLeft className="w-4 h-4" />
                     <span>আগের পাতা</span>
                   </button>
 
-                  <span className="text-sm font-bold text-slate-700 dark:text-slate-300 tabular-nums">
+                  <span className="text-sm font-bold text-text-muted tabular-nums">
                     পাতা {safePage} / {totalPages}
                   </span>
 
@@ -1329,7 +1329,7 @@ export const AdminLibraryManager: React.FC = () => {
                     type="button"
                     disabled={safePage >= totalPages}
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-sm text-slate-800 dark:text-slate-200 cursor-pointer disabled:opacity-40"
+                    className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border bg-surface font-bold text-sm text-text cursor-pointer disabled:opacity-40"
                   >
                     <span>পরের পাতা</span>
                     <ChevronRight className="w-4 h-4" />
@@ -1344,7 +1344,7 @@ export const AdminLibraryManager: React.FC = () => {
       {/* Sticky Bulk Action Bar when >= 1 item marked */}
       {markedIds.size > 0 && (
         <div className="fixed bottom-[76px] md:bottom-4 left-3 right-3 z-40 max-w-5xl mx-auto">
-          <div className="bg-slate-900 dark:bg-slate-800 text-white rounded-2xl border border-slate-700 shadow-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="bg-[#1E1B4B] dark:bg-surface-2 text-white rounded-2xl border border-indigo-900/50 dark:border-border shadow-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm sm:text-base font-bold tabular-nums">
                 {markedIds.size} টি মার্ক করা আছে
@@ -1352,7 +1352,7 @@ export const AdminLibraryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={clearAllMarks}
-                className="text-xs font-bold text-slate-300 hover:text-white underline cursor-pointer sm:hidden"
+                className="text-xs font-bold text-indigo-200 hover:text-white underline cursor-pointer sm:hidden"
               >
                 মার্ক বাতিল
               </button>
@@ -1362,7 +1362,7 @@ export const AdminLibraryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={openBulkDeleteConfirmation}
-                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs sm:text-sm cursor-pointer"
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-danger hover:opacity-90 text-white font-bold text-xs sm:text-sm cursor-pointer"
               >
                 <Trash2 className="w-4 h-4" />
                 <span>মুছুন</span>
@@ -1371,7 +1371,7 @@ export const AdminLibraryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={() => openBulkEdit('price')}
-                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs sm:text-sm cursor-pointer"
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary hover:bg-primary-hover text-on-primary font-bold text-xs sm:text-sm cursor-pointer"
               >
                 <Tag className="w-4 h-4" />
                 <span>দাম বদলান</span>
@@ -1380,7 +1380,7 @@ export const AdminLibraryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={() => openBulkEdit('company')}
-                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs sm:text-sm cursor-pointer"
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs sm:text-sm cursor-pointer"
               >
                 <Building className="w-4 h-4" />
                 <span>কোম্পানি বদলান</span>
@@ -1389,7 +1389,7 @@ export const AdminLibraryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={() => openBulkEdit('form')}
-                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs sm:text-sm cursor-pointer"
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold text-xs sm:text-sm cursor-pointer"
               >
                 <Layers className="w-4 h-4" />
                 <span>ধরন বদলান</span>
@@ -1398,7 +1398,7 @@ export const AdminLibraryManager: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleExportCsv(true)}
-                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm cursor-pointer"
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-success hover:opacity-90 text-white font-bold text-xs sm:text-sm cursor-pointer"
               >
                 <Download className="w-4 h-4" />
                 <span>CSV রপ্তানি</span>
@@ -1411,18 +1411,18 @@ export const AdminLibraryManager: React.FC = () => {
       {/* Safe Delete Confirmation Modal */}
       {deleteModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4">
+          <div className="bg-surface rounded-3xl max-w-lg w-full border border-border shadow-2xl p-6 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="p-3 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 shrink-0">
+              <div className="p-3 rounded-2xl bg-danger-soft text-danger-text shrink-0">
                 <AlertTriangle className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                <h3 className="text-lg font-bold text-text">
                   ওষুধ মুছে ফেলার নিশ্চিতকরণ
                 </h3>
-                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+                <p className="text-sm text-text-muted mt-1">
                   আপনি কি নিশ্চিতভাবে{' '}
-                  <strong className="text-rose-600 dark:text-rose-400 tabular-nums">
+                  <strong className="text-danger-text tabular-nums">
                     {deleteModal.items.length}
                   </strong>{' '}
                   টি ওষুধ লাইব্রেরি থেকে মুছে ফেলতে চান?
@@ -1431,32 +1431,32 @@ export const AdminLibraryManager: React.FC = () => {
             </div>
 
             {/* First 5 Medicine Names */}
-            <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-3.5 border border-slate-200 dark:border-slate-700 space-y-1.5 text-sm">
-              <span className="text-xs font-bold text-slate-500 dark:text-slate-400 block">
+            <div className="bg-surface-2 rounded-2xl p-3.5 border border-border space-y-1.5 text-sm">
+              <span className="text-xs font-bold text-text-muted block">
                 মুছে ফেলা হবে (প্রথম {Math.min(5, deleteModal.items.length)}টি):
               </span>
               {deleteModal.items.slice(0, 5).map((m) => (
                 <div
                   key={m.id}
-                  className="flex items-center justify-between gap-2 py-1 border-b border-slate-200/60 dark:border-slate-700/60 last:border-0"
+                  className="flex items-center justify-between gap-2 py-1 border-b border-border last:border-0"
                 >
-                  <span className="font-semibold text-slate-900 dark:text-white truncate">
+                  <span className="font-semibold text-text truncate">
                     {m.brandName} ({m.strength})
                   </span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[140px]">
+                  <span className="text-xs text-text-muted truncate max-w-[140px]">
                     {m.manufacturer}
                   </span>
                 </div>
               ))}
               {deleteModal.items.length > 5 && (
-                <p className="text-xs font-bold text-rose-600 dark:text-rose-400 pt-1">
+                <p className="text-xs font-bold text-danger-text pt-1">
                   এবং আরও {deleteModal.items.length - 5}টি ওষুধ
                 </p>
               )}
             </div>
 
             {/* Automatic Pre-Delete JSON Backup Option */}
-            <label className="flex items-center gap-3 p-3 rounded-xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-900/50 cursor-pointer">
+            <label className="flex items-center gap-3 p-3 rounded-xl bg-primary-soft border border-primary/25 cursor-pointer">
               <input
                 type="checkbox"
                 checked={deleteModal.downloadBackup}
@@ -1466,17 +1466,17 @@ export const AdminLibraryManager: React.FC = () => {
                     downloadBackup: e.target.checked,
                   }))
                 }
-                className="w-5 h-5 rounded text-teal-600 cursor-pointer shrink-0"
+                className="w-5 h-5 rounded text-primary focus:ring-primary cursor-pointer shrink-0"
               />
-              <span className="text-xs sm:text-sm font-semibold text-teal-900 dark:text-teal-200">
+              <span className="text-xs sm:text-sm font-semibold text-primary">
                 মোছার আগে JSON ব্যাকআপ ফাইল স্বয়ংক্রিয়ভাবে ডাউনলোড করুন (সুপারিশকৃত)
               </span>
             </label>
 
             {/* Typed Confirmation when > 10 items */}
             {requiresTypedConfirm && (
-              <div className="space-y-1.5 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50">
-                <label className="text-xs sm:text-sm font-bold text-rose-800 dark:text-rose-300 block">
+              <div className="space-y-1.5 p-3 rounded-xl bg-danger-soft border border-danger/30">
+                <label className="text-xs sm:text-sm font-bold text-danger-text block">
                   ১০টির বেশি ওষুধ মোছার জন্য নিচের ঘরে &quot;মুছুন&quot; শব্দটি লিখুন:
                 </label>
                 <input
@@ -1489,17 +1489,17 @@ export const AdminLibraryManager: React.FC = () => {
                     }))
                   }
                   placeholder="মুছুন"
-                  className="min-h-[44px] w-full px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-rose-300 dark:border-rose-800 text-base font-bold text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-rose-500"
+                  className="min-h-[44px] w-full px-3.5 py-2 rounded-xl bg-surface border border-danger/40 text-base font-bold text-text focus:outline-hidden focus:ring-2 focus:ring-danger"
                 />
               </div>
             )}
 
-            <p className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+            <p className="text-xs text-success-text font-medium">
               নিরাপত্তা নিশ্চয়তা: ব্যবহারকারীদের ব্যক্তিগত &quot;আমার ওষুধ&quot; তালিকায় কোনো পরিবর্তন হবে না।
             </p>
 
             {deleteModal.errorMessage && (
-              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 text-xs font-semibold text-rose-800 dark:text-rose-300">
+              <div className="p-3 rounded-xl bg-danger-soft border border-danger/30 text-xs font-semibold text-danger-text">
                 {deleteModal.errorMessage}
               </div>
             )}
@@ -1518,7 +1518,7 @@ export const AdminLibraryManager: React.FC = () => {
                     errorMessage: null,
                   })
                 }
-                className="min-h-[48px] px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+                className="min-h-[48px] px-5 py-2.5 text-sm font-bold text-text-muted hover:bg-surface-2 rounded-xl cursor-pointer"
               >
                 বাতিল
               </button>
@@ -1526,7 +1526,7 @@ export const AdminLibraryManager: React.FC = () => {
                 type="button"
                 disabled={deleteModal.isDeleting || !isTypedConfirmValid}
                 onClick={handleConfirmDelete}
-                className="min-h-[48px] inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                className="min-h-[48px] inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-danger hover:opacity-90 rounded-xl cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Trash2 className="w-4 h-4" />
                 <span>
@@ -1545,29 +1545,29 @@ export const AdminLibraryManager: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
           <form
             onSubmit={handleSaveBulkEdit}
-            className="bg-white dark:bg-slate-900 rounded-3xl max-w-lg w-full border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4"
+            className="bg-surface rounded-3xl max-w-lg w-full border border-border shadow-2xl p-6 space-y-4"
           >
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div className="flex items-center justify-between border-b border-border pb-3">
               <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                <h3 className="text-lg font-bold text-text">
                   একসাথে তথ্য পরিবর্তন ({markedIds.size}টি ওষুধ)
                 </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <p className="text-xs text-text-muted">
                   যে তথ্যগুলো পরিবর্তন করতে চান সেগুলোতে টিক দিন।
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setBulkEditModal((prev) => ({ ...prev, isOpen: false }))}
-                className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                className="p-2 rounded-xl text-text-muted hover:bg-surface-2 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Company */}
-            <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
-              <label className="flex items-center gap-2.5 text-sm font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
+            <div className="p-3.5 rounded-2xl border border-border space-y-2">
+              <label className="flex items-center gap-2.5 text-sm font-bold text-text cursor-pointer">
                 <input
                   type="checkbox"
                   checked={bulkEditModal.updateManufacturer}
@@ -1577,7 +1577,7 @@ export const AdminLibraryManager: React.FC = () => {
                       updateManufacturer: e.target.checked,
                     }))
                   }
-                  className="w-5 h-5 rounded text-teal-600"
+                  className="w-5 h-5 rounded text-primary focus:ring-primary"
                 />
                 <span>কোম্পানি বদলান</span>
               </label>
@@ -1590,7 +1590,7 @@ export const AdminLibraryManager: React.FC = () => {
                     setBulkEditModal((prev) => ({ ...prev, manufacturer: e.target.value }))
                   }
                   placeholder="নতুন কোম্পানির নাম লিখুন..."
-                  className="min-h-[44px] w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white"
+                  className="min-h-[44px] w-full px-3.5 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                 />
               )}
               <datalist id="bulk-mfg-list">
@@ -1601,8 +1601,8 @@ export const AdminLibraryManager: React.FC = () => {
             </div>
 
             {/* Dosage Form */}
-            <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
-              <label className="flex items-center gap-2.5 text-sm font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
+            <div className="p-3.5 rounded-2xl border border-border space-y-2">
+              <label className="flex items-center gap-2.5 text-sm font-bold text-text cursor-pointer">
                 <input
                   type="checkbox"
                   checked={bulkEditModal.updateDosageForm}
@@ -1612,7 +1612,7 @@ export const AdminLibraryManager: React.FC = () => {
                       updateDosageForm: e.target.checked,
                     }))
                   }
-                  className="w-5 h-5 rounded text-teal-600"
+                  className="w-5 h-5 rounded text-primary focus:ring-primary"
                 />
                 <span>ওষুধের ধরন বদলান</span>
               </label>
@@ -1622,7 +1622,7 @@ export const AdminLibraryManager: React.FC = () => {
                   onChange={(e) =>
                     setBulkEditModal((prev) => ({ ...prev, dosageForm: e.target.value }))
                   }
-                  className="min-h-[44px] w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white"
+                  className="min-h-[44px] w-full px-3.5 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                 >
                   {DOSAGE_FORM_OPTIONS.map((opt) => (
                     <option key={opt} value={opt}>
@@ -1634,8 +1634,8 @@ export const AdminLibraryManager: React.FC = () => {
             </div>
 
             {/* Price & Unit */}
-            <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
-              <label className="flex items-center gap-2.5 text-sm font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
+            <div className="p-3.5 rounded-2xl border border-border space-y-2">
+              <label className="flex items-center gap-2.5 text-sm font-bold text-text cursor-pointer">
                 <input
                   type="checkbox"
                   checked={bulkEditModal.updatePrice}
@@ -1645,14 +1645,14 @@ export const AdminLibraryManager: React.FC = () => {
                       updatePrice: e.target.checked,
                     }))
                   }
-                  className="w-5 h-5 rounded text-teal-600"
+                  className="w-5 h-5 rounded text-primary focus:ring-primary"
                 />
                 <span>দাম ও একক বদলান</span>
               </label>
               {bulkEditModal.updatePrice && (
                 <div className="grid grid-cols-2 gap-2.5">
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-text-muted">
                       ৳
                     </span>
                     <input
@@ -1667,7 +1667,7 @@ export const AdminLibraryManager: React.FC = () => {
                         }))
                       }
                       placeholder="দাম (যেমন: 2.50)"
-                      className="min-h-[44px] w-full pl-8 pr-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white"
+                      className="min-h-[44px] w-full pl-8 pr-3 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                     />
                   </div>
                   <select
@@ -1675,7 +1675,7 @@ export const AdminLibraryManager: React.FC = () => {
                     onChange={(e) =>
                       setBulkEditModal((prev) => ({ ...prev, priceUnit: e.target.value }))
                     }
-                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-sm text-slate-900 dark:text-white"
+                    className="min-h-[44px] w-full px-3 py-2 rounded-xl bg-surface-2 border border-border text-sm text-text"
                   >
                     <option value="">একক অপরিবর্তিত রাখুন</option>
                     {PRICE_UNIT_OPTIONS.map((u) => (
@@ -1693,14 +1693,14 @@ export const AdminLibraryManager: React.FC = () => {
                 type="button"
                 disabled={bulkEditModal.isSaving}
                 onClick={() => setBulkEditModal((prev) => ({ ...prev, isOpen: false }))}
-                className="min-h-[48px] px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+                className="min-h-[48px] px-5 py-2.5 text-sm font-bold text-text-muted hover:bg-surface-2 rounded-xl cursor-pointer"
               >
                 বাতিল
               </button>
               <button
                 type="submit"
                 disabled={bulkEditModal.isSaving}
-                className="min-h-[48px] inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl cursor-pointer disabled:opacity-50"
+                className="min-h-[48px] inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-on-primary bg-primary hover:bg-primary-hover rounded-xl cursor-pointer disabled:opacity-50"
               >
                 <Check className="w-4 h-4" />
                 <span>{bulkEditModal.isSaving ? 'সংরক্ষণ হচ্ছে...' : 'সবগুলোতে প্রয়োগ করুন'}</span>

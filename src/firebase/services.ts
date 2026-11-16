@@ -28,9 +28,17 @@ import {
   getDocFromServer,
   Timestamp,
   serverTimestamp,
+  deleteField,
 } from 'firebase/firestore';
-import { auth, db, stripUndefined } from './config';
-import { handleFirestoreError, isQuotaExceededError, OperationType } from './errors';
+import { auth, db, executeGuardedWrite, stripUndefined } from './config';
+import {
+  handleFirestoreError,
+  isQuotaExceededError,
+  isWriteQuotaPaused,
+  markWriteQuotaExceeded,
+  OperationType,
+  QuotaExceededWriteError,
+} from './errors';
 import { isDemoRecordId, hasDemoPrefix, UserDataCollection } from '../utils/demoCleanup';
 import {
   LibraryMetaDoc,
@@ -50,14 +58,23 @@ import {
   ImportBatch,
   AdminActivity,
   CaregiverLinkDoc,
+  CaregiverSuggestionDoc,
+  CaregiverSuggestionStatus,
   FamilyAlertDoc,
   SharedReportDoc,
+  EmergencyCardDoc,
+  DoctorProfile,
 } from '../types';
 import {
   BuiltSharedReportSnapshot,
   isValidShareTokenFormat,
   toMillisSafe,
 } from '../utils/sharedReports';
+import {
+  BuiltEmergencyCardPayload,
+  isValidEmergencyTokenFormat,
+} from '../utils/emergencyQr';
+import { buildCleanDoctorInput, DoctorProfileInput } from '../utils/doctorsManager';
 
 export const ADMIN_EMAIL = 'sarashatikmkr501@gmail.com';
 
@@ -149,20 +166,27 @@ export async function resetPassword(email: string): Promise<void> {
 }
 
 async function recordUserProfile(user: User): Promise<void> {
+  if (isWriteQuotaPaused()) return;
   const path = `users/${user.uid}`;
   try {
-    await setDoc(
-      doc(db, 'users', user.uid),
-      {
-        uid: user.uid,
-        email: user.email || '',
-        displayName: user.displayName || user.email?.split('@')[0] || 'ব্যবহারকারী',
-        photoURL: user.photoURL || '',
-        lastLoginAt: new Date().toISOString(),
-      },
-      { merge: true }
+    await executeGuardedWrite(() =>
+      setDoc(
+        doc(db, 'users', user.uid),
+        {
+          uid: user.uid,
+          email: user.email || '',
+          displayName: user.displayName || user.email?.split('@')[0] || 'ব্যবহারকারী',
+          photoURL: user.photoURL || '',
+          lastLoginAt: new Date().toISOString(),
+        },
+        { merge: true }
+      )
     );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      return;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -171,8 +195,14 @@ async function recordUserProfile(user: User): Promise<void> {
 export async function saveMedicineToCloud(userId: string, medicine: Medicine): Promise<void> {
   const path = `users/${userId}/medicines/${medicine.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'medicines', medicine.id), stripUndefined(medicine));
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'users', userId, 'medicines', medicine.id), stripUndefined(medicine))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -180,8 +210,14 @@ export async function saveMedicineToCloud(userId: string, medicine: Medicine): P
 export async function deleteMedicineFromCloud(userId: string, medicineId: string): Promise<void> {
   const path = `users/${userId}/medicines/${medicineId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'medicines', medicineId));
+    await executeGuardedWrite(() =>
+      deleteDoc(doc(db, 'users', userId, 'medicines', medicineId))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
@@ -190,8 +226,14 @@ export async function deleteMedicineFromCloud(userId: string, medicineId: string
 export async function savePatientToCloud(userId: string, patient: PatientProfile): Promise<void> {
   const path = `users/${userId}/patients/${patient.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'patients', patient.id), stripUndefined(patient));
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'users', userId, 'patients', patient.id), stripUndefined(patient))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -199,8 +241,14 @@ export async function savePatientToCloud(userId: string, patient: PatientProfile
 export async function deletePatientFromCloud(userId: string, patientId: string): Promise<void> {
   const path = `users/${userId}/patients/${patientId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'patients', patientId));
+    await executeGuardedWrite(() =>
+      deleteDoc(doc(db, 'users', userId, 'patients', patientId))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
@@ -209,8 +257,14 @@ export async function deletePatientFromCloud(userId: string, patientId: string):
 export async function saveDoseLogToCloud(userId: string, doseLog: DoseLog): Promise<void> {
   const path = `users/${userId}/doseLogs/${doseLog.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'doseLogs', doseLog.id), stripUndefined(doseLog));
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'users', userId, 'doseLogs', doseLog.id), stripUndefined(doseLog))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -219,8 +273,14 @@ export async function saveDoseLogToCloud(userId: string, doseLog: DoseLog): Prom
 export async function saveSettingsToCloud(userId: string, settings: ReminderSettings): Promise<void> {
   const path = `users/${userId}/settings/preferences`;
   try {
-    await setDoc(doc(db, 'users', userId, 'settings', 'preferences'), stripUndefined(settings), { merge: true });
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'users', userId, 'settings', 'preferences'), stripUndefined(settings), { merge: true })
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -229,8 +289,14 @@ export async function saveSettingsToCloud(userId: string, settings: ReminderSett
 export async function saveHealthRecordToCloud(userId: string, record: HealthRecord): Promise<void> {
   const path = `users/${userId}/healthRecords/${record.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'healthRecords', record.id), stripUndefined(record));
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'users', userId, 'healthRecords', record.id), stripUndefined(record))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -238,8 +304,14 @@ export async function saveHealthRecordToCloud(userId: string, record: HealthReco
 export async function deleteHealthRecordFromCloud(userId: string, recordId: string): Promise<void> {
   const path = `users/${userId}/healthRecords/${recordId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'healthRecords', recordId));
+    await executeGuardedWrite(() =>
+      deleteDoc(doc(db, 'users', userId, 'healthRecords', recordId))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
@@ -248,8 +320,14 @@ export async function deleteHealthRecordFromCloud(userId: string, recordId: stri
 export async function saveAppointmentToCloud(userId: string, appointment: DoctorAppointment): Promise<void> {
   const path = `users/${userId}/appointments/${appointment.id}`;
   try {
-    await setDoc(doc(db, 'users', userId, 'appointments', appointment.id), stripUndefined(appointment));
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'users', userId, 'appointments', appointment.id), stripUndefined(appointment))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -257,8 +335,133 @@ export async function saveAppointmentToCloud(userId: string, appointment: Doctor
 export async function deleteAppointmentFromCloud(userId: string, appointmentId: string): Promise<void> {
   const path = `users/${userId}/appointments/${appointmentId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'appointments', appointmentId));
+    await executeGuardedWrite(() =>
+      deleteDoc(doc(db, 'users', userId, 'appointments', appointmentId))
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// Cloud Firestore CRUD for My Doctors ("আমার ডাক্তার" — ZERO onSnapshot listener)
+export async function fetchUserDoctorsFromCloud(userId: string): Promise<DoctorProfile[]> {
+  if (!userId) return [];
+  const colRef = collection(db, 'users', userId, 'doctors');
+  let snap;
+  try {
+    snap = await getDocsFromServer(colRef);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDocs(colRef);
+  }
+  const items: DoctorProfile[] = [];
+  snap.forEach((docSnap) => {
+    const raw = docSnap.data() as DoctorProfile;
+    items.push({
+      ...raw,
+      id: raw.id || docSnap.id,
+    });
+  });
+  return items;
+}
+
+export async function createDoctorInCloud(
+  userId: string,
+  doctor: DoctorProfileInput & { id: string }
+): Promise<void> {
+  const path = `users/${userId}/doctors/${doctor.id}`;
+  const clean = buildCleanDoctorInput(doctor);
+  const payload = stripUndefined({
+    id: doctor.id,
+    ...clean,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  try {
+    await executeGuardedWrite(() => setDoc(doc(db, 'users', userId, 'doctors', doctor.id), payload));
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function updateDoctorInCloud(
+  userId: string,
+  doctorId: string,
+  fullOrPartial: DoctorProfileInput & { id?: string }
+): Promise<void> {
+  const path = `users/${userId}/doctors/${doctorId}`;
+  const docRef = doc(db, 'users', userId, 'doctors', doctorId);
+  const clean = buildCleanDoctorInput(fullOrPartial);
+
+  // Never touch createdAt; remove cleared optional fields using deleteField()
+  const patch: Record<string, any> = {
+    id: doctorId,
+    name: clean.name,
+    isEmergency: Boolean(clean.isEmergency),
+    updatedAt: serverTimestamp(),
+  };
+
+  const optionalKeys = [
+    'specialty',
+    'phone',
+    'whatsapp',
+    'hospital',
+    'address',
+    'visitingHours',
+    'forConditions',
+    'patientIds',
+    'lastVisitDate',
+    'nextVisitDate',
+    'notes',
+  ] as const;
+
+  for (const key of optionalKeys) {
+    const val = clean[key];
+    if (val === undefined) {
+      patch[key] = deleteField();
+    } else {
+      patch[key] = val;
+    }
+  }
+
+  try {
+    await executeGuardedWrite(() => updateDoc(docRef, stripUndefined(patch)));
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    const code = String(error?.code || error?.message || '').toLowerCase();
+    if (code.includes('not-found')) {
+      // Fallback create if doc wasn't created in cloud yet (e.g., created while offline)
+      await createDoctorInCloud(userId, { ...fullOrPartial, id: doctorId });
+      return;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteDoctorFromCloud(userId: string, doctorId: string): Promise<void> {
+  const path = `users/${userId}/doctors/${doctorId}`;
+  try {
+    await executeGuardedWrite(() =>
+      deleteDoc(doc(db, 'users', userId, 'doctors', doctorId))
+    );
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
@@ -338,7 +541,7 @@ export async function migrateLocalDataToCloud(
       chunk.forEach(({ ref, data }) => {
         batch.set(ref, data, { merge: true });
       });
-      await batch.commit();
+      await executeGuardedWrite(() => batch.commit());
     }
 
     return {
@@ -347,23 +550,28 @@ export async function migrateLocalDataToCloud(
       patientsCount: patients.length,
     };
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.WRITE, `users/${userId}/[batch_migration]`);
     return { medicinesCount: 0, logsCount: 0, patientsCount: 0 };
   }
 }
 
 /**
- * Checks if a user already has data stored in Cloud Firestore
+ * Checks if a user already has data stored in Cloud Firestore (minimizing reads with limit(1) on history collections)
  */
 export async function checkUserHasCloudData(
   userId: string
 ): Promise<{ hasData: boolean; medicinesCount: number; patientsCount: number }> {
-  const fetchCollection = async (sub: string) => {
+  const fetchCollection = async (sub: string, maxDocs?: number) => {
     const colRef = collection(db, 'users', userId, sub);
+    const targetQuery = maxDocs ? query(colRef, limit(maxDocs)) : colRef;
     try {
-      return await getDocsFromServer(colRef);
+      return await getDocsFromServer(targetQuery);
     } catch {
-      return await getDocs(colRef);
+      return await getDocs(targetQuery);
     }
   };
 
@@ -371,9 +579,9 @@ export async function checkUserHasCloudData(
     const [medsSnap, patientsSnap, logsSnap, healthSnap, aptsSnap] = await Promise.all([
       fetchCollection('medicines'),
       fetchCollection('patients'),
-      fetchCollection('doseLogs'),
-      fetchCollection('healthRecords'),
-      fetchCollection('appointments'),
+      fetchCollection('doseLogs', 1),
+      fetchCollection('healthRecords', 1),
+      fetchCollection('appointments', 1),
     ]);
     const medicinesCount = medsSnap.size;
     const patientsCount = patientsSnap.size;
@@ -390,11 +598,181 @@ export async function checkUserHasCloudData(
 }
 
 /**
+ * One-time getDocs helper for small user subcollections (medicines, patients, full healthRecords)
+ */
+export async function fetchUserCollectionFromCloud<T>(
+  userId: string,
+  subcollection: 'medicines' | 'patients' | 'healthRecords' | 'appointments'
+): Promise<T[]> {
+  if (!userId) return [];
+  const colRef = collection(db, 'users', userId, subcollection);
+  let snap;
+  try {
+    snap = await getDocsFromServer(colRef);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDocs(colRef);
+  }
+  const items: T[] = [];
+  snap.forEach((docSnap) => {
+    items.push(docSnap.data() as T);
+  });
+  return items;
+}
+
+/**
+ * Single-doc read for user reminder settings (1 read instead of subcollection listener)
+ */
+export async function fetchUserSettingsFromCloud(
+  userId: string
+): Promise<ReminderSettings | null> {
+  if (!userId) return null;
+  const settingsRef = doc(db, 'users', userId, 'settings', 'preferences');
+  let snap;
+  try {
+    snap = await getDocFromServer(settingsRef);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDoc(settingsRef);
+  }
+  return snap.exists() ? (snap.data() as ReminderSettings) : null;
+}
+
+/**
+ * On-demand read of doseLogs older than the 45-day real-time window
+ */
+export async function fetchOlderDoseLogsFromCloud(
+  userId: string,
+  cutoffDateIso: string
+): Promise<DoseLog[]> {
+  if (!userId) return [];
+  const q = query(
+    collection(db, 'users', userId, 'doseLogs'),
+    where('scheduledDate', '<', cutoffDateIso)
+  );
+  let snap;
+  try {
+    snap = await getDocsFromServer(q);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDocs(q);
+  }
+  const logs: DoseLog[] = [];
+  snap.forEach((docSnap) => {
+    logs.push(docSnap.data() as DoseLog);
+  });
+  return logs;
+}
+
+/**
+ * Boot-time read of upcoming/recent appointments only (single-field range query)
+ */
+export async function fetchUpcomingAppointmentsFromCloud(
+  userId: string,
+  minDateIso: string
+): Promise<DoctorAppointment[]> {
+  if (!userId) return [];
+  const q = query(
+    collection(db, 'users', userId, 'appointments'),
+    where('appointmentDate', '>=', minDateIso)
+  );
+  let snap;
+  try {
+    snap = await getDocsFromServer(q);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDocs(q);
+  }
+  const items: DoctorAppointment[] = [];
+  snap.forEach((docSnap) => {
+    items.push(docSnap.data() as DoctorAppointment);
+  });
+  return items;
+}
+
+/**
+ * On-demand read of past appointments when user visits Appointments or Share Report
+ */
+export async function fetchPastAppointmentsFromCloud(
+  userId: string,
+  beforeDateIso: string
+): Promise<DoctorAppointment[]> {
+  if (!userId) return [];
+  const q = query(
+    collection(db, 'users', userId, 'appointments'),
+    where('appointmentDate', '<', beforeDateIso)
+  );
+  let snap;
+  try {
+    snap = await getDocsFromServer(q);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDocs(q);
+  }
+  const items: DoctorAppointment[] = [];
+  snap.forEach((docSnap) => {
+    items.push(docSnap.data() as DoctorAppointment);
+  });
+  return items;
+}
+
+/**
+ * Lazy-loaded recent health records (ordered by recordDate desc, capped at maxCount)
+ */
+export async function fetchRecentHealthRecordsFromCloud(
+  userId: string,
+  maxCount: number = 60
+): Promise<{ records: HealthRecord[]; hasMore: boolean }> {
+  if (!userId) return { records: [], hasMore: false };
+  const q = query(
+    collection(db, 'users', userId, 'healthRecords'),
+    orderBy('recordDate', 'desc'),
+    limit(maxCount + 1)
+  );
+  let snap;
+  try {
+    snap = await getDocsFromServer(q);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDocs(q);
+  }
+  const docs: HealthRecord[] = [];
+  snap.forEach((docSnap) => {
+    docs.push(docSnap.data() as HealthRecord);
+  });
+  const hasMore = docs.length > maxCount;
+  return {
+    records: hasMore ? docs.slice(0, maxCount) : docs,
+    hasMore,
+  };
+}
+
+/**
  * Safely clears only the user's own UID subcollections in Cloud Firestore
  */
 export async function clearUserCloudData(userId: string): Promise<void> {
   try {
-    const subcollections = ['patients', 'medicines', 'doseLogs', 'healthRecords', 'appointments', 'settings'];
+    const subcollections = [
+      'patients',
+      'medicines',
+      'doseLogs',
+      'healthRecords',
+      'appointments',
+      'doctors',
+      'settings',
+    ];
     for (const sub of subcollections) {
       const snap = await getDocs(collection(db, 'users', userId, sub));
       if (!snap.empty) {
@@ -403,11 +781,15 @@ export async function clearUserCloudData(userId: string): Promise<void> {
         for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
           const batch = writeBatch(db);
           docs.slice(i, i + CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
-          await batch.commit();
+          await executeGuardedWrite(() => batch.commit());
         }
       }
     }
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.DELETE, `users/${userId}`);
   }
 }
@@ -419,7 +801,7 @@ export async function clearUserCloudData(userId: string): Promise<void> {
 export async function cleanupDemoRecordsFromCloud(
   userId: string
 ): Promise<{ removedCount: number; completed: boolean }> {
-  if (!userId) return { removedCount: 0, completed: false };
+  if (!userId || isWriteQuotaPaused()) return { removedCount: 0, completed: false };
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     return { removedCount: 0, completed: false };
   }
@@ -500,12 +882,15 @@ export async function cleanupDemoRecordsFromCloud(
             batch.set(op.ref, op.data, { merge: true });
           }
         });
-        await batch.commit();
+        await executeGuardedWrite(() => batch.commit());
       }
     }
 
     return { removedCount: deleteRefs.length, completed: true };
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+    }
     console.warn('cleanupDemoRecordsFromCloud deferred due to network/server error:', error);
     return { removedCount: 0, completed: false };
   }
@@ -581,6 +966,9 @@ export async function publishChunkedLibraryCatalog(
   totalWrites: number;
 }> {
   assertAdminAuth();
+  if (isWriteQuotaPaused()) {
+    throw new QuotaExceededWriteError();
+  }
 
   let serverVersion = 0;
   try {
@@ -625,7 +1013,7 @@ export async function publishChunkedLibraryCatalog(
         const ref = doc(db, 'library_chunks', `${newVersion}_${chunkDoc.index}`);
         batch.set(ref, stripUndefined(chunkDoc));
       });
-      await batch.commit();
+      await executeGuardedWrite(() => batch.commit());
       totalWrites += docsToWrite.length;
     };
 
@@ -650,7 +1038,9 @@ export async function publishChunkedLibraryCatalog(
 
     // 2. Write optional import batch audit doc
     if (importBatchInfo) {
-      await setDoc(doc(db, 'import_batches', importBatchInfo.id), stripUndefined(importBatchInfo));
+      await executeGuardedWrite(() =>
+        setDoc(doc(db, 'import_batches', importBatchInfo.id), stripUndefined(importBatchInfo))
+      );
       totalWrites += 1;
     }
 
@@ -661,7 +1051,9 @@ export async function publishChunkedLibraryCatalog(
       totalCount: cleanMedicines.length,
       updatedAt: new Date().toISOString(),
     };
-    await setDoc(doc(db, 'library_meta', 'current'), metaPayload);
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'library_meta', 'current'), metaPayload)
+    );
     totalWrites += 1;
 
     // 4. Best-effort cleanup of old version chunks (non-fatal if skipped/empty)
@@ -675,7 +1067,7 @@ export async function publishChunkedLibraryCatalog(
         for (let i = 0; i < docsToDelete.length; i += DELETE_BATCH_SIZE) {
           const delBatch = writeBatch(db);
           docsToDelete.slice(i, i + DELETE_BATCH_SIZE).forEach((d) => delBatch.delete(d.ref));
-          await delBatch.commit();
+          await executeGuardedWrite(() => delBatch.commit());
         }
       }
     } catch (cleanupErr) {
@@ -690,6 +1082,7 @@ export async function publishChunkedLibraryCatalog(
     };
   } catch (error) {
     if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
       throw error;
     }
     handleFirestoreError(error, OperationType.WRITE, 'library_chunks/[publish]');
@@ -822,6 +1215,7 @@ export async function recordAdminActivity(
     adminEmail?: string;
   }
 ): Promise<void> {
+  if (isWriteQuotaPaused()) return;
   try {
     assertAdminAuth();
     const activityId = activity.id || `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -831,8 +1225,14 @@ export async function recordAdminActivity(
       timestamp: activity.timestamp || new Date().toISOString(),
       adminEmail: activity.adminEmail || auth.currentUser?.email || ADMIN_EMAIL,
     };
-    await setDoc(doc(db, 'admin_activities', activityId), act);
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'admin_activities', activityId), act)
+    );
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      return;
+    }
     console.warn('Could not record admin activity:', error);
   }
 }
@@ -902,9 +1302,12 @@ export async function testFirebaseDetailedStatus(): Promise<{
 
 export async function createCaregiverInviteInCloud(linkDoc: CaregiverLinkDoc): Promise<void> {
   try {
-    await setDoc(doc(db, 'caregiver_links', linkDoc.id), stripUndefined(linkDoc));
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'caregiver_links', linkDoc.id), stripUndefined(linkDoc))
+    );
   } catch (error) {
     if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
       throw error;
     }
     handleFirestoreError(error, OperationType.CREATE, `caregiver_links/${linkDoc.id}`);
@@ -948,18 +1351,23 @@ export async function redeemCaregiverInviteInCloud(
   const safeCaregiverName = (caregiverName || 'পরিবারের যত্নকারী').trim().slice(0, 128);
 
   try {
-    await updateDoc(
-      docRef,
-      stripUndefined({
-        caregiverUid,
-        caregiverName: safeCaregiverName,
-        status: 'active',
-        linkedAt: nowIso,
-        updatedAt: nowIso,
-      })
+    await executeGuardedWrite(() =>
+      updateDoc(
+        docRef,
+        stripUndefined({
+          caregiverUid,
+          caregiverName: safeCaregiverName,
+          status: 'active',
+          linkedAt: nowIso,
+          updatedAt: nowIso,
+        })
+      )
     );
   } catch (error) {
-    if (isQuotaExceededError(error)) throw error;
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     const msg = String((error as any)?.code || (error as any)?.message || '').toLowerCase();
     if (msg.includes('permission-denied')) {
       throw new Error('কোডটি আর বৈধ নয় বা মেয়াদ শেষ হয়ে গেছে');
@@ -1016,9 +1424,14 @@ export async function updateCaregiverLinkInCloud(
   updates: Partial<CaregiverLinkDoc>
 ): Promise<void> {
   try {
-    await updateDoc(doc(db, 'caregiver_links', linkId), stripUndefined(updates));
+    await executeGuardedWrite(() =>
+      updateDoc(doc(db, 'caregiver_links', linkId), stripUndefined(updates))
+    );
   } catch (error) {
-    if (isQuotaExceededError(error)) throw error;
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     console.warn('updateCaregiverLinkInCloud warning:', error);
     throw error;
   }
@@ -1026,9 +1439,14 @@ export async function updateCaregiverLinkInCloud(
 
 export async function deleteCaregiverLinkInCloud(linkId: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'caregiver_links', linkId));
+    await executeGuardedWrite(() =>
+      deleteDoc(doc(db, 'caregiver_links', linkId))
+    );
   } catch (error) {
-    if (isQuotaExceededError(error)) throw error;
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.DELETE, `caregiver_links/${linkId}`);
   }
 }
@@ -1036,9 +1454,14 @@ export async function deleteCaregiverLinkInCloud(linkId: string): Promise<void> 
 export async function createFamilyAlertInCloud(alertDoc: FamilyAlertDoc): Promise<void> {
   const alertRef = doc(db, 'family_alerts', alertDoc.id);
   try {
-    await setDoc(alertRef, stripUndefined(alertDoc));
+    await executeGuardedWrite(() =>
+      setDoc(alertRef, stripUndefined(alertDoc))
+    );
   } catch (error: any) {
-    if (isQuotaExceededError(error)) throw error;
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     const msg = String(error?.code || error?.message || '').toLowerCase();
     // If retry hit an already-created immutable alert doc, verify existence before treating as error
     if (msg.includes('permission-denied')) {
@@ -1060,11 +1483,16 @@ export async function markFamilyAlertSeenInCloud(
   caregiverUid: string
 ): Promise<void> {
   try {
-    await updateDoc(doc(db, 'family_alerts', alertId), {
-      seenBy: arrayUnion(caregiverUid),
-    });
+    await executeGuardedWrite(() =>
+      updateDoc(doc(db, 'family_alerts', alertId), {
+        seenBy: arrayUnion(caregiverUid),
+      })
+    );
   } catch (error) {
-    if (isQuotaExceededError(error)) throw error;
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
     handleFirestoreError(error, OperationType.UPDATE, `family_alerts/${alertId}`);
   }
 }
@@ -1073,6 +1501,7 @@ export async function cleanupOldFamilyAlertsInCloud(
   patientUid: string,
   retentionMs: number
 ): Promise<number> {
+  if (isWriteQuotaPaused()) return 0;
   try {
     const q = query(
       collection(db, 'family_alerts'),
@@ -1090,9 +1519,12 @@ export async function cleanupOldFamilyAlertsInCloud(
 
     const batch = writeBatch(db);
     toDelete.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
+    await executeGuardedWrite(() => batch.commit());
     return toDelete.length;
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+    }
     console.warn('cleanupOldFamilyAlertsInCloud notice:', error);
     return 0;
   }
@@ -1211,7 +1643,9 @@ export async function createSharedReportInCloud(
   });
 
   try {
-    await setDoc(doc(db, 'shared_reports', snapshot.token), firestorePayload);
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'shared_reports', snapshot.token), firestorePayload)
+    );
     return {
       ...firestorePayload,
       createdAtMs: snapshot.createdAtMs,
@@ -1219,6 +1653,7 @@ export async function createSharedReportInCloud(
     };
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
       throw new Error('আজকের ক্লাউড সীমা শেষ হয়ে গেছে। আগামীকাল আবার চেষ্টা করুন।');
     }
     const msg = String(error?.code || error?.message || '').toLowerCase();
@@ -1345,11 +1780,14 @@ export async function fetchOwnerSharedReportsFromCloud(
 
 export async function revokeSharedReportInCloud(token: string): Promise<void> {
   try {
-    await updateDoc(doc(db, 'shared_reports', token), {
-      revoked: true,
-    });
+    await executeGuardedWrite(() =>
+      updateDoc(doc(db, 'shared_reports', token), {
+        revoked: true,
+      })
+    );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
       throw new Error('আজকের ক্লাউড সীমা শেষ হয়ে গেছে। আগামীকাল আবার চেষ্টা করুন।');
     }
     const msg = String(error?.code || error?.message || '').toLowerCase();
@@ -1362,9 +1800,12 @@ export async function revokeSharedReportInCloud(token: string): Promise<void> {
 
 export async function deleteSharedReportInCloud(token: string): Promise<void> {
   try {
-    await deleteDoc(doc(db, 'shared_reports', token));
+    await executeGuardedWrite(() =>
+      deleteDoc(doc(db, 'shared_reports', token))
+    );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
       throw new Error('আজকের ক্লাউড সীমা শেষ হয়ে গেছে। আগামীকাল আবার চেষ্টা করুন।');
     }
     const msg = String(error?.code || error?.message || '').toLowerCase();
@@ -1374,6 +1815,449 @@ export async function deleteSharedReportInCloud(token: string): Promise<void> {
     throw new Error('লিংকটি মুছে ফেলা যায়নি। আবার চেষ্টা করুন।');
   }
 }
+
+// ============================================================================
+// জরুরি কার্ড QR (emergency_cards) — গোপনীয়তা-নিয়ন্ত্রিত জরুরি তথ্য
+// ============================================================================
+
+export interface EmergencyCardDebugInfo {
+  code: string;
+  docExists: boolean | null;
+}
+
+export type EmergencyCardFetchResult =
+  | { status: 'ok'; card: EmergencyCardDoc; debug: EmergencyCardDebugInfo }
+  | { status: 'not_found'; debug: EmergencyCardDebugInfo }
+  | { status: 'revoked'; debug: EmergencyCardDebugInfo }
+  | { status: 'quota'; debug: EmergencyCardDebugInfo }
+  | { status: 'offline'; debug: EmergencyCardDebugInfo }
+  | { status: 'error'; message: string; debug: EmergencyCardDebugInfo };
+
+export async function createEmergencyCardInCloud(
+  payload: BuiltEmergencyCardPayload
+): Promise<EmergencyCardDoc> {
+  if (!auth.currentUser || auth.currentUser.uid !== payload.ownerUid) {
+    throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
+  }
+  if (!isValidEmergencyTokenFormat(payload.token)) {
+    throw new Error('নিরাপদ QR টোকেন সঠিক নয়। অনুগ্রহ করে আবার চেষ্টা করুন।');
+  }
+
+  const firestorePayload = stripUndefined({
+    ...payload,
+    createdAt: serverTimestamp(),
+    active: true,
+  });
+
+  try {
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'emergency_cards', payload.token), firestorePayload)
+    );
+    return {
+      ...payload,
+      createdAt: Timestamp.now(),
+      createdAtMs: Date.now(),
+      active: true,
+    };
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw new Error('সীমা শেষ — পরে চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.CREATE, `emergency_cards/${payload.token}`);
+    }
+    throw new Error('জরুরি QR কার্ড সংরক্ষণ করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।');
+  }
+}
+
+export async function updateEmergencyCardInCloud(
+  token: string,
+  payload: BuiltEmergencyCardPayload
+): Promise<EmergencyCardDoc> {
+  if (!auth.currentUser || auth.currentUser.uid !== payload.ownerUid) {
+    throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
+  }
+  if (!isValidEmergencyTokenFormat(token)) {
+    throw new Error('QR টোকেন সঠিক নয়।');
+  }
+
+  const updateFields: Record<string, unknown> = {
+    patientName: payload.patientName,
+    age: payload.age !== undefined ? payload.age : deleteField(),
+    bloodGroup: payload.bloodGroup !== undefined ? payload.bloodGroup : deleteField(),
+    allergies: payload.allergies !== undefined ? payload.allergies : deleteField(),
+    conditions: payload.conditions !== undefined ? payload.conditions : deleteField(),
+    contactName: payload.contactName !== undefined ? payload.contactName : deleteField(),
+    contactPhone: payload.contactPhone !== undefined ? payload.contactPhone : deleteField(),
+    medicines: payload.medicines !== undefined ? payload.medicines : deleteField(),
+    doctorName: payload.doctorName !== undefined ? payload.doctorName : deleteField(),
+    active: true,
+  };
+
+  try {
+    await executeGuardedWrite(() =>
+      updateDoc(doc(db, 'emergency_cards', token), updateFields)
+    );
+    return {
+      ...payload,
+      token,
+      createdAt: Timestamp.now(),
+      createdAtMs: Date.now(),
+      active: true,
+    };
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw new Error('সীমা শেষ — পরে চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.UPDATE, `emergency_cards/${token}`);
+    }
+    throw new Error('জরুরি কার্ড হালনাগাদ করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।');
+  }
+}
+
+export async function rotateEmergencyCardInCloud(
+  oldToken: string | null,
+  newPayload: BuiltEmergencyCardPayload
+): Promise<EmergencyCardDoc> {
+  if (!auth.currentUser || auth.currentUser.uid !== newPayload.ownerUid) {
+    throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
+  }
+  if (!isValidEmergencyTokenFormat(newPayload.token)) {
+    throw new Error('নিরাপদ QR টোকেন সঠিক নয়।');
+  }
+
+  if (!oldToken || !isValidEmergencyTokenFormat(oldToken)) {
+    return createEmergencyCardInCloud(newPayload);
+  }
+
+  const newFirestorePayload = stripUndefined({
+    ...newPayload,
+    createdAt: serverTimestamp(),
+    active: true,
+  });
+
+  try {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'emergency_cards', oldToken), { active: false });
+    batch.set(doc(db, 'emergency_cards', newPayload.token), newFirestorePayload);
+    await executeGuardedWrite(() => batch.commit());
+    return {
+      ...newPayload,
+      createdAt: Timestamp.now(),
+      createdAtMs: Date.now(),
+      active: true,
+    };
+  } catch (error: any) {
+    const rawCode = String(error?.code || error?.message || '').toLowerCase();
+    if (rawCode.includes('not-found')) {
+      return createEmergencyCardInCloud(newPayload);
+    }
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw new Error('সীমা শেষ — পরে চেষ্টা করুন।');
+    }
+    if (rawCode.includes('permission-denied') || rawCode.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.WRITE, `emergency_cards/${newPayload.token}`);
+    }
+    throw new Error('নতুন জরুরি QR তৈরি করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।');
+  }
+}
+
+export async function revokeEmergencyCardInCloud(token: string): Promise<void> {
+  try {
+    await executeGuardedWrite(() =>
+      updateDoc(doc(db, 'emergency_cards', token), {
+        active: false,
+      })
+    );
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw new Error('সীমা শেষ — পরে চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.UPDATE, `emergency_cards/${token}`);
+    }
+    throw new Error('জরুরি QR বাতিল করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।');
+  }
+}
+
+export async function deleteEmergencyCardInCloud(token: string): Promise<void> {
+  try {
+    await executeGuardedWrite(() =>
+      deleteDoc(doc(db, 'emergency_cards', token))
+    );
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw new Error('সীমা শেষ — পরে চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.DELETE, `emergency_cards/${token}`);
+    }
+    throw new Error('জরুরি QR মুছে ফেলা যায়নি। আবার চেষ্টা করুন।');
+  }
+}
+
+export async function fetchOwnerEmergencyCardsFromCloud(
+  ownerUid: string
+): Promise<EmergencyCardDoc[]> {
+  try {
+    const q = query(
+      collection(db, 'emergency_cards'),
+      where('ownerUid', '==', ownerUid),
+      limit(30)
+    );
+    const snap = await getDocsFromServer(q);
+    const items = snap.docs.map((d) => {
+      const raw = d.data() as EmergencyCardDoc;
+      return {
+        ...raw,
+        createdAtMs: toMillisSafe(raw.createdAt),
+      };
+    });
+    return items.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      throw new Error('সীমা শেষ — পরে চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      handleFirestoreError(error, OperationType.LIST, 'emergency_cards');
+    }
+    throw new Error('আপনার জরুরি QR তালিকা লোড করা যায়নি। ইন্টারনেট সংযোগ পরীক্ষা করুন।');
+  }
+}
+
+/**
+ * Strictly 1 Firestore read for public /e/{token} viewer (no login required).
+ */
+export async function fetchEmergencyCardByTokenFromCloud(
+  token: string
+): Promise<EmergencyCardFetchResult> {
+  if (!isValidEmergencyTokenFormat(token)) {
+    return {
+      status: 'not_found',
+      debug: { code: 'invalid-token-format', docExists: false },
+    };
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return {
+      status: 'offline',
+      debug: { code: 'navigator-offline', docExists: null },
+    };
+  }
+
+  try {
+    const snap = await getDocFromServer(doc(db, 'emergency_cards', token));
+    if (!snap.exists()) {
+      return {
+        status: 'not_found',
+        debug: { code: 'not-found', docExists: false },
+      };
+    }
+
+    const raw = snap.data() as EmergencyCardDoc;
+    if (!raw.active) {
+      return {
+        status: 'revoked',
+        debug: { code: 'revoked', docExists: true },
+      };
+    }
+
+    return {
+      status: 'ok',
+      card: {
+        ...raw,
+        createdAtMs: toMillisSafe(raw.createdAt),
+      },
+      debug: { code: 'ok', docExists: true },
+    };
+  } catch (error: any) {
+    const rawCode = String(error?.code || error?.message || 'unknown-error');
+    const code = rawCode.toLowerCase();
+
+    if (isQuotaExceededError(error)) {
+      return {
+        status: 'quota',
+        debug: { code: rawCode, docExists: null },
+      };
+    }
+
+    if (
+      code.includes('unavailable') ||
+      code.includes('offline') ||
+      code.includes('network') ||
+      code.includes('failed-precondition')
+    ) {
+      return {
+        status: 'offline',
+        debug: { code: rawCode, docExists: null },
+      };
+    }
+
+    if (code.includes('not-found')) {
+      return {
+        status: 'not_found',
+        debug: { code: rawCode, docExists: false },
+      };
+    }
+
+    if (
+      code.includes('permission-denied') ||
+      code.includes('missing or insufficient permissions')
+    ) {
+      return {
+        status: 'revoked',
+        debug: { code: rawCode, docExists: null },
+      };
+    }
+
+    return {
+      status: 'error',
+      message: 'তথ্য লোড করতে সমস্যা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      debug: { code: rawCode, docExists: null },
+    };
+  }
+}
+
+// ============================================================================
+// যত্নকারীর ওষুধের প্রস্তাব (caregiver_suggestions) — সাশ্রয়ী Firestore অপারেশন
+// ============================================================================
+
+export async function createCaregiverSuggestionInCloud(
+  suggestion: CaregiverSuggestionDoc
+): Promise<CaregiverSuggestionDoc> {
+  if (!auth.currentUser || auth.currentUser.uid !== suggestion.caregiverUid) {
+    throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
+  }
+
+  const firestorePayload = stripUndefined({
+    ...suggestion,
+    status: 'pending',
+    createdAt: serverTimestamp(),
+  });
+
+  try {
+    await executeGuardedWrite(() =>
+      setDoc(doc(db, 'caregiver_suggestions', suggestion.id), firestorePayload)
+    );
+    return {
+      ...suggestion,
+      status: 'pending',
+      createdAt: Timestamp.now(),
+    };
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw new Error('সীমা শেষ — আজ ক্লাউডে আর লেখা যাবে না, আগামীকাল চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      throw new Error('রোগীর অনুমোদনের অপশন ("ওষুধের প্রস্তাব পাঠাতে পারবেন") বন্ধ আছে বা লিংক সক্রিয় নয়।');
+    }
+    handleFirestoreError(error, OperationType.CREATE, `caregiver_suggestions/${suggestion.id}`);
+    throw error;
+  }
+}
+
+/**
+ * Single real-time listener for patient's pending suggestions ONLY (limit 10, zero composite index needed).
+ */
+export function subscribeToPatientPendingSuggestions(
+  patientUid: string,
+  onData: (suggestions: CaregiverSuggestionDoc[]) => void,
+  onError?: (err: unknown) => void
+): () => void {
+  const q = query(
+    collection(db, 'caregiver_suggestions'),
+    where('patientUid', '==', patientUid),
+    where('status', '==', 'pending'),
+    limit(10)
+  );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: CaregiverSuggestionDoc[] = [];
+      snapshot.forEach((docSnap) => {
+        const raw = docSnap.data() as CaregiverSuggestionDoc;
+        items.push({
+          ...raw,
+          id: raw.id || docSnap.id,
+          createdAtMs: raw.createdAtMs || toMillisSafe(raw.createdAt) || Date.now(),
+        });
+      });
+      items.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      onData(items);
+    },
+    (err) => {
+      onError?.(err);
+    }
+  );
+}
+
+/**
+ * Caregiver sent suggestions history — one-time getDocs ONLY (limit 20, NO real-time listener).
+ */
+export async function fetchCaregiverSentSuggestions(
+  caregiverUid: string
+): Promise<CaregiverSuggestionDoc[]> {
+  try {
+    const q = query(
+      collection(db, 'caregiver_suggestions'),
+      where('caregiverUid', '==', caregiverUid),
+      limit(20)
+    );
+    const snap = await getDocs(q);
+    const items: CaregiverSuggestionDoc[] = snap.docs.map((docSnap) => {
+      const raw = docSnap.data() as CaregiverSuggestionDoc;
+      return {
+        ...raw,
+        id: raw.id || docSnap.id,
+        createdAtMs: raw.createdAtMs || toMillisSafe(raw.createdAt) || 0,
+      };
+    });
+    return items.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+  } catch (error) {
+    if (isQuotaExceededError(error)) throw error;
+    console.warn('fetchCaregiverSentSuggestions warning:', error);
+    return [];
+  }
+}
+
+export async function updateCaregiverSuggestionStatusInCloud(
+  suggestionId: string,
+  nextStatus: Exclude<CaregiverSuggestionStatus, 'pending'>
+): Promise<void> {
+  try {
+    await executeGuardedWrite(() =>
+      updateDoc(doc(db, 'caregiver_suggestions', suggestionId), {
+        status: nextStatus,
+      })
+    );
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw new Error('সীমা শেষ — পরে আবার চেষ্টা করুন।');
+    }
+    const msg = String(error?.code || error?.message || '').toLowerCase();
+    if (msg.includes('permission-denied') || msg.includes('missing or insufficient permissions')) {
+      throw new Error('এই প্রস্তাবটির অবস্থা পরিবর্তন করার অনুমতি নেই বা এটি ইতিমধ্যেই প্রক্রিয়াকৃত হয়েছে।');
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `caregiver_suggestions/${suggestionId}`);
+  }
+}
+
+
 
 
 

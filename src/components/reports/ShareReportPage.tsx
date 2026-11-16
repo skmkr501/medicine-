@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import {
   SharedReportDoc,
@@ -35,6 +35,7 @@ import {
   Clock,
   CheckCircle2,
   Loader2,
+  Stethoscope,
 } from 'lucide-react';
 
 export const ShareReportPage: React.FC = () => {
@@ -49,11 +50,22 @@ export const ShareReportPage: React.FC = () => {
     openCreateProfileModal,
     setCurrentPage,
     showToast,
+    loadHealthRecords,
+    loadPastAppointments,
+    doctors,
+    loadDoctors,
   } = useMedicine();
+
+  useEffect(() => {
+    loadHealthRecords();
+    loadPastAppointments();
+    loadDoctors();
+  }, []);
 
   const [selectedPatientId, setSelectedPatientId] = useState<string>(
     () => activePatient?.id || patients[0]?.id || ''
   );
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>('');
   const [sections, setSections] = useState<SharedReportSectionSelection>({
     ...DEFAULT_SHARED_REPORT_SECTIONS,
   });
@@ -64,6 +76,11 @@ export const ShareReportPage: React.FC = () => {
   const [copiedNow, setCopiedNow] = useState(false);
   const [showManualCopyHelp, setShowManualCopyHelp] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
+
+  const selectedDoctor = useMemo(
+    () => doctors.find((d) => d.id === selectedDoctorId) || null,
+    [doctors, selectedDoctorId]
+  );
 
   const selectedPatient = useMemo(
     () =>
@@ -133,6 +150,7 @@ export const ShareReportPage: React.FC = () => {
         appointments,
         selection: sections,
         expiryHours,
+        selectedDoctor,
       });
 
       const savedDoc = await createSharedReportInCloud(snapshot);
@@ -200,16 +218,16 @@ export const ShareReportPage: React.FC = () => {
             type="button"
             onClick={() => setCurrentPage('history')}
             aria-label="ফিরে যান"
-            className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 hover:bg-slate-100 cursor-pointer"
+            className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-xl bg-surface border border-border text-text hover:bg-surface-2 cursor-pointer"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Share2 className="w-6 h-6 text-teal-700 dark:text-teal-400" />
+            <h1 className="text-2xl font-bold text-text flex items-center gap-2">
+              <Share2 className="w-6 h-6 text-primary" />
               <span>ডাক্তারের জন্য রিপোর্ট ও শেয়ার লিংক</span>
             </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5">
+            <p className="text-sm text-text-muted mt-0.5">
               ডাক্তার বা পরিবারের সাথে মেয়াদি ও নিরাপদ রিপোর্ট লিংক শেয়ার করুন
             </p>
           </div>
@@ -217,22 +235,22 @@ export const ShareReportPage: React.FC = () => {
       </div>
 
       {/* Main Builder Card (Hidden on print if printing created snapshot) */}
-      <section className="no-print bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-6">
+      <section className="no-print bg-surface border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-6">
         {/* Login Gate Banner if not signed in */}
         {!currentUser && (
-          <div className="p-4 rounded-xl bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="p-4 rounded-xl bg-primary-soft border border-primary/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <p className="font-bold text-base text-teal-950 dark:text-teal-100">
+              <p className="font-bold text-base text-text">
                 রিপোর্ট লিংক বানাতে লগইন প্রয়োজন
               </p>
-              <p className="text-sm text-teal-800 dark:text-teal-300">
+              <p className="text-sm text-primary">
                 যাতে শুধু আপনিই লিংক বানাতে, দেখতে বা প্রয়োজনে বাতিল করতে পারেন।
               </p>
             </div>
             <button
               type="button"
               onClick={openAuthModal}
-              className="min-h-[48px] px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-base rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer shrink-0"
+              className="min-h-[48px] px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-base rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer shrink-0"
             >
               <Lock className="w-4 h-4" />
               <span>লগইন করুন</span>
@@ -242,18 +260,18 @@ export const ShareReportPage: React.FC = () => {
 
         {/* Step 1: Patient Profile Selector */}
         <div className="space-y-2.5">
-          <label className="block text-base font-bold text-slate-900 dark:text-white">
+          <label className="block text-base font-bold text-text">
             ১. রোগী নির্বাচন করুন (পরিবারের প্রোফাইল)
           </label>
           {patients.length === 0 ? (
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-slate-700 dark:text-slate-200">
+            <div className="p-4 rounded-xl bg-surface-2 border border-border flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-text-muted">
                 রিপোর্ট বানানোর আগে অন্তত একটি রোগী প্রোফাইল তৈরি করুন।
               </p>
               <button
                 type="button"
                 onClick={openCreateProfileModal}
-                className="min-h-[48px] px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm rounded-xl inline-flex items-center gap-2 cursor-pointer"
+                className="min-h-[48px] px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-sm rounded-xl inline-flex items-center gap-2 cursor-pointer"
               >
                 <UserPlus className="w-4 h-4" />
                 <span>প্রোফাইল তৈরি করুন</span>
@@ -270,20 +288,20 @@ export const ShareReportPage: React.FC = () => {
                     onClick={() => setSelectedPatientId(p.id)}
                     className={`min-h-[56px] p-3.5 rounded-xl border-2 text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
                       isSelected
-                        ? 'border-teal-600 bg-teal-50/70 dark:bg-teal-950/50'
-                        : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 hover:border-slate-300'
+                        ? 'border-primary bg-primary-soft'
+                        : 'border-border bg-surface-2 hover:border-primary/40'
                     }`}
                   >
                     <div>
-                      <div className="font-bold text-base text-slate-900 dark:text-white">
+                      <div className="font-bold text-base text-text">
                         {p.name}
                       </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-300">
+                      <div className="text-xs text-text-muted">
                         {p.relation} · {toBengaliNumber(p.age)} বছর · রক্ত: {p.bloodGroup}
                       </div>
                     </div>
                     {isSelected && (
-                      <CheckCircle2 className="w-5 h-5 text-teal-700 dark:text-teal-400 shrink-0" />
+                      <CheckCircle2 className="w-5 h-5 text-primary shrink-0" />
                     )}
                   </button>
                 );
@@ -293,12 +311,12 @@ export const ShareReportPage: React.FC = () => {
         </div>
 
         {/* Step 2: Section Toggles */}
-        <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="space-y-3 pt-2 border-t border-border">
           <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            <h2 className="text-base font-bold text-text">
               ২. রিপোর্টে কী কী তথ্য থাকবে বেছে নিন
             </h2>
-            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+            <p className="text-xs sm:text-sm text-text-muted">
               ডিফল্ট হিসেবে শুধু চলমান ওষুধ ও অ্যালার্জি/জরুরি তথ্য নির্বাচিত থাকে
             </p>
           </div>
@@ -340,31 +358,31 @@ export const ShareReportPage: React.FC = () => {
                   aria-pressed={checked}
                   className={`min-h-[72px] p-4 rounded-xl border-2 text-left flex items-center justify-between gap-3 transition-colors cursor-pointer ${
                     checked
-                      ? 'border-teal-600 bg-teal-50/50 dark:bg-teal-950/40'
-                      : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30'
+                      ? 'border-primary bg-primary-soft/70'
+                      : 'border-border bg-surface-2/60'
                   }`}
                 >
                   <div className="flex items-start gap-3 min-w-0">
                     <Icon
                       className={`w-5 h-5 shrink-0 mt-0.5 ${
-                        checked ? 'text-teal-700 dark:text-teal-400' : 'text-slate-400'
+                        checked ? 'text-primary' : 'text-text-muted'
                       }`}
                     />
                     <div>
-                      <div className="font-bold text-base text-slate-900 dark:text-white">
+                      <div className="font-bold text-base text-text">
                         {item.title}
                       </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                      <div className="text-xs text-text-muted mt-0.5">
                         {item.desc}
                       </div>
                     </div>
                   </div>
                   <div
                     className={`w-12 h-7 rounded-full p-0.5 transition-colors shrink-0 flex items-center ${
-                      checked ? 'bg-teal-600 justify-end' : 'bg-slate-300 dark:bg-slate-600 justify-start'
+                      checked ? 'bg-primary justify-end' : 'bg-border justify-start'
                     }`}
                   >
-                    <span className="w-6 h-6 rounded-full bg-white shadow-xs" />
+                    <span className="w-6 h-6 rounded-full bg-surface shadow-xs" />
                   </div>
                 </button>
               );
@@ -373,9 +391,9 @@ export const ShareReportPage: React.FC = () => {
         </div>
 
         {/* Step 3: Expiry Duration Selector */}
-        <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-          <label className="block text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <Clock className="w-5 h-5 text-teal-700 dark:text-teal-400" />
+        <div className="space-y-2.5 pt-2 border-t border-border">
+          <label className="block text-base font-bold text-text flex items-center gap-2">
+            <Clock className="w-5 h-5 text-primary" />
             <span>৩. লিংকের মেয়াদ বেছে নিন</span>
           </label>
           <div className="grid grid-cols-3 gap-2.5">
@@ -386,8 +404,8 @@ export const ShareReportPage: React.FC = () => {
                 onClick={() => setExpiryHours(opt.hours)}
                 className={`min-h-[48px] px-3 py-2.5 rounded-xl font-bold text-base transition-colors cursor-pointer ${
                   expiryHours === opt.hours
-                    ? 'bg-teal-700 text-white shadow-xs'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    ? 'bg-primary text-on-primary shadow-xs'
+                    : 'bg-surface-2 text-text hover:bg-border/60'
                 }`}
               >
                 {opt.label}
@@ -396,10 +414,38 @@ export const ShareReportPage: React.FC = () => {
           </div>
         </div>
 
+        {/* Optional Doctor Selector */}
+        {doctors.length > 0 && (
+          <div className="space-y-2 pt-2 border-t border-border">
+            <label
+              htmlFor="share-report-doctor-select"
+              className="block text-base font-bold text-text flex items-center gap-2"
+            >
+              <Stethoscope className="w-5 h-5 text-primary" />
+              <span>কোন ডাক্তারের জন্য রিপোর্ট বানাচ্ছেন? (ঐচ্ছিক)</span>
+            </label>
+            <select
+              id="share-report-doctor-select"
+              value={selectedDoctorId}
+              onChange={(e) => setSelectedDoctorId(e.target.value)}
+              className="min-h-[48px] w-full px-3.5 py-2 text-base bg-surface-2 border border-border rounded-xl text-text"
+            >
+              <option value="">নির্বাচন না করে এগিয়ে যান (ঐচ্ছিক)</option>
+              {doctors.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                  {d.specialty ? ` · ${d.specialty}` : ''}
+                  {d.hospital ? ` (${d.hospital})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Step 4: On-Screen Risk & Snapshot Notice */}
-        <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-2 text-sm text-amber-950 dark:text-amber-100">
+        <div className="p-4 rounded-xl bg-warning-soft border border-warning/30 space-y-2 text-sm text-warning-text">
           <div className="flex items-center gap-2 font-bold text-base">
-            <ShieldAlert className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0" />
+            <ShieldAlert className="w-5 h-5 text-warning-text shrink-0" />
             <span>নিরাপত্তা ও ঝুঁকি সতর্কতা</span>
           </div>
           <ul className="list-disc list-inside space-y-1 text-sm leading-relaxed">
@@ -408,6 +454,7 @@ export const ShareReportPage: React.FC = () => {
             </li>
             <li>
               <strong>স্থির স্ন্যাপশট:</strong> এখন নির্বাচিত তথ্যগুলোর ({getIncludedSectionLabels({
+                ...(selectedDoctor ? { doctor: { name: selectedDoctor.name } } : {}),
                 ...(sections.medicines ? { medicines: [] } : {}),
                 ...(sections.allergiesEmergency
                   ? { allergiesEmergency: { bloodGroup: '', allergies: [], chronicConditions: [] } }
@@ -423,7 +470,7 @@ export const ShareReportPage: React.FC = () => {
         </div>
 
         {createError && (
-          <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 text-sm font-semibold">
+          <div className="p-3.5 rounded-xl bg-danger-soft border border-danger/30 text-danger-text text-sm font-semibold">
             {createError}
           </div>
         )}
@@ -433,7 +480,7 @@ export const ShareReportPage: React.FC = () => {
           type="button"
           onClick={handleCreateLink}
           disabled={isCreating || !selectedPatient || !anySectionSelected}
-          className="min-h-[54px] w-full px-6 py-3.5 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 disabled:opacity-50 text-white font-bold text-lg rounded-2xl shadow-sm flex items-center justify-center gap-2.5 cursor-pointer transition-colors"
+          className="min-h-[54px] w-full px-6 py-3.5 bg-primary hover:bg-primary-hover disabled:opacity-50 text-on-primary font-bold text-lg rounded-2xl shadow-sm flex items-center justify-center gap-2.5 cursor-pointer transition-colors"
         >
           {isCreating ? (
             <>
@@ -450,14 +497,14 @@ export const ShareReportPage: React.FC = () => {
 
         {/* Created Shareable Link Card */}
         {createdReport && (
-          <div className="p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border-2 border-emerald-400 dark:border-emerald-700 space-y-4">
+          <div className="p-5 rounded-2xl bg-success-soft border-2 border-success/40 space-y-4">
             <div className="flex items-start justify-between gap-2 flex-wrap">
               <div>
-                <h3 className="text-lg font-bold text-emerald-950 dark:text-emerald-100 flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-700 dark:text-emerald-400" />
+                <h3 className="text-lg font-bold text-success-text flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-success-text" />
                   <span>নিরাপদ শেয়ার লিংক তৈরি হয়েছে</span>
                 </h3>
-                <p className="text-sm text-emerald-900 dark:text-emerald-200 mt-0.5">
+                <p className="text-sm text-success-text/90 mt-0.5">
                   মেয়াদ শেষ হবে: {formatSharedReportDateTime(createdExpiresMs)}
                 </p>
               </div>
@@ -470,10 +517,10 @@ export const ShareReportPage: React.FC = () => {
                 value={createdUrl}
                 onFocus={(e) => e.currentTarget.select()}
                 aria-label="তৈরি করা রিপোর্ট লিংক"
-                className="w-full px-3.5 py-3 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 rounded-xl text-sm font-mono text-slate-900 dark:text-slate-100 select-all"
+                className="w-full px-3.5 py-3 bg-surface border border-success/35 rounded-xl text-sm font-mono text-text select-all"
               />
               {showManualCopyHelp && (
-                <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                <p className="text-xs font-bold text-warning-text">
                   উপরের লিংকটিতে আঙুল দিয়ে লম্বা চেপে ধরে &quot;কপি&quot; বেছে নিন।
                 </p>
               )}
@@ -483,16 +530,16 @@ export const ShareReportPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleCopyCreatedUrl}
-                className="min-h-[48px] px-4 py-2.5 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100 text-slate-900 dark:text-white font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer"
+                className="min-h-[48px] px-4 py-2.5 bg-surface border border-border hover:bg-surface-2 text-text font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer"
               >
                 {copiedNow ? (
                   <>
-                    <Check className="w-4 h-4 text-emerald-600" />
+                    <Check className="w-4 h-4 text-success-text" />
                     <span>কপি হয়েছে ✓</span>
                   </>
                 ) : (
                   <>
-                    <Copy className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+                    <Copy className="w-4 h-4 text-primary" />
                     <span>লিংক কপি করুন</span>
                   </>
                 )}
@@ -506,7 +553,7 @@ export const ShareReportPage: React.FC = () => {
                 )}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="min-h-[48px] px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 transition-colors"
+                className="min-h-[48px] px-4 py-2.5 bg-[#15803D] hover:bg-[#166534] text-white font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 transition-colors"
               >
                 <Share2 className="w-4 h-4" />
                 <span>হোয়াটসঅ্যাপে পাঠান</span>
@@ -515,7 +562,7 @@ export const ShareReportPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="min-h-[48px] px-4 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer"
+                className="min-h-[48px] px-4 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Printer className="w-4 h-4" />
                 <span>PDF / প্রিন্ট</span>
@@ -540,6 +587,17 @@ export const ShareReportPage: React.FC = () => {
             <p className="text-xs font-bold mt-2">
               স্বাস্থ্যবন্ধু থেকে শেয়ার করা, তথ্য রোগীর দেওয়া, চিকিৎসার সিদ্ধান্তের আগে ডাক্তারের পরামর্শ নিন
             </p>
+            {createdReport.sections.doctor && (
+              <p className="text-xs mt-1.5 font-semibold">
+                প্রাপক ডাক্তার: {createdReport.sections.doctor.name}
+                {createdReport.sections.doctor.specialty
+                  ? ` (${createdReport.sections.doctor.specialty})`
+                  : ''}
+                {createdReport.sections.doctor.hospital
+                  ? ` — ${createdReport.sections.doctor.hospital}`
+                  : ''}
+              </p>
+            )}
           </div>
 
           {createdReport.sections.medicines && (

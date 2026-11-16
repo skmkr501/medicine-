@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { PatientProfile, Medicine, DoseLog } from '../../types';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
-import { X, Printer, Download, FileText, CheckCircle2, ShieldCheck, Share2, Activity, Heart, Scale } from 'lucide-react';
+import { X, Printer, Download, FileText, CheckCircle2, ShieldCheck, Share2, Activity, Heart, Scale, Stethoscope } from 'lucide-react';
 import { AppLogo } from '../ui/AppLogo';
 import { useMedicine } from '../../context/MedicineContext';
 
@@ -18,7 +18,16 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
   logs,
   onClose,
 }) => {
-  const { healthRecords, setCurrentPage } = useMedicine();
+  const { healthRecords, setCurrentPage, loadHealthRecords, loadOlderDoseLogs, doctors, loadDoctors } = useMedicine();
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>('');
+
+  useEffect(() => {
+    loadHealthRecords();
+    loadOlderDoseLogs();
+    loadDoctors();
+  }, []);
+
+  const selectedDoctor = doctors.find((d) => d.id === selectedDoctorId) || null;
 
   const patientMedicines = patient
     ? medicines.filter((m) => !m.assignedPatientId || m.assignedPatientId === patient.id)
@@ -51,6 +60,9 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
 
   const handleShareWhatsApp = () => {
     let text = `📋 *স্বাস্থ্যবন্ধু — ডাক্তার পরামর্শ রিপোর্ট*\n`;
+    if (selectedDoctor) {
+      text += `প্রাপক ডাক্তার: ${selectedDoctor.name}${selectedDoctor.specialty ? ` (${selectedDoctor.specialty})` : ''}${selectedDoctor.hospital ? ` — ${selectedDoctor.hospital}` : ''}\n`;
+    }
     text += `রোগী: ${patient ? patient.name : 'সাধারণ রোগী'}\n`;
     if (patient) text += `বয়স: ${toBengaliNumber(patient.age)} বছর | রক্ত: ${patient.bloodGroup}\n`;
     text += `সেবনের নিয়মানুবর্তিতা: ${toBengaliNumber(complianceRate)}%\n`;
@@ -80,8 +92,8 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
       >
         {/* Modal Controls (Hidden in Print) */}
         <div className="no-print flex items-center justify-between pb-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex-wrap gap-3">
-          <div className="flex items-center gap-2 text-slate-800 dark:text-slate-100 font-bold text-sm">
-            <FileText className="w-5 h-5 text-teal-600" />
+          <div className="flex items-center gap-2 text-text font-bold text-sm">
+            <FileText className="w-5 h-5 text-primary" />
             <span>ডাক্তার পরামর্শের জন্য ওষুধ সেবনের আনুষ্ঠানিক রিপোর্ট</span>
           </div>
           
@@ -92,7 +104,7 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
                 onClose();
                 setCurrentPage('share-report');
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] text-xs font-semibold text-teal-800 dark:text-teal-200 bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-900/60 rounded-lg shadow-2xs transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] text-xs font-semibold text-primary bg-primary-soft border border-primary/25 hover:bg-primary-soft/80 rounded-lg shadow-2xs transition-colors cursor-pointer"
             >
               <Share2 className="w-3.5 h-3.5" />
               <span>নিরাপদ শেয়ার লিংক</span>
@@ -100,7 +112,7 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
             <button
               type="button"
               onClick={handleShareWhatsApp}
-              className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] text-xs font-semibold text-emerald-800 dark:text-emerald-200 bg-emerald-100 dark:bg-emerald-950/60 hover:bg-emerald-200 dark:hover:bg-emerald-900/80 rounded-lg shadow-2xs transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] text-xs font-semibold text-white bg-[#15803D] hover:bg-[#166534] rounded-lg shadow-2xs transition-colors cursor-pointer"
             >
               <Share2 className="w-3.5 h-3.5" />
               <span>WhatsApp এ শেয়ার</span>
@@ -108,7 +120,7 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
             <button
               type="button"
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg shadow-xs cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-on-primary bg-primary hover:bg-primary-hover rounded-lg shadow-xs cursor-pointer"
             >
               <Printer className="w-4 h-4" />
               <span>প্রিন্ট করুন</span>
@@ -117,22 +129,49 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
               type="button"
               onClick={onClose}
               aria-label="বন্ধ করুন"
-              className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              className="p-1.5 text-text-muted hover:text-text rounded-lg cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
+        {/* Optional Doctor Selector (Hidden in Print) */}
+        {doctors.length > 0 && (
+          <div className="no-print mb-5 p-3.5 rounded-xl bg-surface-2 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <label
+              htmlFor="doctor-report-select"
+              className="text-xs sm:text-sm font-bold text-text flex items-center gap-1.5"
+            >
+              <Stethoscope className="w-4 h-4 text-primary shrink-0" />
+              <span>রিপোর্টে ডাক্তারের নাম যোগ করুন (ঐচ্ছিক):</span>
+            </label>
+            <select
+              id="doctor-report-select"
+              value={selectedDoctorId}
+              onChange={(e) => setSelectedDoctorId(e.target.value)}
+              className="min-h-[48px] sm:min-w-[240px] px-3 py-2 text-sm bg-surface border border-border rounded-xl text-text"
+            >
+              <option value="">নির্বাচন করুন (ঐচ্ছিক)</option>
+              {doctors.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                  {d.specialty ? ` — ${d.specialty}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Printable Prescription Report Body */}
-        <div className="space-y-6 text-slate-900 dark:text-slate-100 font-sans">
+        <div className="space-y-6 text-text font-sans">
           
           {/* Clinic / App Letterhead */}
-          <div className="border-b-2 border-teal-700 pb-4 flex flex-col sm:flex-row justify-between sm:items-end gap-3">
+          <div className="border-b-2 border-primary pb-4 flex flex-col sm:flex-row justify-between sm:items-end gap-3">
             <div>
               <div className="flex items-center gap-2.5">
                 <AppLogo size="md" showText={false} />
-                <span className="text-xl font-bold text-teal-900 dark:text-teal-400">
+                <span className="text-xl font-bold text-primary">
                   স্বাস্থ্যবন্ধু (Shasthobondhu)
                 </span>
               </div>
@@ -171,6 +210,23 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
             </div>
           </div>
 
+          {selectedDoctor && (
+            <div className="p-3.5 rounded-xl bg-primary-soft/60 border border-primary/25 text-xs flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="text-text-muted block">প্রাপক ডাক্তার:</span>
+                <strong className="text-sm font-bold text-text">
+                  {selectedDoctor.name}
+                  {selectedDoctor.specialty ? ` · ${selectedDoctor.specialty}` : ''}
+                </strong>
+              </div>
+              {selectedDoctor.hospital && (
+                <div className="text-text-muted font-medium">
+                  চেম্বার/হাসপাতাল: {selectedDoctor.hospital}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Chronic conditions & Allergies */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div className="p-3 border border-slate-200 dark:border-slate-700 rounded-lg">
@@ -192,40 +248,40 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
           {(latestBP || latestSugar || latestWeight) && (
             <div className="p-3.5 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2 text-xs">
               <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-200">
-                <Activity className="w-4 h-4 text-teal-600" />
+                <Activity className="w-4 h-4 text-primary" />
                 <span>সর্বশেষ স্বাস্থ্য রেকর্ড (Vitals):</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {latestBP && (
-                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                    <span className="text-[11px] text-slate-400 block">রক্তচাপ (BP)</span>
-                    <strong className="text-sm text-slate-800 dark:text-white">
+                  <div className="p-2.5 rounded-lg bg-surface border border-border">
+                    <span className="text-[11px] text-text-muted block">রক্তচাপ (BP)</span>
+                    <strong className="text-sm text-text">
                       {toBengaliNumber(latestBP.systolic || 0)}/{toBengaliNumber(latestBP.diastolic || 0)}{' '}
-                      <span className="text-xs font-normal text-slate-400">mmHg</span>
+                      <span className="text-xs font-normal text-text-muted">mmHg</span>
                     </strong>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">{latestBP.recordDate}</span>
+                    <span className="text-[10px] text-text-muted block mt-0.5">{latestBP.recordDate}</span>
                   </div>
                 )}
                 {latestSugar && (
-                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                    <span className="text-[11px] text-slate-400 block">
+                  <div className="p-2.5 rounded-lg bg-surface border border-border">
+                    <span className="text-[11px] text-text-muted block">
                       ব্লাড সুগার ({latestSugar.sugarType || 'খালি পেটে'})
                     </span>
-                    <strong className="text-sm text-slate-800 dark:text-white">
+                    <strong className="text-sm text-text">
                       {toBengaliNumber(latestSugar.bloodSugar || 0)}{' '}
-                      <span className="text-xs font-normal text-slate-400">mmol/L</span>
+                      <span className="text-xs font-normal text-text-muted">mmol/L</span>
                     </strong>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">{latestSugar.recordDate}</span>
+                    <span className="text-[10px] text-text-muted block mt-0.5">{latestSugar.recordDate}</span>
                   </div>
                 )}
                 {latestWeight && (
-                  <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                    <span className="text-[11px] text-slate-400 block">শারীরিক ওজন</span>
-                    <strong className="text-sm text-slate-800 dark:text-white">
+                  <div className="p-2.5 rounded-lg bg-surface border border-border">
+                    <span className="text-[11px] text-text-muted block">শারীরিক ওজন</span>
+                    <strong className="text-sm text-text">
                       {toBengaliNumber(latestWeight.weight || 0)}{' '}
-                      <span className="text-xs font-normal text-slate-400">কেজি</span>
+                      <span className="text-xs font-normal text-text-muted">কেজি</span>
                     </strong>
-                    <span className="text-[10px] text-slate-400 block mt-0.5">{latestWeight.recordDate}</span>
+                    <span className="text-[10px] text-text-muted block mt-0.5">{latestWeight.recordDate}</span>
                   </div>
                 )}
               </div>
@@ -233,16 +289,16 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
           )}
 
           {/* Adherence Compliance Summary */}
-          <div className="p-4 bg-teal-50/60 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-800 rounded-xl flex items-center justify-between text-xs">
+          <div className="p-4 bg-primary-soft border border-primary/25 rounded-xl flex items-center justify-between text-xs">
             <div>
-              <span className="font-bold text-teal-950 dark:text-teal-200 block text-sm">
+              <span className="font-bold text-text block text-sm">
                 ওষুধ সেবনের নিয়মানুবর্তিতা (Compliance Rate): {toBengaliNumber(complianceRate)}%
               </span>
-              <span className="text-teal-800 dark:text-teal-300 text-[11px] mt-0.5 block">
+              <span className="text-primary text-[11px] mt-0.5 block">
                 মোট নির্ধারিত {toBengaliNumber(totalCount)}টি ডোজের মধ্যে {toBengaliNumber(takenCount)}টি সঠিক সময়ে সম্পন্ন হয়েছে
               </span>
             </div>
-            <ShieldCheck className="w-8 h-8 text-teal-600 shrink-0" />
+            <ShieldCheck className="w-8 h-8 text-primary shrink-0" />
           </div>
 
           {/* Active Prescription Medicines List */}
@@ -302,7 +358,7 @@ export const DoctorReportModal: React.FC<DoctorReportModalProps> = ({
                   </div>
 
                   <span className={`font-semibold ${
-                    log.status === 'taken' ? 'text-emerald-600' : 'text-slate-400'
+                    log.status === 'taken' ? 'text-success-text' : 'text-text-muted'
                   }`}>
                     {log.status === 'taken' ? '✓ গৃহীত' : '✕ বাদ দেওয়া'}
                   </span>

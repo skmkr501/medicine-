@@ -13,6 +13,7 @@ export type MealTiming =
   | 'খালি পেটে'
   | 'ভরা পেটে'
   | 'ঘুমানোর আগে'
+  | 'যেকোনো সময়'
   | 'প্রয়োজনমতো';
 
 export type TimeSlot = 'সকাল' | 'দুপুর' | 'সন্ধ্যা' | 'রাত';
@@ -149,6 +150,8 @@ export interface DoctorAppointment {
   createdAt: string;
 }
 
+export type WeekStartDay = 'saturday' | 'sunday' | 'monday';
+
 export interface ReminderSettings {
   soundEnabled: boolean;
   selectedTone: 'soft-bell' | 'chime' | 'gentle-pulse' | 'digital-beep';
@@ -163,6 +166,8 @@ export interface ReminderSettings {
   emergencyContactPhone?: string;
   caregiverMissedDoseMinutes?: 15 | 30 | 60;
   patientSelfPhone?: string;
+  weekStartDay?: WeekStartDay;
+  showEmergencyDoctorOnCard?: boolean;
 }
 
 export interface CaregiverTodayDoseSummary {
@@ -174,11 +179,17 @@ export interface CaregiverTodayDoseSummary {
 }
 
 export interface CaregiverFullMedicineItem {
+  id?: string;
   brandName: string;
+  genericName?: string;
   strength?: string;
+  type?: MedicineType;
   mealTiming: string;
   stock: number;
   unit: string;
+  durationDays?: number;
+  isChronic?: boolean;
+  schedules?: DoseSchedule[];
   schedulesText: string;
 }
 
@@ -201,6 +212,7 @@ export interface CaregiverLinkDoc {
   patientPhone?: string;
   status: 'pending' | 'active';
   allowFullView: boolean;
+  allowSuggestions?: boolean;
   createdAt: string;
   expiresAt?: string;
   expiresAtMs: number;
@@ -208,6 +220,41 @@ export interface CaregiverLinkDoc {
   updatedAt?: string;
   todaySummary?: CaregiverTodaySummary;
   sharedMedicines?: CaregiverFullMedicineItem[];
+}
+
+export type CaregiverSuggestionKind = 'add' | 'edit' | 'stop';
+export type CaregiverSuggestionStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled';
+
+export interface CaregiverSuggestedMedicinePayload {
+  brandName: string;
+  genericName?: string;
+  strength?: string;
+  type: MedicineType;
+  dosage: string;
+  timeSlots: TimeSlot[];
+  schedules?: DoseSchedule[];
+  mealTiming: MealTiming;
+  durationDays?: number;
+  isChronic?: boolean;
+  stock: number;
+  unit: string;
+}
+
+export interface CaregiverSuggestionDoc {
+  id: string;
+  patientUid: string;
+  caregiverUid: string;
+  linkId: string;
+  caregiverName: string;
+  patientName?: string;
+  kind: CaregiverSuggestionKind;
+  medicine: CaregiverSuggestedMedicinePayload;
+  targetMedicineId?: string;
+  targetMedicineName?: string;
+  note?: string;
+  status: CaregiverSuggestionStatus;
+  createdAt: unknown;
+  createdAtMs: number;
 }
 
 export type FamilyAlertType = 'missed_dose' | 'low_stock';
@@ -236,18 +283,40 @@ export type NavigationPage =
   | 'checklist'
   | 'health-records'
   | 'appointments'
+  | 'doctors'
   | 'medicines'
+  | 'weekly-pillbox'
   | 'add-medicine'
   | 'shopping-list'
   | 'reminders'
   | 'history'
   | 'share-report'
+  | 'emergency-qr'
   | 'ai-assistant'
   | 'settings'
   | 'library'
   | 'admin-import'
   | 'admin-dashboard'
   | 'admin-library';
+
+export interface DoctorProfile {
+  id: string;
+  name: string;
+  specialty?: string;
+  phone?: string;
+  whatsapp?: string;
+  hospital?: string; // চেম্বার / হাসপাতাল
+  address?: string;
+  visitingHours?: string;
+  forConditions?: string; // কোন রোগের জন্য
+  patientIds?: string[]; // কোন প্রোফাইলের ডাক্তার
+  lastVisitDate?: string; // YYYY-MM-DD
+  nextVisitDate?: string; // YYYY-MM-DD
+  notes?: string;
+  isEmergency: boolean;
+  createdAt: unknown;
+  updatedAt: unknown;
+}
 
 export type SharedReportExpiryHours = 24 | 168 | 720;
 
@@ -295,7 +364,14 @@ export interface SharedReportAppointmentItem {
   notes?: string;
 }
 
+export interface SharedReportDoctorInfo {
+  name: string;
+  specialty?: string;
+  hospital?: string;
+}
+
 export interface SharedReportSections {
+  doctor?: SharedReportDoctorInfo;
   medicines?: SharedReportMedicineItem[];
   allergiesEmergency?: SharedReportAllergiesEmergency;
   recentReadings?: SharedReportReadingItem[];
@@ -315,6 +391,32 @@ export interface SharedReportDoc {
   relation?: string;
   sections: SharedReportSections;
   revoked: boolean;
+}
+
+export interface EmergencyCardSelection {
+  bloodGroup: boolean;
+  allergies: boolean;
+  conditions: boolean;
+  contact: boolean;
+  medicines: boolean; // ডিফল্ট বন্ধ
+  doctorName: boolean;
+}
+
+export interface EmergencyCardDoc {
+  ownerUid: string;
+  token: string;
+  createdAt: unknown;
+  createdAtMs?: number;
+  patientName: string;
+  age?: number;
+  bloodGroup?: string;
+  allergies?: string;
+  conditions?: string;
+  contactName?: string;
+  contactPhone?: string;
+  medicines?: string;
+  doctorName?: string;
+  active: boolean;
 }
 
 export type ImportDataSource =

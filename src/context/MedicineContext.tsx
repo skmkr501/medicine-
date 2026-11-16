@@ -15,7 +15,10 @@ import {
   HealthRecord,
   DoctorAppointment,
   CaregiverLinkDoc,
+  CaregiverSuggestionDoc,
+  CaregiverSuggestedMedicinePayload,
   FamilyAlertDoc,
+  DoctorProfile,
 } from '../types';
 import {
   initialPatients,
@@ -37,7 +40,7 @@ import {
   clearAllNativeReminders,
   isNativeRemindersAvailable,
 } from '../services/nativeReminders';
-import { auth, db, testFirestoreConnection, stripUndefined } from '../firebase/config';
+import { auth, db, resumeFirestoreNetwork, testFirestoreConnection, stripUndefined } from '../firebase/config';
 import {
   onAuthStateChanged,
   User,
@@ -46,6 +49,8 @@ import {
   collection,
   doc,
   onSnapshot,
+  query,
+  where,
 } from 'firebase/firestore';
 import {
   saveMedicineToCloud,
@@ -80,11 +85,29 @@ import {
   markFamilyAlertSeenInCloud,
   cleanupOldFamilyAlertsInCloud,
   subscribeToCaregiverAlerts,
+  createCaregiverSuggestionInCloud,
+  subscribeToPatientPendingSuggestions,
+  fetchCaregiverSentSuggestions,
+  updateCaregiverSuggestionStatusInCloud,
+  fetchUserCollectionFromCloud,
+  fetchUserSettingsFromCloud,
+  fetchOlderDoseLogsFromCloud,
+  fetchUpcomingAppointmentsFromCloud,
+  fetchPastAppointmentsFromCloud,
+  fetchRecentHealthRecordsFromCloud,
+  fetchUserDoctorsFromCloud,
+  createDoctorInCloud,
+  updateDoctorInCloud,
+  deleteDoctorFromCloud,
 } from '../firebase/services';
 import {
   getFriendlyErrorMessage,
   isQuotaExceededError,
+  isWriteQuotaPaused,
+  markWriteQuotaExceeded,
+  clearWriteQuotaPause,
   consumeQuotaExceededNoticeOnce,
+  subscribeWriteQuotaExceeded,
   QUOTA_EXCEEDED_BN_MSG,
 } from '../firebase/errors';
 import { isTestMedicine, sanitizeMedicineId, generateDuplicateKey } from '../utils/medicineImportParser';
@@ -130,7 +153,48 @@ import {
   enqueuePendingFamilyAlerts,
   removePendingFamilyAlert,
 } from '../utils/caregiverAlerts';
+import {
+  MAX_DAILY_CAREGIVER_SUGGESTIONS,
+  CaregiverSuggestionFormInput,
+  filterVisiblePendingSuggestions,
+  buildCaregiverSuggestionPayload,
+  getCaregiverDailySuggestionCount,
+  incrementCaregiverDailySuggestionCount,
+  loadAnnouncedSuggestionIds,
+  markSuggestionsAnnounced,
+  findTargetMedicineForSuggestion,
+  buildMedicineInputFromSuggestion,
+} from '../utils/caregiverSuggestions';
 import { toLocalIsoDate } from '../utils/shoppingListCalculator';
+import {
+  DOSE_LOG_REALTIME_DAYS,
+  COLLECTION_SYNC_TTL_MS,
+  RECORDS_SYNC_TTL_MS,
+  HEALTH_RECORDS_INITIAL_LIMIT,
+  getDoseLogsCutoffDate,
+  getAppointmentsRecentCutoffDate,
+  mergeDoseLogsWithWindow,
+  replaceOlderDoseLogsKeepingRecent,
+  mergeUpcomingAppointments,
+  replacePastAppointmentsKeepingUpcoming,
+  shouldFetchCollectionFromCloud,
+  markCollectionSynced,
+  invalidateCollectionSyncMeta,
+  loadCachedOlderDoseLogs,
+  saveCachedOlderDoseLogs,
+  loadCachedPastAppointments,
+  saveCachedPastAppointments,
+  clearUserReadOptimizerCaches,
+} from '../utils/firestoreReadOptimizer';
+import {
+  DoctorProfileInput,
+  buildCleanDoctorInput,
+  sortDoctors,
+  loadCachedDoctors,
+  saveCachedDoctors,
+  clearCachedDoctors,
+  mergeLocalAndCloudDoctors,
+} from '../utils/doctorsManager';
 
 
 interface ToastState {
@@ -160,6 +224,7 @@ interface MedicineContextType {
     notes?: string
   ) => void;
   addMedicine: (medicine: Omit<Medicine, 'id'>) => string;
+  addMultipleMedicines: (medicinesList: Array<Omit<Medicine, 'id'>>) => Promise<string[]>;
   updateMedicine: (id: string, updates: Partial<Medicine>) => void;
   deleteMedicine: (id: string) => void;
   adjustStock: (id: string, delta: number) => void;
@@ -181,16 +246,35 @@ interface MedicineContextType {
   toast: ToastState | null;
   showToast: (message: string, type?: 'success' | 'info' | 'alert') => void;
 
-  // Health Records (ধাপ ১)
+  // Health Records (ধাপ ১ — অন-ডিমান্ড লোড)
   healthRecords: HealthRecord[];
   addHealthRecord: (record: Omit<HealthRecord, 'id' | 'createdAt'>) => string;
   deleteHealthRecord: (id: string) => void;
+  isLoadingHealthRecords: boolean;
+  hasMoreOlderHealthRecords: boolean;
+  loadHealthRecords: (options?: { loadAll?: boolean; forceRefresh?: boolean }) => Promise<void>;
 
-  // Doctor Appointments (ধাপ ২)
+  // Doctor Appointments (ধাপ ২ — আসন্ন বুটে, পুরনো অন-ডিমান্ড)
   appointments: DoctorAppointment[];
   addAppointment: (appointment: Omit<DoctorAppointment, 'id' | 'createdAt'>) => string;
   updateAppointment: (id: string, updates: Partial<DoctorAppointment>) => void;
   deleteAppointment: (id: string) => void;
+  pastAppointmentsLoaded: boolean;
+  isLoadingPastAppointments: boolean;
+  loadPastAppointments: (forceRefresh?: boolean) => Promise<void>;
+
+  // My Doctors Directory ("আমার ডাক্তার" — শূন্য real-time listener, ৬ ঘণ্টার ক্যাশ)
+  doctors: DoctorProfile[];
+  isLoadingDoctors: boolean;
+  loadDoctors: (forceRefresh?: boolean) => Promise<void>;
+  addDoctor: (doctor: DoctorProfileInput) => DoctorProfile;
+  updateDoctor: (id: string, updates: DoctorProfileInput) => void;
+  deleteDoctor: (id: string) => void;
+
+  // Older Dose Logs (> 45 days on-demand)
+  olderDoseLogsLoaded: boolean;
+  isLoadingOlderDoseLogs: boolean;
+  loadOlderDoseLogs: (forceRefresh?: boolean) => Promise<void>;
   
   // Firebase Auth & Cloud Sync States
   currentUser: User | null;
@@ -198,6 +282,7 @@ interface MedicineContextType {
   isCloudConnected: boolean;
   isSyncing: boolean;
   syncStatus: 'synced' | 'syncing' | 'failed' | 'offline';
+  isQuotaExceeded: boolean;
   lastSyncedAt: string | null;
   triggerManualSync: () => Promise<void>;
   downloadLocalBackup: () => void;
@@ -305,9 +390,26 @@ interface MedicineContextType {
   redeemCaregiverInvite: (codeInput: string) => Promise<boolean>;
   removeCaregiverLink: (linkId: string) => Promise<void>;
   toggleCaregiverFullView: (linkId: string, allowFullView: boolean) => Promise<void>;
+  toggleCaregiverSuggestions: (linkId: string, allowSuggestions: boolean) => Promise<void>;
   markFamilyAlertSeen: (alertId: string) => Promise<void>;
   retryFailedCaregiverAlerts: () => Promise<void>;
   dismissFailedCaregiverAlert: (alertId: string) => void;
+
+  // যত্নকারীর ওষুধের প্রস্তাব (Caregiver Medicine Suggestions)
+  pendingPatientSuggestions: CaregiverSuggestionDoc[];
+  sentCaregiverSuggestions: CaregiverSuggestionDoc[];
+  isLoadingSentSuggestions: boolean;
+  sendCaregiverSuggestion: (
+    link: CaregiverLinkDoc,
+    input: CaregiverSuggestionFormInput
+  ) => Promise<CaregiverSuggestionDoc | null>;
+  loadCaregiverSentSuggestions: () => Promise<void>;
+  acceptCaregiverSuggestion: (
+    suggestion: CaregiverSuggestionDoc,
+    edited?: Partial<CaregiverSuggestedMedicinePayload> & { assignedPatientId?: string }
+  ) => Promise<boolean>;
+  rejectCaregiverSuggestion: (suggestionId: string) => Promise<boolean>;
+  cancelCaregiverSuggestion: (suggestionId: string) => Promise<boolean>;
 }
 
 
@@ -491,8 +593,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isSyncing, setIsSyncing] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'failed' | 'offline'>(
-    typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'synced'
+    (typeof navigator !== 'undefined' && !navigator.onLine) || isWriteQuotaPaused()
+      ? 'offline'
+      : 'synced'
   );
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(() => isWriteQuotaPaused());
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
 
   // Migration Gate & Conflict Resolution State
@@ -528,10 +633,35 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [caregiverAlerts, setCaregiverAlerts] = useState<FamilyAlertDoc[]>([]);
   const [failedCaregiverAlerts, setFailedCaregiverAlerts] = useState<FamilyAlertDoc[]>([]);
   const [isCaregiverLoading, setIsCaregiverLoading] = useState<boolean>(false);
+  const [pendingPatientSuggestions, setPendingPatientSuggestions] = useState<CaregiverSuggestionDoc[]>([]);
+  const [sentCaregiverSuggestions, setSentCaregiverSuggestions] = useState<CaregiverSuggestionDoc[]>([]);
+  const [isLoadingSentSuggestions, setIsLoadingSentSuggestions] = useState<boolean>(false);
   const lastSyncedLinkSigRef = useRef<Record<string, string>>({});
   const caregiverFailureNotifiedRef = useRef<boolean>(false);
   const playedAlertSoundIdsRef = useRef<Set<string>>(new Set());
+  const playedSuggestionIdsRef = useRef<Set<string>>(new Set());
   const caregiverEvalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Lazy-load state & de-duplication refs for Firestore Read Optimization
+  const [olderDoseLogsLoaded, setOlderDoseLogsLoaded] = useState(false);
+  const [isLoadingOlderDoseLogs, setIsLoadingOlderDoseLogs] = useState(false);
+  const [isLoadingHealthRecords, setIsLoadingHealthRecords] = useState(false);
+  const [hasMoreOlderHealthRecords, setHasMoreOlderHealthRecords] = useState(false);
+  const [pastAppointmentsLoaded, setPastAppointmentsLoaded] = useState(false);
+  const [isLoadingPastAppointments, setIsLoadingPastAppointments] = useState(false);
+  const olderDoseLogsInFlightRef = useRef(false);
+  const healthRecordsInFlightRef = useRef(false);
+  const pastAppointmentsInFlightRef = useRef(false);
+  const allHealthRecordsLoadedUidRef = useRef<string | null>(null);
+
+  // My Doctors Directory ("আমার ডাক্তার" — local cache first, zero real-time listener)
+  const [doctors, setDoctors] = useState<DoctorProfile[]>(() =>
+    sortDoctors(loadCachedDoctors(null))
+  );
+  const [isLoadingDoctors, setIsLoadingDoctors] = useState(false);
+  const doctorsInFlightRef = useRef(false);
+  const doctorsRef = useRef<DoctorProfile[]>(doctors);
+  doctorsRef.current = doctors;
 
 
   // Sync to local storage for resilience
@@ -574,10 +704,15 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const root = document.documentElement;
       const isSystemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 
-      if (mode === 'dark' || (mode === 'system' && isSystemDark)) {
+      const isDark = mode === 'dark' || (mode === 'system' && isSystemDark);
+      if (isDark) {
         root.classList.add('dark');
       } else {
         root.classList.remove('dark');
+      }
+      const themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeMeta) {
+        themeMeta.setAttribute('content', isDark ? '#0B1020' : '#4F46E5');
       }
     };
 
@@ -685,13 +820,27 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   hasGlobalCatalogRef.current = globalMedicines.length > 0;
   const showToastRef = useRef<((message: string, type?: 'success' | 'info' | 'alert') => void) | null>(null);
 
-  const notifyQuotaExceededOnce = () => {
+  const applyQuotaUiStateOnce = () => {
+    setIsQuotaExceeded(true);
     setSyncStatus('offline');
     setIsGlobalFromCache(true);
     if (consumeQuotaExceededNoticeOnce()) {
       showToastRef.current?.(QUOTA_EXCEEDED_BN_MSG, 'info');
     }
   };
+
+  const notifyQuotaExceededOnce = () => {
+    if (!isWriteQuotaPaused()) {
+      markWriteQuotaExceeded();
+    }
+    applyQuotaUiStateOnce();
+  };
+
+  useEffect(() => {
+    return subscribeWriteQuotaExceeded(() => {
+      applyQuotaUiStateOnce();
+    });
+  }, []);
 
   // Load IndexedDB cache FIRST, then attach a single-document listener to library_meta/current (1 read per check/update)
   useEffect(() => {
@@ -956,12 +1105,12 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const updateLiveSyncTime = (hasPendingWrites: boolean) => {
-    if (isDeviceOffline()) {
+    if (isDeviceOffline() || isWriteQuotaPaused()) {
       setSyncStatus('offline');
     } else {
       setSyncStatus(hasPendingWrites ? 'syncing' : 'synced');
     }
-    if (!hasPendingWrites && !isDeviceOffline()) {
+    if (!hasPendingWrites && !isDeviceOffline() && !isWriteQuotaPaused()) {
       const now = new Date();
       const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
       setLastSyncedAt(timeStr);
@@ -1106,6 +1255,15 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return;
       }
 
+      if (isWriteQuotaPaused()) {
+        if (!cancelled) {
+          setIsQuotaExceeded(true);
+          setSyncStatus('offline');
+          setMigrationReadyUid(uid);
+        }
+        return;
+      }
+
       try {
         setIsSyncing(true);
         setSyncStatus(isDeviceOffline() ? 'offline' : 'syncing');
@@ -1136,6 +1294,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           if (cancelled) return;
           try {
             localStorage.setItem(migrationKey, 'true');
+            markCollectionSynced(uid, 'medicines');
+            markCollectionSynced(uid, 'patients');
+            markCollectionSynced(uid, 'settings');
+            markCollectionSynced(uid, 'upcomingAppointments');
+            markCollectionSynced(uid, 'healthRecords');
           } catch (e) {
             console.warn('Migration flag write error:', e);
           }
@@ -1168,80 +1331,171 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, [currentUser, demoCleanupReadyKey]);
 
-  // Real-time Firestore Listeners for authenticated user (Requirement খ & গ)
-  // Attaches ONLY after migrationReadyUid === currentUser.uid.
-  // All 6 subcollections follow strict rules:
-  // 1) if (snapshot.metadata.fromCache && snapshot.empty) return; (Never wipe local state before server confirms)
-  // 2) Server-confirmed (even empty) replaces state with cloud results.
+  // Shared TTL-gated cloud fetch for core collections (medicines, patients, settings, upcoming appointments).
+  // Replaces 5 full-collection onSnapshot listeners so reopening the app does not re-read unchanged docs.
+  const syncCoreCollectionsFromCloud = async (userId: string, forceRefresh = false) => {
+    if (!userId || isDeviceOffline() || isWriteQuotaPaused()) return;
+    const nowMs = Date.now();
+    const yesterdayIso = getAppointmentsRecentCutoffDate(1);
+    const tasks: Promise<void>[] = [];
+    let didFetchAny = false;
+
+    if (shouldFetchCollectionFromCloud(userId, 'medicines', COLLECTION_SYNC_TTL_MS, nowMs, forceRefresh)) {
+      didFetchAny = true;
+      tasks.push(
+        fetchUserCollectionFromCloud<Medicine>(userId, 'medicines').then((cloudMeds) => {
+          setMedicines(cloudMeds);
+          markCollectionSynced(userId, 'medicines', nowMs);
+        })
+      );
+    }
+
+    if (shouldFetchCollectionFromCloud(userId, 'patients', COLLECTION_SYNC_TTL_MS, nowMs, forceRefresh)) {
+      didFetchAny = true;
+      tasks.push(
+        fetchUserCollectionFromCloud<PatientProfile>(userId, 'patients').then((cloudPatients) => {
+          setPatients(cloudPatients);
+          if (cloudPatients.length > 0) {
+            setActivePatientId((prevActive) =>
+              prevActive && cloudPatients.some((p) => p.id === prevActive)
+                ? prevActive
+                : cloudPatients[0].id
+            );
+          } else {
+            setActivePatientId(null);
+          }
+          markCollectionSynced(userId, 'patients', nowMs);
+        })
+      );
+    }
+
+    if (shouldFetchCollectionFromCloud(userId, 'settings', COLLECTION_SYNC_TTL_MS, nowMs, forceRefresh)) {
+      didFetchAny = true;
+      tasks.push(
+        fetchUserSettingsFromCloud(userId).then((cloudSettings) => {
+          if (cloudSettings) {
+            setSettings((prev) => ({ ...prev, ...cloudSettings }));
+          }
+          markCollectionSynced(userId, 'settings', nowMs);
+        })
+      );
+    }
+
+    if (
+      shouldFetchCollectionFromCloud(
+        userId,
+        'upcomingAppointments',
+        RECORDS_SYNC_TTL_MS,
+        nowMs,
+        forceRefresh
+      )
+    ) {
+      didFetchAny = true;
+      tasks.push(
+        fetchUpcomingAppointmentsFromCloud(userId, yesterdayIso).then((upcomingApts) => {
+          setAppointments((prev) => mergeUpcomingAppointments(prev, upcomingApts, yesterdayIso));
+          markCollectionSynced(userId, 'upcomingAppointments', nowMs);
+        })
+      );
+    }
+
+    if (!didFetchAny) return;
+
+    try {
+      await Promise.all(tasks);
+      updateLiveSyncTime(false);
+    } catch (error: any) {
+      if (isQuotaExceededError(error)) {
+        notifyQuotaExceededOnce();
+        return;
+      }
+      setSyncStatus('failed');
+      console.warn(`Cloud sync notice (users/${userId}):`, error?.message || error);
+    }
+  };
+
+  // Bounded 45-day real-time doseLogs listener + TTL-gated core boot sync.
+  // healthRecords (0 boot reads), past appointments (0 boot reads), and >45-day doseLogs (0 boot reads)
+  // are loaded lazily on demand and cached in localStorage.
   useEffect(() => {
-    if (!currentUser || migrationReadyUid !== currentUser.uid) return;
+    if (!currentUser || migrationReadyUid !== currentUser.uid) {
+      setOlderDoseLogsLoaded(false);
+      setPastAppointmentsLoaded(false);
+      setHasMoreOlderHealthRecords(false);
+      allHealthRecordsLoadedUidRef.current = null;
+      if (!currentUser) {
+        setDoctors(sortDoctors(loadCachedDoctors(null)));
+      }
+      return;
+    }
 
     const userId = currentUser.uid;
+    let cancelled = false;
 
-    // 1. Listen to medicines
-    const medPath = `users/${userId}/medicines`;
-    const unsubMeds = onSnapshot(
-      collection(db, 'users', userId, 'medicines'),
-      (snapshot) => {
-        if (snapshot.metadata.fromCache && snapshot.empty) return;
-        const cloudMeds: Medicine[] = [];
-        snapshot.forEach((docSnap) => {
-          cloudMeds.push(docSnap.data() as Medicine);
-        });
-        setMedicines(cloudMeds);
-        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
-      },
-      (error) => {
-        if (isQuotaExceededError(error)) {
-          notifyQuotaExceededOnce();
-          return;
-        }
-        setSyncStatus('failed');
-        console.warn(`Firestore listener notice (${medPath}):`, error.message);
+    // Prevent stale local cache from another Firebase UID if the user switched accounts
+    try {
+      const prevCloudUid = localStorage.getItem('shasthobondhu_last_cloud_uid');
+      if (prevCloudUid && prevCloudUid !== userId) {
+        invalidateCollectionSyncMeta(userId);
+        setDoseLogs([]);
+        setHealthRecords([]);
+        setAppointments([]);
+        setDoctors([]);
       }
-    );
+      localStorage.setItem('shasthobondhu_last_cloud_uid', userId);
+    } catch {
+      // ignore storage errors
+    }
 
-    // 2. Listen to patients
-    const patientPath = `users/${userId}/patients`;
-    const unsubPatients = onSnapshot(
-      collection(db, 'users', userId, 'patients'),
-      (snapshot) => {
-        if (snapshot.metadata.fromCache && snapshot.empty) return;
-        const cloudPatients: PatientProfile[] = [];
-        snapshot.forEach((docSnap) => {
-          cloudPatients.push(docSnap.data() as PatientProfile);
-        });
-        setPatients(cloudPatients);
-        if (cloudPatients.length > 0) {
-          setActivePatientId((prevActive) =>
-            prevActive && cloudPatients.some((p) => p.id === prevActive) ? prevActive : cloudPatients[0].id
-          );
-        } else {
-          setActivePatientId(null);
-        }
-        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
-      },
-      (error) => {
-        if (isQuotaExceededError(error)) {
-          notifyQuotaExceededOnce();
-          return;
-        }
-        setSyncStatus('failed');
-        console.warn(`Firestore listener notice (${patientPath}):`, error.message);
-      }
-    );
+    // Hydrate doctors immediately from phone cache (0 Firestore reads)
+    const cachedDoctors = loadCachedDoctors(userId);
+    if (cachedDoctors.length > 0) {
+      setDoctors(sortDoctors(cachedDoctors));
+    }
 
-    // 3. Listen to doseLogs
+    const cutoff45Days = getDoseLogsCutoffDate(DOSE_LOG_REALTIME_DAYS);
+    const yesterdayIso = getAppointmentsRecentCutoffDate(1);
+
+    // Hydrate locally cached >45-day doseLogs & past appointments with 0 Firestore reads if valid
+    const cachedOlderLogs = loadCachedOlderDoseLogs(userId, cutoff45Days);
+    if (cachedOlderLogs.hit) {
+      setDoseLogs((prev) =>
+        replaceOlderDoseLogsKeepingRecent(prev, cachedOlderLogs.logs, cutoff45Days)
+      );
+      setOlderDoseLogsLoaded(true);
+    } else {
+      setOlderDoseLogsLoaded(false);
+    }
+
+    const cachedPastApts = loadCachedPastAppointments(userId, yesterdayIso);
+    if (cachedPastApts.hit) {
+      setAppointments((prev) =>
+        replacePastAppointmentsKeepingUpcoming(prev, cachedPastApts.appointments, yesterdayIso)
+      );
+      setPastAppointmentsLoaded(true);
+    } else {
+      setPastAppointmentsLoaded(false);
+    }
+
+    // TTL-gated initial sync for medicines, patients, settings (single-doc), & upcoming appointments
+    syncCoreCollectionsFromCloud(userId, false);
+
+    // Single real-time listener: doseLogs strictly limited to last 45 days (single-field index)
     const logPath = `users/${userId}/doseLogs`;
-    const unsubLogs = onSnapshot(
+    const logsQuery = query(
       collection(db, 'users', userId, 'doseLogs'),
+      where('scheduledDate', '>=', cutoff45Days)
+    );
+    const unsubLogs = onSnapshot(
+      logsQuery,
       (snapshot) => {
+        if (cancelled) return;
         if (snapshot.metadata.fromCache && snapshot.empty) return;
-        const cloudLogs: DoseLog[] = [];
+        const recentCloudLogs: DoseLog[] = [];
         snapshot.forEach((docSnap) => {
-          cloudLogs.push(docSnap.data() as DoseLog);
+          recentCloudLogs.push(docSnap.data() as DoseLog);
         });
-        setDoseLogs(cloudLogs);
+        setDoseLogs((prev) => mergeDoseLogsWithWindow(prev, recentCloudLogs, cutoff45Days));
         updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
       },
       (error) => {
@@ -1254,85 +1508,180 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     );
 
-    // 4. Listen to healthRecords
-    const healthPath = `users/${userId}/healthRecords`;
-    const unsubHealth = onSnapshot(
-      collection(db, 'users', userId, 'healthRecords'),
-      (snapshot) => {
-        if (snapshot.metadata.fromCache && snapshot.empty) return;
-        const cloudHR: HealthRecord[] = [];
-        snapshot.forEach((docSnap) => {
-          cloudHR.push(docSnap.data() as HealthRecord);
-        });
-        setHealthRecords(cloudHR);
-        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
-      },
-      (error) => {
-        if (isQuotaExceededError(error)) {
-          notifyQuotaExceededOnce();
-          return;
-        }
-        setSyncStatus('failed');
-        console.warn(`Firestore listener notice (${healthPath}):`, error.message);
-      }
-    );
-
-    // 5. Listen to appointments
-    const aptPath = `users/${userId}/appointments`;
-    const unsubApts = onSnapshot(
-      collection(db, 'users', userId, 'appointments'),
-      (snapshot) => {
-        if (snapshot.metadata.fromCache && snapshot.empty) return;
-        const cloudApts: DoctorAppointment[] = [];
-        snapshot.forEach((docSnap) => {
-          cloudApts.push(docSnap.data() as DoctorAppointment);
-        });
-        setAppointments(cloudApts);
-        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
-      },
-      (error) => {
-        if (isQuotaExceededError(error)) {
-          notifyQuotaExceededOnce();
-          return;
-        }
-        setSyncStatus('failed');
-        console.warn(`Firestore listener notice (${aptPath}):`, error.message);
-      }
-    );
-
-    // 6. Listen to settings
-    const settingsPath = `users/${userId}/settings`;
-    const unsubSettings = onSnapshot(
-      collection(db, 'users', userId, 'settings'),
-      (snapshot) => {
-        if (snapshot.metadata.fromCache && snapshot.empty) return;
-        snapshot.forEach((docSnap) => {
-          if (docSnap.id === 'preferences') {
-            const cloudSettings = docSnap.data() as ReminderSettings;
-            setSettings((prev) => ({ ...prev, ...cloudSettings }));
-          }
-        });
-        updateLiveSyncTime(snapshot.metadata.hasPendingWrites);
-      },
-      (error) => {
-        if (isQuotaExceededError(error)) {
-          notifyQuotaExceededOnce();
-          return;
-        }
-        setSyncStatus('failed');
-        console.warn(`Firestore listener notice (${settingsPath}):`, error.message);
-      }
-    );
-
     return () => {
-      unsubMeds();
-      unsubPatients();
+      cancelled = true;
       unsubLogs();
-      unsubHealth();
-      unsubApts();
-      unsubSettings();
     };
   }, [currentUser, migrationReadyUid]);
+
+  // Lazy-load doseLogs older than 45 days when user inspects full history, doctor report, or older pillbox weeks
+  const loadOlderDoseLogs = async (forceRefresh = false): Promise<void> => {
+    if (!currentUser || migrationReadyUid !== currentUser.uid) return;
+    if (!forceRefresh && olderDoseLogsLoaded) return;
+    if (olderDoseLogsInFlightRef.current) return;
+
+    const uid = currentUser.uid;
+    const cutoff45Days = getDoseLogsCutoffDate(DOSE_LOG_REALTIME_DAYS);
+
+    if (!forceRefresh) {
+      const cached = loadCachedOlderDoseLogs(uid, cutoff45Days);
+      if (cached.hit) {
+        setDoseLogs((prev) => replaceOlderDoseLogsKeepingRecent(prev, cached.logs, cutoff45Days));
+        setOlderDoseLogsLoaded(true);
+        return;
+      }
+    }
+
+    if (isDeviceOffline() || isWriteQuotaPaused()) return;
+
+    olderDoseLogsInFlightRef.current = true;
+    setIsLoadingOlderDoseLogs(true);
+    try {
+      const olderLogs = await fetchOlderDoseLogsFromCloud(uid, cutoff45Days);
+      saveCachedOlderDoseLogs(uid, cutoff45Days, olderLogs);
+      setDoseLogs((prev) => replaceOlderDoseLogsKeepingRecent(prev, olderLogs, cutoff45Days));
+      setOlderDoseLogsLoaded(true);
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        console.warn('loadOlderDoseLogs notice:', err);
+      }
+    } finally {
+      olderDoseLogsInFlightRef.current = false;
+      setIsLoadingOlderDoseLogs(false);
+    }
+  };
+
+  // Lazy-load healthRecords only when user opens Health Records, Share Report, or Doctor Report
+  const loadHealthRecords = async (
+    options: { loadAll?: boolean; forceRefresh?: boolean } = {}
+  ): Promise<void> => {
+    const { loadAll = false, forceRefresh = false } = options;
+    if (!currentUser || migrationReadyUid !== currentUser.uid) return;
+    if (healthRecordsInFlightRef.current) return;
+
+    const uid = currentUser.uid;
+    if (!loadAll && !forceRefresh && !shouldFetchCollectionFromCloud(uid, 'healthRecords', RECORDS_SYNC_TTL_MS)) {
+      return;
+    }
+    if (loadAll && !forceRefresh && allHealthRecordsLoadedUidRef.current === uid) {
+      return;
+    }
+    if (isDeviceOffline() || isWriteQuotaPaused()) return;
+
+    healthRecordsInFlightRef.current = true;
+    setIsLoadingHealthRecords(true);
+    try {
+      if (loadAll) {
+        const allRecords = await fetchUserCollectionFromCloud<HealthRecord>(uid, 'healthRecords');
+        setHealthRecords(allRecords);
+        setHasMoreOlderHealthRecords(false);
+        allHealthRecordsLoadedUidRef.current = uid;
+        markCollectionSynced(uid, 'healthRecords');
+      } else {
+        const res = await fetchRecentHealthRecordsFromCloud(uid, HEALTH_RECORDS_INITIAL_LIMIT);
+        setHealthRecords(res.records);
+        setHasMoreOlderHealthRecords(res.hasMore);
+        if (!res.hasMore) {
+          allHealthRecordsLoadedUidRef.current = uid;
+        }
+        markCollectionSynced(uid, 'healthRecords');
+      }
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        console.warn('loadHealthRecords notice:', err);
+      }
+    } finally {
+      healthRecordsInFlightRef.current = false;
+      setIsLoadingHealthRecords(false);
+    }
+  };
+
+  // Lazy-load past appointments (< yesterday) only when visiting Appointments or Share Report
+  const loadPastAppointments = async (forceRefresh = false): Promise<void> => {
+    if (!currentUser || migrationReadyUid !== currentUser.uid) return;
+    if (!forceRefresh && pastAppointmentsLoaded) return;
+    if (pastAppointmentsInFlightRef.current) return;
+
+    const uid = currentUser.uid;
+    const yesterdayIso = getAppointmentsRecentCutoffDate(1);
+
+    if (!forceRefresh) {
+      const cached = loadCachedPastAppointments(uid, yesterdayIso);
+      if (cached.hit) {
+        setAppointments((prev) =>
+          replacePastAppointmentsKeepingUpcoming(prev, cached.appointments, yesterdayIso)
+        );
+        setPastAppointmentsLoaded(true);
+        return;
+      }
+    }
+
+    if (isDeviceOffline() || isWriteQuotaPaused()) return;
+
+    pastAppointmentsInFlightRef.current = true;
+    setIsLoadingPastAppointments(true);
+    try {
+      const pastApts = await fetchPastAppointmentsFromCloud(uid, yesterdayIso);
+      saveCachedPastAppointments(uid, yesterdayIso, pastApts);
+      setAppointments((prev) =>
+        replacePastAppointmentsKeepingUpcoming(prev, pastApts, yesterdayIso)
+      );
+      setPastAppointmentsLoaded(true);
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        console.warn('loadPastAppointments notice:', err);
+      }
+    } finally {
+      pastAppointmentsInFlightRef.current = false;
+      setIsLoadingPastAppointments(false);
+    }
+  };
+
+  // Lazy-load doctors once from cache / cloud (max once every 6 hours, ZERO real-time listener)
+  const loadDoctors = async (forceRefresh = false): Promise<void> => {
+    if (!currentUser || migrationReadyUid !== currentUser.uid) {
+      setDoctors(sortDoctors(loadCachedDoctors(null)));
+      return;
+    }
+
+    const uid = currentUser.uid;
+    const cached = loadCachedDoctors(uid);
+    if (cached.length > 0 && doctorsRef.current.length === 0) {
+      setDoctors(sortDoctors(cached));
+    }
+
+    if (doctorsInFlightRef.current) return;
+    if (!shouldFetchCollectionFromCloud(uid, 'doctors', RECORDS_SYNC_TTL_MS, Date.now(), forceRefresh)) {
+      return;
+    }
+    if (isDeviceOffline() || isWriteQuotaPaused()) return;
+
+    doctorsInFlightRef.current = true;
+    setIsLoadingDoctors(true);
+    try {
+      const cloudDoctors = await fetchUserDoctorsFromCloud(uid);
+      const localBaseline = cached.length > 0 ? cached : doctorsRef.current;
+      const { merged } = mergeLocalAndCloudDoctors(localBaseline, cloudDoctors);
+      setDoctors(merged);
+      saveCachedDoctors(uid, merged);
+      markCollectionSynced(uid, 'doctors');
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        console.warn('loadDoctors notice:', err);
+      }
+    } finally {
+      doctorsInFlightRef.current = false;
+      setIsLoadingDoctors(false);
+    }
+  };
 
   const showToast = (message: string, type: 'success' | 'info' | 'alert' = 'success') => {
     const id = Date.now().toString();
@@ -1362,8 +1711,23 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const signOutUser = async () => {
+    const prevUid = currentUser?.uid;
     clearAllNativeReminders();
     await logOut();
+    if (prevUid) {
+      clearUserReadOptimizerCaches(prevUid);
+      clearCachedDoctors(prevUid);
+    }
+    try {
+      localStorage.removeItem('shasthobondhu_last_cloud_uid');
+    } catch {
+      // ignore storage errors
+    }
+    setDoctors(sortDoctors(loadCachedDoctors(null)));
+    setOlderDoseLogsLoaded(false);
+    setPastAppointmentsLoaded(false);
+    setHasMoreOlderHealthRecords(false);
+    allHealthRecordsLoadedUidRef.current = null;
     setDemoCleanupReadyKey(null);
     setMigrationReadyUid(null);
     setPendingConflictSnapshot(null);
@@ -1424,10 +1788,15 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           source.appointments
         );
         localStorage.setItem(migrationKey, 'true');
+        invalidateCollectionSyncMeta(uid);
         updateLiveSyncTime(false);
         showToast(`ফোনের আগের ডেটা ক্লাউডে সফলভাবে যোগ (Merge) হয়েছে (${res.medicinesCount}টি ওষুধ)`, 'success');
       } else {
         localStorage.setItem(migrationKey, 'true');
+        clearUserReadOptimizerCaches(uid);
+        setDoseLogs([]);
+        setHealthRecords([]);
+        setAppointments([]);
         showToast('ফোনের স্থানীয় ডেটা বাদ দেওয়া হয়েছে, ক্লাউড থেকে লোড হচ্ছে...', 'info');
       }
       setPendingConflictSnapshot(null);
@@ -1453,6 +1822,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     const uid = currentUser.uid;
     try {
+      await resumeFirestoreNetwork();
       setIsSyncing(true);
       setSyncStatus(isDeviceOffline() ? 'offline' : 'syncing');
       const res = await migrateLocalDataToCloud(
@@ -1464,12 +1834,35 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         healthRecords,
         appointments
       );
+      setIsQuotaExceeded(false);
       try {
         localStorage.setItem(`shasthobondhu_migrated_${uid}`, 'true');
       } catch (e) {
         console.warn('Migration flag write error:', e);
       }
       setMigrationReadyUid(uid);
+      await syncCoreCollectionsFromCloud(uid, true);
+
+      // Include "আমার ডাক্তার" directory in manual sync (0 listeners, single getDocs + push newer local edits)
+      try {
+        const cloudDoctors = await fetchUserDoctorsFromCloud(uid);
+        const doctorSync = mergeLocalAndCloudDoctors(doctorsRef.current, cloudDoctors);
+        for (const docToCreate of doctorSync.toCreateInCloud) {
+          await createDoctorInCloud(uid, docToCreate);
+        }
+        for (const docToUpdate of doctorSync.toUpdateInCloud) {
+          await updateDoctorInCloud(uid, docToUpdate.id, docToUpdate);
+        }
+        setDoctors(doctorSync.merged);
+        saveCachedDoctors(uid, doctorSync.merged);
+        markCollectionSynced(uid, 'doctors');
+      } catch (docSyncErr) {
+        if (isQuotaExceededError(docSyncErr)) {
+          throw docSyncErr;
+        }
+        console.warn('Manual doctor sync notice:', docSyncErr);
+      }
+
       updateLiveSyncTime(false);
       showToast(
         `ক্লাউড সিঙ্ক সফল! ${res.medicinesCount}টি ওষুধ ও ${res.patientsCount}টি প্রোফাইল ক্লাউডে সংরক্ষিত`,
@@ -1498,6 +1891,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -1649,6 +2046,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        if (feedbackMsg) showToast(`${feedbackMsg} (ফোনে সংরক্ষিত)`, feedbackType);
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline && feedbackMsg) {
@@ -1683,15 +2085,19 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const addMedicine = (medicineData: Omit<Medicine, 'id'>): string => {
-    const newId = `med-${Date.now()}`;
+    const newId = `med-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const newMedicine: Medicine = stripUndefined({
       ...medicineData,
       id: newId,
     });
-    const prevMeds = medicines;
     setMedicines((prev) => [newMedicine, ...prev]);
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`"${newMedicine.brandName}" ফোনে সংরক্ষিত হয়েছে`, 'info');
+        return newId;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -1709,7 +2115,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             notifyQuotaExceededOnce();
             return;
           }
-          setMedicines(prevMeds);
+          setMedicines((prev) => prev.filter((m) => m.id !== newId));
           setSyncStatus('failed');
           showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
         });
@@ -1720,6 +2126,56 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return newId;
   };
 
+  const addMultipleMedicines = async (
+    medicinesList: Array<Omit<Medicine, 'id'>>
+  ): Promise<string[]> => {
+    if (!medicinesList || medicinesList.length === 0) return [];
+    const baseTs = Date.now();
+    const newMeds: Medicine[] = medicinesList.map((medData, idx) =>
+      stripUndefined({
+        ...medData,
+        id: `med-${baseTs}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      })
+    );
+    const addedIds = newMeds.map((m) => m.id);
+    const addedIdSet = new Set(addedIds);
+
+    setMedicines((prev) => [...newMeds, ...prev]);
+
+    if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`${toBengaliNumber(newMeds.length)}টি ওষুধ ফোনে সংরক্ষিত হয়েছে`, 'info');
+        return addedIds;
+      }
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      try {
+        await Promise.all(newMeds.map((med) => saveMedicineToCloud(currentUser.uid, med)));
+        updateLiveSyncTime(false);
+        showToast(
+          wasOffline
+            ? `${toBengaliNumber(newMeds.length)}টি ওষুধ অফলাইনে সংরক্ষিত হয়েছে`
+            : `${toBengaliNumber(newMeds.length)}টি ওষুধ যোগ হয়েছে`,
+          wasOffline ? 'info' : 'success'
+        );
+      } catch (err) {
+        if (isQuotaExceededError(err)) {
+          notifyQuotaExceededOnce();
+          return addedIds;
+        }
+        setMedicines((prev) => prev.filter((m) => !addedIdSet.has(m.id)));
+        setSyncStatus('failed');
+        showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        throw err;
+      }
+    } else {
+      showToast(`${toBengaliNumber(newMeds.length)}টি ওষুধ যোগ হয়েছে`, 'success');
+    }
+
+    return addedIds;
+  };
+
   const updateMedicine = (id: string, updates: Partial<Medicine>) => {
     const prevMeds = medicines;
     const target = medicines.find((m) => m.id === id);
@@ -1728,6 +2184,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setMedicines((prev) => prev.map((m) => (m.id === id ? updatedObj : m)));
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast('ওষুধের তথ্য ফোনে হালনাগাদ হয়েছে', 'info');
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -1760,6 +2221,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setMedicines((prev) => prev.filter((m) => m.id !== id));
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`"${med?.brandName || 'ওষুধ'}" ফোন থেকে সরানো হয়েছে`, 'info');
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -1823,6 +2289,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`"${med.brandName}" এর স্টক ${toBengaliNumber(sanitizedStock)} ${med.unit} এ ফোনে হালনাগাদ হয়েছে`, 'info');
+        return true;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -1872,6 +2343,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const patient = patients.find((p) => p.id === patientId);
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -1916,6 +2391,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setActivePatientId(newId);
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`"${newPatient.name}" প্রোফাইল ফোনে তৈরি হয়েছে`, 'info');
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -1951,6 +2431,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setPatients((prev) => prev.map((p) => (p.id === id ? targetPatient : p)));
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast('প্রোফাইলের তথ্য ফোনে সংরক্ষিত হয়েছে', 'info');
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2002,6 +2487,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     );
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`"${target?.name || 'প্রোফাইল'}" ফোন থেকে সরানো হয়েছে`, 'info');
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2049,6 +2539,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2087,6 +2581,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setActivePatientId(id);
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2137,8 +2635,18 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setSettings(initialSettings);
     setHealthRecords(initialHealthRecords);
     setAppointments(initialAppointments);
+    setDoctors([]);
 
     try {
+      if (currentUser?.uid) {
+        clearUserReadOptimizerCaches(currentUser.uid);
+        clearCachedDoctors(currentUser.uid);
+      }
+      clearCachedDoctors(null);
+      setOlderDoseLogsLoaded(false);
+      setPastAppointmentsLoaded(false);
+      setHasMoreOlderHealthRecords(false);
+      allHealthRecordsLoadedUidRef.current = null;
       localStorage.removeItem(STORAGE_KEYS.MEDICINES);
       localStorage.removeItem(STORAGE_KEYS.LOGS);
       localStorage.removeItem(STORAGE_KEYS.PATIENTS);
@@ -2174,6 +2682,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setHealthRecords((prev) => [newRecord, ...prev]);
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast('স্বাস্থ্য পরিমাপ রেকর্ড ফোনে সংরক্ষিত হয়েছে', 'info');
+        return newId;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2205,6 +2718,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const prevHR = healthRecords;
     setHealthRecords((prev) => prev.filter((r) => r.id !== id));
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast('স্বাস্থ্য রেকর্ড ফোন থেকে মুছে ফেলা হয়েছে', 'info');
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2243,6 +2761,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setAppointments((prev) => [newApt, ...prev]);
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`ডা. ${newApt.doctorName}-এর অ্যাপয়েন্টমেন্ট ফোনে সংরক্ষিত হয়েছে`, 'info');
+        return newId;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2278,6 +2801,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setAppointments((prev) => prev.map((a) => (a.id === id ? updatedApt : a)));
 
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2308,6 +2835,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const prevApts = appointments;
     setAppointments((prev) => prev.filter((a) => a.id !== id));
     if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast('অ্যাপয়েন্টমেন্ট ফোন থেকে মুছে ফেলা হয়েছে', 'info');
+        return;
+      }
       const wasOffline = isDeviceOffline();
       setSyncStatus(wasOffline ? 'offline' : 'syncing');
       if (wasOffline) {
@@ -2331,6 +2863,153 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         });
     } else {
       showToast('অ্যাপয়েন্টমেন্ট মুছে ফেলা হয়েছে', 'info');
+    }
+  };
+
+  // My Doctors CRUD ("আমার ডাক্তার" — optimistic local state + phone cache FIRST)
+  const addDoctor = (doctorInput: DoctorProfileInput): DoctorProfile => {
+    const clean = buildCleanDoctorInput(doctorInput);
+    const nowIso = new Date().toISOString();
+    const newId = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const newDoctor: DoctorProfile = {
+      id: newId,
+      ...clean,
+      isEmergency: Boolean(clean.isEmergency),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const prevDoctors = doctorsRef.current;
+    const nextDoctors = sortDoctors([newDoctor, ...prevDoctors]);
+    const cacheUid = currentUser?.uid || null;
+    setDoctors(nextDoctors);
+    saveCachedDoctors(cacheUid, nextDoctors);
+
+    if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`${newDoctor.name} ফোনে সংরক্ষিত হয়েছে`, 'info');
+        return newDoctor;
+      }
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast(`${newDoctor.name} অফলাইনে সংরক্ষিত (ইন্টারনেট এলে সিঙ্ক হবে)`, 'info');
+      }
+      createDoctorInCloud(currentUser.uid, { ...clean, id: newId })
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`${newDoctor.name} তালিকায় যুক্ত হয়েছে`, 'success');
+          }
+        })
+        .catch((err) => {
+          if (isQuotaExceededError(err)) {
+            notifyQuotaExceededOnce();
+            return;
+          }
+          setDoctors(prevDoctors);
+          saveCachedDoctors(cacheUid, prevDoctors);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`${newDoctor.name} তালিকায় যুক্ত হয়েছে`, 'success');
+    }
+
+    return newDoctor;
+  };
+
+  const updateDoctor = (id: string, updates: DoctorProfileInput) => {
+    const prevDoctors = doctorsRef.current;
+    const existing = prevDoctors.find((d) => d.id === id);
+    if (!existing) return;
+
+    const clean = buildCleanDoctorInput(updates);
+    const nowIso = new Date().toISOString();
+    const updatedDoc: DoctorProfile = {
+      id,
+      ...clean,
+      isEmergency: Boolean(clean.isEmergency),
+      createdAt: existing.createdAt,
+      updatedAt: nowIso,
+    };
+
+    const nextDoctors = sortDoctors(prevDoctors.map((d) => (d.id === id ? updatedDoc : d)));
+    const cacheUid = currentUser?.uid || null;
+    setDoctors(nextDoctors);
+    saveCachedDoctors(cacheUid, nextDoctors);
+
+    if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast(`${updatedDoc.name}-এর তথ্য ফোনে হালনাগাদ হয়েছে`, 'info');
+        return;
+      }
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('ডাক্তারের তথ্য অফলাইনে হালনাগাদ হয়েছে', 'info');
+      }
+      updateDoctorInCloud(currentUser.uid, id, clean)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast(`${updatedDoc.name}-এর তথ্য হালনাগাদ হয়েছে`, 'success');
+          }
+        })
+        .catch((err) => {
+          if (isQuotaExceededError(err)) {
+            notifyQuotaExceededOnce();
+            return;
+          }
+          setDoctors(prevDoctors);
+          saveCachedDoctors(cacheUid, prevDoctors);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast(`${updatedDoc.name}-এর তথ্য হালনাগাদ হয়েছে`, 'success');
+    }
+  };
+
+  const deleteDoctor = (id: string) => {
+    const prevDoctors = doctorsRef.current;
+    const nextDoctors = prevDoctors.filter((d) => d.id !== id);
+    const cacheUid = currentUser?.uid || null;
+    setDoctors(nextDoctors);
+    saveCachedDoctors(cacheUid, nextDoctors);
+
+    if (currentUser) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+        showToast('ডাক্তারের তথ্য ফোন থেকে মুছে ফেলা হয়েছে', 'info');
+        return;
+      }
+      const wasOffline = isDeviceOffline();
+      setSyncStatus(wasOffline ? 'offline' : 'syncing');
+      if (wasOffline) {
+        showToast('ডাক্তারের তথ্য অফলাইনে মুছে ফেলা হয়েছে', 'info');
+      }
+      deleteDoctorFromCloud(currentUser.uid, id)
+        .then(() => {
+          updateLiveSyncTime(false);
+          if (!wasOffline) {
+            showToast('ডাক্তারের তথ্য মুছে ফেলা হয়েছে', 'info');
+          }
+        })
+        .catch((err) => {
+          if (isQuotaExceededError(err)) {
+            notifyQuotaExceededOnce();
+            return;
+          }
+          setDoctors(prevDoctors);
+          saveCachedDoctors(cacheUid, prevDoctors);
+          setSyncStatus('failed');
+          showToast(`ক্লাউডে সংরক্ষণ হয়নি, আবার চেষ্টা করুন: ${getFriendlyErrorMessage(err)}`, 'alert');
+        });
+    } else {
+      showToast('ডাক্তারের তথ্য মুছে ফেলা হয়েছে', 'info');
     }
   };
 
@@ -3160,19 +3839,30 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  // Initial lightweight fetch (2 reads total, NO polling) + single bounded alerts listener
+  // Initial lightweight fetch (2 reads total, NO polling) + single bounded alerts listener + single pending suggestions listener
   useEffect(() => {
     if (!currentUser || migrationReadyUid !== currentUser.uid) {
       setPatientCaregiverLinks([]);
       setCaringForLinks([]);
       setCaregiverAlerts([]);
       setFailedCaregiverAlerts([]);
+      setPendingPatientSuggestions([]);
+      setSentCaregiverSuggestions([]);
       lastSyncedLinkSigRef.current = {};
       return;
     }
 
     const uid = currentUser.uid;
     setFailedCaregiverAlerts(loadPendingFamilyAlerts(uid));
+    playedSuggestionIdsRef.current = loadAnnouncedSuggestionIds(uid);
+    try {
+      const savedSigsRaw = localStorage.getItem(`shasthobondhu_caregiver_link_sig_${uid}`);
+      if (savedSigsRaw) {
+        lastSyncedLinkSigRef.current = JSON.parse(savedSigsRaw);
+      }
+    } catch {
+      // ignore storage read failure
+    }
 
     let cancelled = false;
 
@@ -3191,12 +3881,17 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setPatientCaregiverLinks(validPatientLinks);
         setCaringForLinks(caringFor);
 
-        // Best-effort cleanup of alerts older than 30 days (at most once per day)
+        // Best-effort cleanup of alerts older than 30 days (at most once per day, skipped for solo users with no caregivers)
         const cleanupKey = `shasthobondhu_alert_cleanup_date_${uid}`;
         const todayIso = toLocalIsoDate(new Date());
         const lastCleanedDate =
           typeof window !== 'undefined' ? localStorage.getItem(cleanupKey) : null;
-        if (lastCleanedDate !== todayIso && !isDeviceOffline()) {
+        if (
+          validPatientLinks.length > 0 &&
+          lastCleanedDate !== todayIso &&
+          !isDeviceOffline() &&
+          !isWriteQuotaPaused()
+        ) {
           cleanupOldFamilyAlertsInCloud(uid, ALERT_RETENTION_MS).then(() => {
             try {
               localStorage.setItem(cleanupKey, todayIso);
@@ -3243,9 +3938,40 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     );
 
+    const unsubSuggestions = subscribeToPatientPendingSuggestions(
+      uid,
+      (suggestions) => {
+        if (cancelled) return;
+        const visible = filterVisiblePendingSuggestions(suggestions, Date.now());
+        setPendingPatientSuggestions(visible);
+
+        const newlyArrived = visible.filter((s) => !playedSuggestionIdsRef.current.has(s.id));
+        if (newlyArrived.length > 0) {
+          const newIds = newlyArrived.map((s) => s.id);
+          newIds.forEach((id) => playedSuggestionIdsRef.current.add(id));
+          markSuggestionsAnnounced(uid, newIds);
+          if (settings.soundEnabled !== false) {
+            playAlertTone('gentle-pulse');
+          }
+          showToast(
+            `${newlyArrived[0].caregiverName || 'পরিবার'} থেকে নতুন ওষুধের প্রস্তাব এসেছে`,
+            'info'
+          );
+        }
+      },
+      (err) => {
+        if (isQuotaExceededError(err)) {
+          notifyQuotaExceededOnce();
+        } else {
+          console.warn('subscribeToPatientPendingSuggestions notice:', err);
+        }
+      }
+    );
+
     return () => {
       cancelled = true;
       unsubAlerts();
+      unsubSuggestions();
     };
   }, [currentUser, migrationReadyUid]);
 
@@ -3258,10 +3984,12 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const allToSend = Array.from(mergedMap.values());
     if (allToSend.length === 0) return;
 
-    if (isDeviceOffline()) {
+    if (isDeviceOffline() || isWriteQuotaPaused()) {
       const updatedQueue = enqueuePendingFamilyAlerts(uid, allToSend);
       setFailedCaregiverAlerts(updatedQueue);
-      if (!caregiverFailureNotifiedRef.current) {
+      if (isWriteQuotaPaused()) {
+        notifyQuotaExceededOnce();
+      } else if (!caregiverFailureNotifiedRef.current) {
         caregiverFailureNotifiedRef.current = true;
         showToast('যত্নকারীকে এখনই জানানো যায়নি (ইন্টারনেট নেই)', 'alert');
       }
@@ -3340,7 +4068,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await flushFamilyAlertsToCloud(uid, evaluation.alertsToSend);
 
       // 2. Sync compact todaySummary (+ sharedMedicines ONLY if allowFullView === true) ONLY when changed
-      if (!isDeviceOffline()) {
+      if (!isDeviceOffline() && !isWriteQuotaPaused()) {
         for (const link of activeLinks) {
           const scopedShared = link.allowFullView ? evaluation.sharedMedicines : [];
           const summaryComparable = {
@@ -3367,6 +4095,14 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                 updatedAt: new Date().toISOString(),
               });
               lastSyncedLinkSigRef.current[link.id] = sig;
+              try {
+                localStorage.setItem(
+                  `shasthobondhu_caregiver_link_sig_${uid}`,
+                  JSON.stringify(lastSyncedLinkSigRef.current)
+                );
+              } catch {
+                // ignore storage write failure
+              }
             } catch (err) {
               if (isQuotaExceededError(err)) {
                 notifyQuotaExceededOnce();
@@ -3468,6 +4204,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       caregiverName: '',
       status: 'pending',
       allowFullView: false,
+      allowSuggestions: false,
       expiresAtMs: now.getTime() + CAREGIVER_INVITE_TTL_MS,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -3596,6 +4333,201 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  const toggleCaregiverSuggestions = async (
+    linkId: string,
+    allowSuggestions: boolean
+  ): Promise<void> => {
+    if (!currentUser) return;
+    const nowIso = new Date().toISOString();
+    try {
+      await updateCaregiverLinkInCloud(linkId, {
+        allowSuggestions,
+        updatedAt: nowIso,
+      });
+      setPatientCaregiverLinks((prev) =>
+        prev.map((l) =>
+          l.id === linkId ? { ...l, allowSuggestions, updatedAt: nowIso } : l
+        )
+      );
+      showToast(
+        allowSuggestions
+          ? 'ওষুধের প্রস্তাব পাঠানোর অনুমতি চালু হয়েছে (আপনার অনুমোদন ছাড়া কিছু বদলাবে না)'
+          : 'ওষুধের প্রস্তাব পাঠানোর অনুমতি বন্ধ করা হয়েছে',
+        'success'
+      );
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        showToast(getFriendlyErrorMessage(err), 'alert');
+      }
+    }
+  };
+
+  const loadCaregiverSentSuggestions = async (): Promise<void> => {
+    if (!currentUser) {
+      setSentCaregiverSuggestions([]);
+      return;
+    }
+    setIsLoadingSentSuggestions(true);
+    try {
+      const items = await fetchCaregiverSentSuggestions(currentUser.uid);
+      setSentCaregiverSuggestions(items);
+    } catch (err) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        console.warn('loadCaregiverSentSuggestions warning:', err);
+      }
+    } finally {
+      setIsLoadingSentSuggestions(false);
+    }
+  };
+
+  const sendCaregiverSuggestion = async (
+    link: CaregiverLinkDoc,
+    input: CaregiverSuggestionFormInput
+  ): Promise<CaregiverSuggestionDoc | null> => {
+    if (!currentUser) {
+      showToast('প্রস্তাব পাঠাতে আগে লগইন করুন', 'alert');
+      openAuthModal();
+      return null;
+    }
+    if (link.status !== 'active' || !link.allowSuggestions) {
+      showToast('রোগী এখনো ওষুধের প্রস্তাব পাঠানোর অনুমতি চালু করেননি', 'alert');
+      return null;
+    }
+
+    const todayCount = getCaregiverDailySuggestionCount(currentUser.uid, sentCaregiverSuggestions);
+    if (todayCount >= MAX_DAILY_CAREGIVER_SUGGESTIONS) {
+      showToast(`আজ সর্বোচ্চ ${toBengaliNumber(MAX_DAILY_CAREGIVER_SUGGESTIONS)}টি প্রস্তাব পাঠানো হয়ে গেছে`, 'alert');
+      return null;
+    }
+
+    const caregiverName = (
+      currentUser.displayName ||
+      link.caregiverName ||
+      currentUser.email?.split('@')[0] ||
+      'পরিবারের যত্নকারী'
+    ).trim();
+
+    try {
+      const built = buildCaregiverSuggestionPayload({
+        link,
+        caregiverUid: currentUser.uid,
+        caregiverName,
+        input,
+      });
+      const created = await createCaregiverSuggestionInCloud(built);
+      incrementCaregiverDailySuggestionCount(currentUser.uid);
+      setSentCaregiverSuggestions((prev) => [created, ...prev.filter((s) => s.id !== created.id)]);
+      showToast('রোগীর কাছে প্রস্তাব পাঠানো হয়েছে ✓', 'success');
+      return created;
+    } catch (err: any) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        showToast(err?.message || getFriendlyErrorMessage(err), 'alert');
+      }
+      return null;
+    }
+  };
+
+  const acceptCaregiverSuggestion = async (
+    suggestion: CaregiverSuggestionDoc,
+    edited?: Partial<CaregiverSuggestedMedicinePayload> & { assignedPatientId?: string }
+  ): Promise<boolean> => {
+    if (!currentUser || currentUser.uid !== suggestion.patientUid) {
+      showToast('প্রস্তাব অনুমোদন করতে রোগীর অ্যাকাউন্টে লগইন থাকতে হবে', 'alert');
+      return false;
+    }
+    if (isDeviceOffline()) {
+      showToast('প্রস্তাব অনুমোদন করতে ইন্টারনেট সংযোগ চালু করুন', 'alert');
+      return false;
+    }
+
+    try {
+      await updateCaregiverSuggestionStatusInCloud(suggestion.id, 'accepted');
+      setPendingPatientSuggestions((prev) => prev.filter((s) => s.id !== suggestion.id));
+
+      const target = findTargetMedicineForSuggestion(medicines, suggestion);
+      const assignedPid =
+        edited?.assignedPatientId ??
+        target?.assignedPatientId ??
+        activePatientId ??
+        patients[0]?.id ??
+        undefined;
+
+      if (suggestion.kind === 'stop') {
+        if (target) {
+          updateMedicine(target.id, { status: 'paused' });
+          showToast(`"${target.brandName}" ওষুধটি বন্ধ (বিরতি) করা হয়েছে ✓`, 'success');
+        } else {
+          showToast('প্রস্তাবটি অনুমোদিত হয়েছে (সংশ্লিষ্ট ওষুধটি ইতিমধ্যে তালিকায় নেই)', 'info');
+        }
+        return true;
+      }
+
+      const medInput = buildMedicineInputFromSuggestion({
+        suggestion,
+        edited,
+        assignedPatientId: assignedPid,
+      });
+
+      if (suggestion.kind === 'edit' && target) {
+        updateMedicine(target.id, medInput);
+        showToast(`"${medInput.brandName}" হালনাগাদ ও রিমাইন্ডার সেট হয়েছে ✓`, 'success');
+      } else {
+        addMedicine(medInput);
+        showToast(`"${medInput.brandName}" আপনার তালিকায় যুক্ত হয়েছে ✓`, 'success');
+      }
+      return true;
+    } catch (err: any) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        showToast(err?.message || getFriendlyErrorMessage(err), 'alert');
+      }
+      return false;
+    }
+  };
+
+  const rejectCaregiverSuggestion = async (suggestionId: string): Promise<boolean> => {
+    if (!currentUser) return false;
+    try {
+      await updateCaregiverSuggestionStatusInCloud(suggestionId, 'rejected');
+      setPendingPatientSuggestions((prev) => prev.filter((s) => s.id !== suggestionId));
+      showToast('প্রস্তাবটি বাতিল করা হয়েছে', 'info');
+      return true;
+    } catch (err: any) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        showToast(err?.message || getFriendlyErrorMessage(err), 'alert');
+      }
+      return false;
+    }
+  };
+
+  const cancelCaregiverSuggestion = async (suggestionId: string): Promise<boolean> => {
+    if (!currentUser) return false;
+    try {
+      await updateCaregiverSuggestionStatusInCloud(suggestionId, 'cancelled');
+      setSentCaregiverSuggestions((prev) =>
+        prev.map((s) => (s.id === suggestionId ? { ...s, status: 'cancelled' } : s))
+      );
+      showToast('আপনার প্রস্তাব প্রত্যাহার করা হয়েছে', 'info');
+      return true;
+    } catch (err: any) {
+      if (isQuotaExceededError(err)) {
+        notifyQuotaExceededOnce();
+      } else {
+        showToast(err?.message || getFriendlyErrorMessage(err), 'alert');
+      }
+      return false;
+    }
+  };
+
   const markFamilyAlertSeen = async (alertId: string): Promise<void> => {
     if (!currentUser) return;
     const uid = currentUser.uid;
@@ -3646,6 +4578,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setSelectedMedicineIdForDetail,
         markDose,
         addMedicine,
+        addMultipleMedicines,
         updateMedicine,
         deleteMedicine,
         adjustStock,
@@ -3668,6 +4601,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         isCloudConnected,
         isSyncing,
         syncStatus,
+        isQuotaExceeded,
         lastSyncedAt,
         triggerManualSync,
         downloadLocalBackup,
@@ -3726,10 +4660,25 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         healthRecords,
         addHealthRecord,
         deleteHealthRecord,
+        isLoadingHealthRecords,
+        hasMoreOlderHealthRecords,
+        loadHealthRecords,
         appointments,
         addAppointment,
         updateAppointment,
         deleteAppointment,
+        pastAppointmentsLoaded,
+        isLoadingPastAppointments,
+        loadPastAppointments,
+        doctors,
+        isLoadingDoctors,
+        loadDoctors,
+        addDoctor,
+        updateDoctor,
+        deleteDoctor,
+        olderDoseLogsLoaded,
+        isLoadingOlderDoseLogs,
+        loadOlderDoseLogs,
         patientCaregiverLinks,
         caringForLinks,
         caregiverAlerts,
@@ -3740,9 +4689,18 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         redeemCaregiverInvite,
         removeCaregiverLink,
         toggleCaregiverFullView,
+        toggleCaregiverSuggestions,
         markFamilyAlertSeen,
         retryFailedCaregiverAlerts,
         dismissFailedCaregiverAlert,
+        pendingPatientSuggestions,
+        sentCaregiverSuggestions,
+        isLoadingSentSuggestions,
+        sendCaregiverSuggestion,
+        loadCaregiverSentSuggestions,
+        acceptCaregiverSuggestion,
+        rejectCaregiverSuggestion,
+        cancelCaregiverSuggestion,
       }}
     >
       {children}

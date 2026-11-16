@@ -1,4 +1,10 @@
 import { auth } from './config';
+import {
+  QUOTA_EXCEEDED_BN_MSG,
+  isQuotaExceededError,
+} from './quotaState';
+
+export * from './quotaState';
 
 export enum OperationType {
   CREATE = 'create',
@@ -7,42 +13,6 @@ export enum OperationType {
   LIST = 'list',
   GET = 'get',
   WRITE = 'write',
-}
-
-export const QUOTA_EXCEEDED_BN_MSG =
-  'আজকের ক্লাউড সীমা শেষ, ফোনে থাকা ডেটা দেখানো হচ্ছে। আগামীকাল আবার সিঙ্ক হবে';
-
-let hasNotifiedQuotaExceededThisSession = false;
-
-export function isQuotaExceededError(error: unknown): boolean {
-  if (!error) return false;
-  const code =
-    typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code?: unknown }).code || '')
-      : '';
-  const msg = error instanceof Error ? error.message : String(error);
-  const combined = `${code} ${msg}`.toLowerCase();
-  return (
-    combined.includes('resource-exhausted') ||
-    combined.includes('resource_exhausted') ||
-    combined.includes('quota exceeded') ||
-    combined.includes('quota_exceeded')
-  );
-}
-
-/**
- * Returns true only once per browser session so the quota notice toast is never spammed.
- */
-export function consumeQuotaExceededNoticeOnce(): boolean {
-  if (hasNotifiedQuotaExceededThisSession) {
-    return false;
-  }
-  hasNotifiedQuotaExceededThisSession = true;
-  return true;
-}
-
-export function resetQuotaNoticeForTests(): void {
-  hasNotifiedQuotaExceededThisSession = false;
 }
 
 export interface FirestoreErrorInfo {

@@ -166,9 +166,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative"
+        className="bg-surface border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl relative"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
@@ -176,7 +176,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
           type="button"
           onClick={handleClose}
           aria-label="বন্ধ করুন"
-          className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          className="absolute top-4 right-4 p-1.5 rounded-lg text-text-muted hover:text-text hover:bg-surface-2 cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
@@ -185,14 +185,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         <div className="flex items-center gap-3 mb-5">
           <AppLogo size="lg" showText={false} />
           <div>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+            <h2 className="text-lg font-bold text-text">
               {authMode === 'forgot_password'
                 ? 'পাসওয়ার্ড রিসেট করুন'
                 : authMode === 'register'
                 ? 'স্বাস্থ্যবন্ধু অ্যাকাউন্ট তৈরি'
                 : 'স্বাস্থ্যবন্ধুতে লগইন'}
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-text-muted">
               {authMode === 'forgot_password'
                 ? 'আপনার ইমেইলে পাসওয়ার্ড পরিবর্তনের লিংক পাঠানো হবে'
                 : 'ক্লাউডে আপনার ওষুধ ও প্রোফাইলের তথ্য নিরাপদে সংরক্ষণ করুন'}
@@ -202,7 +202,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
 
         {/* Error Alert */}
         {errorMessage && (
-          <div className="mb-4 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+          <div className="mb-4 p-3 rounded-lg bg-danger-soft border border-danger/30 text-xs text-danger-text flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMessage}</span>
           </div>
@@ -210,8 +210,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
 
         {/* Success Alert */}
         {successMessage && (
-          <div className="mb-4 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+          <div className="mb-4 p-3 rounded-lg bg-success-soft border border-success/30 text-xs text-success-text flex items-start gap-2">
+            <CheckCircle2 className="w-4 h-4 text-success shrink-0 mt-0.5" />
             <span className="leading-relaxed">{successMessage}</span>
           </div>
         )}
@@ -220,18 +220,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         {authMode === 'forgot_password' ? (
           <form onSubmit={handleResetPassword} className="space-y-4 text-xs">
             <div>
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-semibold text-text mb-1">
                 আপনার অ্যাকাউন্টের ইমেইল ঠিকানা
               </label>
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Mail className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
-                  className="w-full pl-9 pr-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500 text-xs sm:text-sm"
+                  className="w-full pl-9 pr-3.5 py-2.5 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:ring-1 focus:ring-primary text-xs sm:text-sm"
                 />
               </div>
             </div>
@@ -239,7 +239,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             <button
               type="submit"
               disabled={loading || countdown > 0}
-              className="w-full py-2.5 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              className="w-full py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-semibold rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50"
             >
               {loading
                 ? 'লিংক পাঠানো হচ্ছে...'
@@ -256,7 +256,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                   setErrorMessage('');
                   setSuccessMessage('');
                 }}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-teal-700 dark:hover:text-teal-400 cursor-pointer"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-text-muted hover:text-primary cursor-pointer"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>← লগইনে ফিরুন</span>
@@ -268,8 +268,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
           <>
             {/* Google Login (Show in browser, show informative note in native phone app) */}
             {isNative ? (
-              <div className="mb-4 p-3 rounded-xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-xs text-teal-900 dark:text-teal-200 leading-relaxed">
-                <p className="font-semibold mb-0.5">📱 ফোন অ্যাপ নির্দেশনা:</p>
+              <div className="mb-4 p-3 rounded-xl bg-primary-soft border border-primary/25 text-xs text-text leading-relaxed">
+                <p className="font-semibold mb-0.5 text-primary">📱 ফোন অ্যাপ নির্দেশনা:</p>
                 <p>
                   ফোন অ্যাপে ইমেইল ও পাসওয়ার্ড দিয়ে প্রবেশ করুন। আগে গুগল দিয়ে খুলে থাকলে &apos;পাসওয়ার্ড ভুলে গেছেন?&apos; চেপে একই ইমেইলে পাসওয়ার্ড সেট করে নিন।
                 </p>
@@ -280,7 +280,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                   type="button"
                   onClick={handleGoogleLogin}
                   disabled={loading}
-                  className="w-full py-2.5 px-4 mb-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-800 dark:text-slate-100 rounded-xl font-semibold text-xs flex items-center justify-center gap-2.5 transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
+                  className="w-full py-2.5 px-4 mb-4 bg-surface-2 border border-border hover:bg-surface text-text rounded-xl font-semibold text-xs flex items-center justify-center gap-2.5 transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path
@@ -305,10 +305,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
 
                 <div className="relative my-4">
                   <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-slate-200 dark:border-slate-800"></div>
+                    <div className="w-full border-t border-border"></div>
                   </div>
                   <div className="relative flex justify-center text-xs">
-                    <span className="bg-white dark:bg-slate-900 px-3 text-slate-400">
+                    <span className="bg-surface px-3 text-text-muted">
                       অথবা ইমেইল দিয়ে
                     </span>
                   </div>
@@ -320,42 +320,42 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             <form onSubmit={handleEmailAuth} className="space-y-3.5 text-xs">
               {authMode === 'register' && (
                 <div>
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block font-semibold text-text mb-1">
                     আপনার নাম
                   </label>
                   <div className="relative">
-                    <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <User className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       placeholder="যেমন: তানভীর করিম"
-                      className="w-full pl-9 pr-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                      className="w-full pl-9 pr-3.5 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:ring-1 focus:ring-primary"
                     />
                   </div>
                 </div>
               )}
 
               <div>
-                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                <label className="block font-semibold text-text mb-1">
                   ইমেইল অ্যাড্রেস
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Mail className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@example.com"
-                    className="w-full pl-9 pr-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                    className="w-full pl-9 pr-3.5 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:ring-1 focus:ring-primary"
                   />
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300">
+                  <label className="block font-semibold text-text">
                     পাসওয়ার্ড
                   </label>
                   {authMode === 'login' && (
@@ -366,40 +366,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                         setErrorMessage('');
                         setSuccessMessage('');
                       }}
-                      className="text-[11px] font-semibold text-teal-700 dark:text-teal-400 hover:underline cursor-pointer"
+                      className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
                     >
                       পাসওয়ার্ড ভুলে গেছেন?
                     </button>
                   )}
                 </div>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Lock className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="কমপক্ষে ৬ অক্ষর"
-                    className="w-full pl-9 pr-10 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                    className="w-full pl-9 pr-10 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:ring-1 focus:ring-primary"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     aria-label={showPassword ? 'পাসওয়ার্ড লুকান' : 'পাসওয়ার্ড দেখুন'}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text p-1 cursor-pointer"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
                 {authMode === 'register' && (
-                  <p className="text-[11px] text-slate-400 mt-1">পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে</p>
+                  <p className="text-[11px] text-text-muted mt-1">পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে</p>
                 )}
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 py-2.5 bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-semibold rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                className="w-full mt-2 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-semibold rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50"
               >
                 {loading
                   ? 'প্রসেসিং হচ্ছে...'
@@ -410,7 +410,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
             </form>
 
             {/* Toggle Register vs Login */}
-            <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-center text-xs text-slate-500">
+            <div className="mt-4 pt-3 border-t border-border text-center text-xs text-text-muted">
               {authMode === 'register' ? (
                 <span>
                   ইতিপূর্বে অ্যাকাউন্ট আছে?{' '}
@@ -421,7 +421,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                       setErrorMessage('');
                       setSuccessMessage('');
                     }}
-                    className="font-bold text-teal-700 dark:text-teal-400 hover:underline cursor-pointer"
+                    className="font-bold text-primary hover:underline cursor-pointer"
                   >
                     লগইন করুন
                   </button>
@@ -436,7 +436,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
                       setErrorMessage('');
                       setSuccessMessage('');
                     }}
-                    className="font-bold text-teal-700 dark:text-teal-400 hover:underline cursor-pointer"
+                    className="font-bold text-primary hover:underline cursor-pointer"
                   >
                     বিনামূল্যে অ্যাকাউন্ট খুলুন
                   </button>
@@ -447,8 +447,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
         )}
 
         {/* Privacy Note */}
-        <div className="mt-4 text-[11px] text-slate-400 text-center flex items-center justify-center gap-1">
-          <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
+        <div className="mt-4 text-[11px] text-text-muted text-center flex items-center justify-center gap-1">
+          <ShieldCheck className="w-3.5 h-3.5 text-primary" />
           <span>আপনার সমস্ত স্বাস্থ্য তথ্য সুরক্ষিত ও সম্পূর্ণ ব্যক্তিগত থাকবে</span>
         </div>
       </div>

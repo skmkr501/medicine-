@@ -266,6 +266,88 @@ export const scanPrescriptionImage = async (
   }
 };
 
+export interface PrescriptionAiSchedule {
+  morning: boolean;
+  noon: boolean;
+  evening: boolean;
+  night: boolean;
+}
+
+export type PrescriptionMealTiming = 'খাবারের আগে' | 'খাবারের পরে' | 'যেকোনো সময়';
+
+export interface PrescriptionAiItem {
+  brandName: string | null;
+  genericName?: string | null;
+  strength?: string | null;
+  dosageForm?: string | null;
+  amountPerDose: number | null;
+  timesPerDay: number | null;
+  schedule: PrescriptionAiSchedule;
+  mealTiming: PrescriptionMealTiming | null;
+  durationDays?: number | null;
+  notes?: string | null;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface PrescriptionAiResponse {
+  patientName?: string | null;
+  doctorName?: string | null;
+  date?: string | null;
+  items: PrescriptionAiItem[];
+  unreadable: boolean;
+}
+
+export interface PrescriptionAnalyzeApiResult {
+  success: boolean;
+  data: PrescriptionAiResponse;
+}
+
+export const analyzePrescriptionPhoto = async (
+  imageBase64: string,
+  mimeType: string = 'image/jpeg'
+): Promise<PrescriptionAnalyzeApiResult> => {
+  let uploadBase64 = imageBase64;
+  let uploadMimeType = mimeType;
+
+  try {
+    const compressed = await compressImageForUpload(imageBase64, 1600, 0.8);
+    uploadBase64 = compressed.base64;
+    uploadMimeType = compressed.mimeType;
+  } catch {
+    // fallback to original if canvas compression is unavailable
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = 90_000;
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    const res = await fetchWithFirebaseAuth('/api/ai/prescription', (headers) => ({
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ imageBase64: uploadBase64, mimeType: uploadMimeType }),
+      signal: controller.signal,
+    }));
+
+    return await parseAiResponse<PrescriptionAnalyzeApiResult>(
+      res,
+      'প্রেসক্রিপশন পড়তে সমস্যা হয়েছে। আবার চেষ্টা করুন।'
+    );
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error('ছবি পড়তে বেশি সময় লাগছে। সংযোগ দেখে আবার চেষ্টা করুন।');
+    }
+    if (err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError')) {
+      throw new Error(FALLBACK_NETWORK_OR_HTML_ERROR);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export const checkDrugInteractions = async (
   newMedicine: string,
   currentMedicines: string[],

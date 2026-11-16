@@ -78,9 +78,9 @@ export const BuyListModal: React.FC<BuyListModalProps> = ({ isOpen, onClose }) =
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div
-        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto"
+        className="bg-surface border border-border rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close Button */}
@@ -88,21 +88,21 @@ export const BuyListModal: React.FC<BuyListModalProps> = ({ isOpen, onClose }) =
           type="button"
           onClick={onClose}
           aria-label="বন্ধ করুন"
-          className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          className="absolute top-4 right-4 p-1.5 rounded-lg text-text-muted hover:text-text hover:bg-surface-2 cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Modal Header */}
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 flex items-center justify-center shadow-2xs">
+          <div className="w-10 h-10 rounded-xl bg-warning-soft text-warning-text flex items-center justify-center shadow-2xs">
             <ShoppingCart className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+            <h2 className="text-lg font-bold text-text">
               ফার্মেসি থেকে "কিনতে হবে" তালিকা
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
+            <p className="text-xs text-text-muted">
               {patientName} এর যে ওষুধগুলোর স্টক প্রায় শেষ
             </p>
           </div>
@@ -110,12 +110,12 @@ export const BuyListModal: React.FC<BuyListModalProps> = ({ isOpen, onClose }) =
 
         {/* List of items */}
         {lowStockMedicines.length === 0 ? (
-          <div className="p-8 text-center bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-100 dark:border-slate-800 mb-4">
-            <Package className="w-10 h-10 text-emerald-600 mx-auto mb-2" />
-            <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200">
+          <div className="p-8 text-center bg-surface-2 rounded-xl border border-border mb-4">
+            <Package className="w-10 h-10 text-success-text mx-auto mb-2" />
+            <h3 className="font-bold text-sm text-text">
               সকল ওষুধের পর্যাপ্ত স্টক রয়েছে
             </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            <p className="text-xs text-text-muted mt-1">
               বর্তমানে কোনো ওষুধের জরুরি রিফিলের প্রয়োজন নেই।
             </p>
           </div>
@@ -126,28 +126,28 @@ export const BuyListModal: React.FC<BuyListModalProps> = ({ isOpen, onClose }) =
               return (
                 <div
                   key={med.id}
-                  className="p-3.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between gap-3"
+                  className="p-3.5 bg-surface-2 border border-border rounded-xl flex items-center justify-between gap-3"
                 >
                   <div>
                     <div className="flex items-center gap-2">
-                      <h4 className="font-bold text-sm text-slate-900 dark:text-white">
+                      <h4 className="font-bold text-sm text-text">
                         {med.brandName}
                       </h4>
                       {isCritical && (
-                        <span className="text-2xs font-bold px-1.5 py-0.5 rounded-sm bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
+                        <span className="text-2xs font-bold px-1.5 py-0.5 rounded-sm bg-danger-soft text-danger-text">
                           জরুরি স্টক
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    <p className="text-xs text-text-muted mt-0.5">
                       {med.genericName} · {med.strength || med.type}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2.5 shrink-0">
                     <div className="text-right">
-                      <span className="text-2xs text-slate-400 block">বর্তমান স্টক</span>
-                      <span className="text-xs font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                      <span className="text-2xs text-text-muted block">বর্তমান স্টক</span>
+                      <span className="text-xs font-bold text-warning-text tabular-nums">
                         {toBengaliNumber(med.stock)} {med.unit}
                       </span>
                     </div>
@@ -155,7 +155,7 @@ export const BuyListModal: React.FC<BuyListModalProps> = ({ isOpen, onClose }) =
                     <button
                       type="button"
                       onClick={() => adjustStock(med.id, 10)}
-                      className="px-2.5 py-1.5 text-2xs font-semibold bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 text-teal-800 dark:text-teal-300 rounded-lg border border-teal-200 dark:border-teal-800 transition-colors cursor-pointer"
+                      className="px-2.5 py-1.5 text-2xs font-semibold bg-primary-soft hover:opacity-90 text-primary rounded-lg border border-primary/25 transition-colors cursor-pointer"
                       title="১০টি স্টক যোগ করুন"
                     >
                       +১০ রিফিল
@@ -168,20 +168,20 @@ export const BuyListModal: React.FC<BuyListModalProps> = ({ isOpen, onClose }) =
         )}
 
         {/* Share Action Buttons */}
-        <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-2 pt-2 border-t border-border">
           <button
             type="button"
             onClick={handleCopyMessage}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-4 bg-surface-2 hover:bg-border/60 text-text text-xs font-semibold rounded-xl transition-colors cursor-pointer"
           >
-            {copied ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+            {copied ? <Check className="w-4 h-4 text-success-text" /> : <Copy className="w-4 h-4" />}
             <span>{copied ? 'কপি সম্পন্ন!' : 'মেসেজ হিসেবে কপি করুন'}</span>
           </button>
 
           <button
             type="button"
             onClick={handleShareWhatsApp}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-4 bg-[#15803D] hover:bg-[#166534] text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
           >
             <Send className="w-4 h-4" />
             <span>হোয়াটসঅ্যাপে পাঠান</span>

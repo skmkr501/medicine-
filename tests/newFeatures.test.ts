@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { HealthRecord, DoctorAppointment, ReminderSettings } from '../src/types';
+import { HealthRecord, DoctorAppointment, ReminderSettings, DoctorProfile } from '../src/types';
 import { t } from '../src/utils/translations';
 import {
   initialPatients,
@@ -63,9 +63,16 @@ import {
 } from '../src/utils/libraryChunks';
 import {
   QUOTA_EXCEEDED_BN_MSG,
+  WRITE_QUOTA_PAUSE_KEY,
+  QuotaExceededWriteError,
+  getQuotaDayKey,
   isQuotaExceededError,
   consumeQuotaExceededNoticeOnce,
   resetQuotaNoticeForTests,
+  markWriteQuotaExceeded,
+  isWriteQuotaPaused,
+  clearWriteQuotaPause,
+  subscribeWriteQuotaExceeded,
   getFriendlyErrorMessage,
 } from '../src/firebase/errors';
 import { GlobalMedicine, Medicine, PatientProfile } from '../src/types';
@@ -101,6 +108,13 @@ import {
   saveLibraryFavoriteIds,
 } from '../src/utils/libraryManagement';
 import {
+  buildLibrarySearchIndexSync,
+  clearLibrarySearchIndexCache,
+  computeLibraryMetadata,
+  quickBasicSearchMedicines,
+  searchIndexedMedicines,
+} from '../src/utils/librarySearchIndex';
+import {
   CAREGIVER_INVITE_TTL_MS,
   MAX_CAREGIVERS,
   generateInviteCode,
@@ -119,6 +133,21 @@ import {
   removePendingFamilyAlert,
 } from '../src/utils/caregiverAlerts';
 import {
+  MAX_DAILY_CAREGIVER_SUGGESTIONS,
+  SUGGESTION_EXPIRY_MS,
+  SUGGESTION_TEXT_LIMIT,
+  buildCaregiverSuggestionPayload,
+  buildFormDefaultsFromSharedMedicine,
+  buildMedicineInputFromSuggestion,
+  buildSuggestionSummaryHeadlineBn,
+  filterVisiblePendingSuggestions,
+  findTargetMedicineForSuggestion,
+  getCaregiverDailySuggestionCount,
+  incrementCaregiverDailySuggestionCount,
+  isSuggestionExpired,
+} from '../src/utils/caregiverSuggestions';
+import { CaregiverLinkDoc, CaregiverSuggestionDoc, DoseLog } from '../src/types';
+import {
   DEFAULT_SHARED_REPORT_SECTIONS,
   SHARED_REPORT_DELETE_AFTER_EXPIRY_MS,
   SHARED_REPORT_UNAVAILABLE_MSG,
@@ -133,6 +162,94 @@ import {
   canDeleteExpiredSharedReport,
   getIncludedSectionLabels,
 } from '../src/utils/sharedReports';
+import { Timestamp, serverTimestamp, GeoPoint, FieldValue, deleteField } from 'firebase/firestore';
+import {
+  executeGuardedWrite,
+  resumeFirestoreNetwork,
+  stripUndefined,
+  tripWriteQuotaCircuitBreaker,
+} from '../src/firebase/config';
+import {
+  DEFAULT_EMERGENCY_CARD_SELECTION,
+  EMERGENCY_CARD_FIELD_LIMIT,
+  buildEmergencyCardPayload,
+  buildEmergencyCardUrl,
+  buildEmergencyCardWhatsAppUrl,
+  deriveSelectionFromEmergencyCard,
+  extractEmergencyCardTokenFromPath,
+  generateEmergencyToken,
+  generateQrMatrix,
+  getEmergencyIncludedSummaryLabels,
+  isValidEmergencyTokenFormat,
+} from '../src/utils/emergencyQr';
+import {
+  PRESCRIPTION_DEFAULT_SLOT_TIMES,
+  PRESCRIPTION_VERIFICATION_BANNER,
+  buildReviewItemsFromAiResponse,
+  calculateDefaultStock,
+  convertReviewItemToMedicinePayload,
+  findDuplicateMedicinesForPatient,
+  findSuggestedPatientMatch,
+  formatTime12hTo24h,
+  formatTime24hTo12h,
+  mapDosageFormToMedicineType,
+  mapPrescriptionMealTiming,
+  matchLocalLibraryMedicine,
+} from '../src/utils/prescriptionImport';
+import {
+  classifyTimeBucket,
+  formatShortClockBn,
+  isMedicineActiveWithinLimits,
+  buildProfileTimeSummary,
+  buildMedicineSlips,
+  buildMedicineSlipShareText,
+  buildMedicineSlipWhatsAppUrl,
+} from '../src/utils/dailyScheduleSummary';
+import {
+  addWeeksToLocalDate,
+  buildWeeklyPillbox,
+  formatShortMedicineChipLabel,
+  formatWeekRangeBn,
+  getWeekDays,
+  getWeekStartDate,
+} from '../src/utils/weeklyPillbox';
+import {
+  COLLECTION_SYNC_TTL_MS,
+  DOSE_LOG_REALTIME_DAYS,
+  OLDER_LOGS_CACHE_TTL_MS,
+  RECORDS_SYNC_TTL_MS,
+  clearUserReadOptimizerCaches,
+  getAppointmentsRecentCutoffDate,
+  getDoseLogsCutoffDate,
+  invalidateCollectionSyncMeta,
+  loadCachedOlderDoseLogs,
+  loadCachedPastAppointments,
+  markCollectionSynced,
+  mergeDoseLogsWithWindow,
+  mergeUpcomingAppointments,
+  replaceOlderDoseLogsKeepingRecent,
+  replacePastAppointmentsKeepingUpcoming,
+  saveCachedOlderDoseLogs,
+  saveCachedPastAppointments,
+  shouldFetchCollectionFromCloud,
+} from '../src/utils/firestoreReadOptimizer';
+import {
+  normalizeBengaliDigits,
+  validateBangladeshiPhone,
+  formatVisitCountdownBn,
+  buildCleanDoctorInput,
+  sortDoctors,
+  filterDoctors,
+  findEmergencyDoctorForPatient,
+  findDoctorForEmergencyQr,
+  formatEmergencyDoctorLabelForQr,
+  doctorExistsByName,
+  buildDoctorNextVisitAppointmentPayload,
+  loadCachedDoctors,
+  saveCachedDoctors,
+  clearCachedDoctors,
+  mergeLocalAndCloudDoctors,
+} from '../src/utils/doctorsManager';
 
 console.log('\n================================================================');
 console.log('  স্বাস্থ্যবন্ধু (Shasthobondhu) - New Features Verification Tests');
@@ -1041,6 +1158,86 @@ describe('ধাপ ১৩: চাঙ্কড লাইব্রেরি, ম�
 
     assert.strictEqual(consumeQuotaExceededNoticeOnce(), true);
     assert.strictEqual(consumeQuotaExceededNoticeOnce(), false);
+    resetQuotaNoticeForTests();
+
+    const storeMap = new Map<string, string>();
+    const memStore = {
+      getItem: (k: string) => (storeMap.has(k) ? storeMap.get(k)! : null),
+      setItem: (k: string, v: string) => {
+        storeMap.set(k, v);
+      },
+      removeItem: (k: string) => {
+        storeMap.delete(k);
+      },
+    };
+
+    assert.strictEqual(isWriteQuotaPaused('2026-11-14', memStore), false);
+    markWriteQuotaExceeded('2026-11-14', memStore);
+    assert.strictEqual(storeMap.get(WRITE_QUOTA_PAUSE_KEY), '2026-11-14');
+    assert.strictEqual(isWriteQuotaPaused('2026-11-14', memStore), true);
+    // Automatically resets on the next calendar day
+    assert.strictEqual(isWriteQuotaPaused('2026-11-15', memStore), false);
+    assert.strictEqual(storeMap.has(WRITE_QUOTA_PAUSE_KEY), false);
+
+    markWriteQuotaExceeded('2026-11-15', memStore);
+    clearWriteQuotaPause(memStore);
+    assert.strictEqual(isWriteQuotaPaused('2026-11-15', memStore), false);
+    resetQuotaNoticeForTests();
+  });
+
+  it('Pacific Time (America/Los_Angeles) দিন কী, backoff ত্রুটি শনাক্তকরণ এবং executeGuardedWrite সার্কিট-ব্রেকার কাজ করে', async () => {
+    resetQuotaNoticeForTests();
+    clearWriteQuotaPause();
+
+    // 2026-11-16T06:00:00Z is already Nov 16 in Dhaka (UTC+6), but still Nov 15 22:00 in Pacific Time!
+    assert.strictEqual(getQuotaDayKey(new Date('2026-11-15T19:41:38.505Z')), '2026-11-15');
+    assert.strictEqual(getQuotaDayKey(new Date('2026-11-16T06:00:00.000Z')), '2026-11-15');
+    // Past midnight Pacific Time (08:05 UTC = 00:05 PST) rolls over to Nov 16
+    assert.strictEqual(getQuotaDayKey(new Date('2026-11-16T08:05:00.000Z')), '2026-11-16');
+
+    const backoffLog = new Error('Using maximum backoff delay to prevent overloading the backend.');
+    const customQuotaErr = new QuotaExceededWriteError();
+    assert.strictEqual(isQuotaExceededError(backoffLog), true);
+    assert.strictEqual(isQuotaExceededError(customQuotaErr), true);
+
+    // Subscriber notification
+    let listenerHits = 0;
+    const unsub = subscribeWriteQuotaExceeded(() => {
+      listenerHits += 1;
+    });
+    markWriteQuotaExceeded();
+    assert.strictEqual(listenerHits, 1);
+
+    // When paused, executeGuardedWrite rejects immediately without calling writeFn
+    let writeInvoked = false;
+    await assert.rejects(
+      () =>
+        executeGuardedWrite(async () => {
+          writeInvoked = true;
+        }),
+      (err: unknown) => err instanceof QuotaExceededWriteError && isQuotaExceededError(err)
+    );
+    assert.strictEqual(writeInvoked, false);
+
+    // Unpause, start a never-settling write promise, then trip circuit breaker -> rejects immediately
+    await resumeFirestoreNetwork();
+    clearWriteQuotaPause();
+    const hangingPromise = executeGuardedWrite(
+      () => new Promise<void>(() => {})
+    );
+    tripWriteQuotaCircuitBreaker('FirebaseError: [code=resource-exhausted]: Quota limit exceeded.');
+    await assert.rejects(
+      () => hangingPromise,
+      (err: unknown) => err instanceof QuotaExceededWriteError
+    );
+    assert.strictEqual(listenerHits, 2);
+
+    unsub();
+    markWriteQuotaExceeded();
+    assert.strictEqual(listenerHits, 2);
+
+    await resumeFirestoreNetwork();
+    clearWriteQuotaPause();
     resetQuotaNoticeForTests();
   });
 });
@@ -2108,8 +2305,1711 @@ describe('ডাক্তার/পরিবারের জন্য নির�
       true
     );
   });
+
+  it('stripUndefined শুধু সাধারণ অবজেক্ট/অ্যারে থেকে undefined বাদ দেয় এবং Timestamp, serverTimestamp ও Date অবিকৃত রাখে', () => {
+    const ts = Timestamp.fromMillis(1_763_000_000_000);
+    const st = serverTimestamp();
+    const dt = new Date('2026-11-14T00:00:00.000Z');
+    const gp = new GeoPoint(23.8103, 90.4125);
+    const nullProtoObj = Object.assign(Object.create(null), { keep: 'yes', drop: undefined });
+
+    const payload = {
+      ownerUid: 'u1',
+      createdAt: st,
+      expiresAt: ts,
+      checkedAt: dt,
+      location: gp,
+      optional: undefined,
+      sections: {
+        medicines: [{ brandName: 'Napa', instructions: undefined }],
+      },
+      nullProtoObj,
+    };
+
+    const cleaned = stripUndefined(payload);
+    assert.strictEqual(cleaned.createdAt, st);
+    assert.ok(cleaned.createdAt instanceof FieldValue);
+    assert.strictEqual(cleaned.expiresAt, ts);
+    assert.ok(cleaned.expiresAt instanceof Timestamp);
+    assert.strictEqual(cleaned.checkedAt, dt);
+    assert.ok(cleaned.checkedAt instanceof Date);
+    assert.strictEqual(cleaned.location, gp);
+    assert.ok(cleaned.location instanceof GeoPoint);
+    assert.strictEqual('optional' in cleaned, false);
+    assert.strictEqual('instructions' in cleaned.sections.medicines[0], false);
+    assert.strictEqual(cleaned.nullProtoObj.keep, 'yes');
+    assert.strictEqual('drop' in cleaned.nullProtoObj, false);
+  });
+});
+
+describe('প্রেসক্রিপশনের ছবি থেকে ওষুধ যোগ (Prescription Verification Flow)', () => {
+  const sampleLibrary: GlobalMedicine[] = [
+    {
+      id: 'lib-napa-500',
+      brandName: 'Napa',
+      brandNameBn: 'নাপা',
+      genericName: 'Paracetamol',
+      strength: '500 mg',
+      dosageForm: 'ট্যাবলেট',
+      manufacturer: 'Beximco Pharmaceuticals Ltd.',
+      packageDescription: '১০টি ট্যাবলেট/পাতা',
+      pricePerUnit: 0.8,
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'DGDA-1',
+      importedAt: '2026-01-01',
+      verifiedByAdmin: true,
+      status: 'published',
+      duplicateKey: 'napa|paracetamol|500mg|tablet|beximco',
+    },
+    {
+      id: 'lib-seclo-20',
+      brandName: 'Seclo',
+      genericName: 'Omeprazole',
+      strength: '20 mg',
+      dosageForm: 'ক্যাপসুল',
+      manufacturer: 'Square Pharmaceuticals PLC',
+      packageDescription: '১০টি ক্যাপসুল/পাতা',
+      pricePerUnit: 6,
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'DGDA-2',
+      importedAt: '2026-01-01',
+      verifiedByAdmin: true,
+      status: 'published',
+      duplicateKey: 'seclo|omeprazole|20mg|capsule|square',
+    },
+  ];
+
+  it('ডিফল্ট রিমাইন্ডার সময় সকাল ৮টা, দুপুর ২টা ও রাত ৯টা সঠিক ফরম্যাটে রাখে', () => {
+    assert.strictEqual(PRESCRIPTION_DEFAULT_SLOT_TIMES['সকাল'], '08:00 AM');
+    assert.strictEqual(PRESCRIPTION_DEFAULT_SLOT_TIMES['দুপুর'], '02:00 PM');
+    assert.strictEqual(PRESCRIPTION_DEFAULT_SLOT_TIMES['রাত'], '09:00 PM');
+    assert.strictEqual(formatTime12hTo24h('02:00 PM'), '14:00');
+    assert.strictEqual(formatTime12hTo24h('09:00 PM'), '21:00');
+    assert.strictEqual(formatTime24hTo12h('14:00'), '02:00 PM');
+    assert.strictEqual(formatTime24hTo12h('21:00'), '09:00 PM');
+    assert.ok(PRESCRIPTION_VERIFICATION_BANNER.includes('স্বয়ংক্রিয়ভাবে পড়া'));
+  });
+
+  it('low confidence ওষুধ ডিফল্টভাবে আনচেকড থাকে এবং লাইব্রেরি থেকে নাম/শক্তি মিলিয়ে জেনেরিক বসায়', () => {
+    const items = buildReviewItemsFromAiResponse(
+      {
+        patientName: 'রহিম সাহেব',
+        doctorName: 'ডা. করিম',
+        date: '2026-11-10',
+        unreadable: false,
+        items: [
+          {
+            brandName: 'Napa',
+            strength: '500 mg',
+            dosageForm: 'Tab',
+            amountPerDose: 1,
+            timesPerDay: 3,
+            schedule: { morning: true, noon: true, evening: false, night: true },
+            mealTiming: 'খাবারের পরে',
+            durationDays: 5,
+            confidence: 'high',
+          },
+          {
+            brandName: null,
+            strength: '20 mg',
+            dosageForm: 'Cap',
+            amountPerDose: 1,
+            timesPerDay: 2,
+            schedule: { morning: true, noon: false, evening: false, night: true },
+            mealTiming: 'খাবারের আগে',
+            durationDays: 14,
+            confidence: 'low',
+          },
+        ],
+      },
+      sampleLibrary
+    );
+
+    assert.strictEqual(items.length, 2);
+
+    // Item 1: high confidence -> selected=true, local library match fills generic & catalog id, stock = 5 * 3 = 15
+    assert.strictEqual(items[0].selected, true);
+    assert.strictEqual(items[0].needsVerification, false);
+    assert.strictEqual(items[0].catalogMatch?.id, 'lib-napa-500');
+    assert.strictEqual(items[0].genericName, 'Paracetamol');
+    assert.strictEqual(items[0].stock, 15);
+    assert.strictEqual(items[0].mealTiming, 'খাওয়ার পরে');
+
+    // Item 2: low confidence + missing brandName -> selected=false & needsVerification=true
+    assert.strictEqual(items[1].selected, false);
+    assert.strictEqual(items[1].needsVerification, true);
+    assert.strictEqual(items[1].dosageForm, 'ক্যাপসুল');
+    assert.strictEqual(items[1].mealTiming, 'খাওয়ার আগে');
+    assert.strictEqual(items[1].stock, 28);
+  });
+
+  it('খাবারের সময় "যেকোনো সময়" ও ডোজ ফর্ম বাংলায় রূপান্তর করে এবং undefined ছাড়া সেভ পেলোড বানায়', () => {
+    assert.strictEqual(mapDosageFormToMedicineType('Syp.'), 'সিরাপ');
+    assert.strictEqual(mapDosageFormToMedicineType('Eye Drop'), 'চোখের ড্রপ');
+    assert.strictEqual(mapPrescriptionMealTiming('যেকোনো সময়'), 'যেকোনো সময়');
+
+    const [reviewItem] = buildReviewItemsFromAiResponse(
+      {
+        doctorName: null,
+        unreadable: false,
+        items: [
+          {
+            brandName: 'Seclo',
+            strength: '20mg',
+            dosageForm: 'Capsule',
+            amountPerDose: 1,
+            timesPerDay: 2,
+            schedule: { morning: true, noon: false, evening: false, night: true },
+            mealTiming: 'যেকোনো সময়',
+            durationDays: 10,
+            confidence: 'medium',
+          },
+        ],
+      },
+      sampleLibrary
+    );
+
+    assert.strictEqual(reviewItem.catalogMatch?.id, 'lib-seclo-20');
+    assert.strictEqual(
+      calculateDefaultStock(10, 1, { morning: true, noon: false, evening: false, night: true }),
+      20
+    );
+
+    const payload = convertReviewItemToMedicinePayload(reviewItem, 'patient-1');
+    assert.strictEqual(payload.assignedPatientId, 'patient-1');
+    assert.strictEqual(payload.catalogMedicineId, 'lib-seclo-20');
+    assert.strictEqual(payload.mealTiming, 'যেকোনো সময়');
+    assert.strictEqual(payload.schedules.length, 2);
+    assert.strictEqual(payload.schedules[0].time, '08:00 AM');
+    assert.strictEqual(payload.schedules[1].time, '09:00 PM');
+    assert.strictEqual(payload.status, 'active');
+
+    // Ensure no undefined values appear at top level
+    for (const val of Object.values(payload)) {
+      assert.notStrictEqual(val, undefined);
+    }
+  });
+
+  it('রোগীর প্রোফাইল সাজেস্ট করে (নতুন তৈরি না করে) এবং ডুপ্লিকেট ওষুধ শনাক্ত করে', () => {
+    const patientsList: PatientProfile[] = [
+      {
+        id: 'p-1',
+        name: 'আবদুর রহিম',
+        relation: 'বাবা',
+        age: 62,
+        gender: 'পুরুষ',
+        bloodGroup: 'O+',
+        chronicConditions: [],
+        allergies: [],
+        emergencyContact: '',
+      },
+      {
+        id: 'p-archived',
+        name: 'পুরনো সদস্য',
+        relation: 'অন্যান্য',
+        age: 40,
+        gender: 'পুরুষ',
+        bloodGroup: 'A+',
+        chronicConditions: [],
+        allergies: [],
+        emergencyContact: '',
+        isArchived: true,
+      },
+    ];
+
+    const matched = findSuggestedPatientMatch('রহিম', patientsList);
+    assert.strictEqual(matched?.id, 'p-1');
+    assert.strictEqual(findSuggestedPatientMatch('পুরনো সদস্য', patientsList), undefined);
+
+    const reviewItems = buildReviewItemsFromAiResponse(
+      {
+        unreadable: false,
+        items: [
+          {
+            brandName: 'Napa',
+            strength: '500 mg',
+            amountPerDose: 1,
+            timesPerDay: 2,
+            schedule: { morning: true, noon: false, evening: false, night: true },
+            mealTiming: 'খাবারের পরে',
+            durationDays: 5,
+            confidence: 'high',
+          },
+          {
+            brandName: 'Monas',
+            strength: '10 mg',
+            amountPerDose: 1,
+            timesPerDay: 1,
+            schedule: { morning: false, noon: false, evening: false, night: true },
+            mealTiming: 'খাবারের পরে',
+            durationDays: 30,
+            confidence: 'high',
+          },
+        ],
+      },
+      sampleLibrary
+    );
+
+    const existingMeds: Medicine[] = [
+      {
+        id: 'm-1',
+        brandName: 'napa',
+        genericName: 'Paracetamol',
+        type: 'ট্যাবলেট',
+        strength: '500 mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [{ id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }],
+        stock: 10,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: false,
+        assignedPatientId: 'p-1',
+        status: 'active',
+        colorTag: 'teal',
+      },
+    ];
+
+    const dups = findDuplicateMedicinesForPatient(reviewItems, 'p-1', existingMeds);
+    assert.strictEqual(dups.length, 1);
+    assert.strictEqual(dups[0].reviewItem.brandName, 'Napa');
+    assert.strictEqual(matchLocalLibraryMedicine('UnknownBrand', '10 mg', sampleLibrary), undefined);
+  });
+});
+
+describe('ধাপ ২০: সময় অনুযায়ী ওষুধ (Time Boxes) ও দৈনিক স্লিপ ডাউনলোড/শেয়ার', () => {
+  it('রিমাইন্ডার সময় অনুযায়ী ৪টি বক্সে (সকাল/দুপুর/সন্ধ্যা/রাত) সঠিকভাবে ভাগ করে', () => {
+    assert.strictEqual(classifyTimeBucket('04:00 AM'), 'morning');
+    assert.strictEqual(classifyTimeBucket('11:59 AM'), 'morning');
+    assert.strictEqual(classifyTimeBucket('12:00 PM'), 'noon');
+    assert.strictEqual(classifyTimeBucket('03:59 PM'), 'noon');
+    assert.strictEqual(classifyTimeBucket('04:00 PM'), 'evening');
+    assert.strictEqual(classifyTimeBucket('07:59 PM'), 'evening');
+    assert.strictEqual(classifyTimeBucket('08:00 PM'), 'night');
+    assert.strictEqual(classifyTimeBucket('03:59 AM'), 'night');
+    assert.strictEqual(classifyTimeBucket('০৯:০০ PM'), 'night');
+    assert.strictEqual(formatShortClockBn('০৯:০০ PM'), '৯:০০');
+    assert.strictEqual(formatShortClockBn('08:05 AM'), '৮:০৫');
+  });
+
+  it('মেয়াদোত্তীর্ণ ও কোর্স শেষ হওয়া ওষুধ বাদ দেয়, প্রয়োজনমতো আলাদা রাখে এবং ডোজ অগ্রগতি দেখায়', () => {
+    const refDate = new Date(2026, 10, 14, 9, 0, 0); // 2026-11-14 local
+
+    const meds: Medicine[] = [
+      {
+        id: 'med-multi',
+        brandName: 'Napa',
+        genericName: 'Paracetamol',
+        type: 'ট্যাবলেট',
+        strength: '500mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [
+          { id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
+          { id: 's2', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' },
+        ],
+        stock: 20,
+        minStockAlert: 4,
+        unit: 'টি',
+        startDate: '2026-11-10',
+        isChronic: true,
+        assignedPatientId: 'p-1',
+        status: 'active',
+        colorTag: 'teal',
+      },
+      {
+        id: 'med-expired-pack',
+        brandName: 'ExpiredMed',
+        genericName: 'Old',
+        type: 'ট্যাবলেট',
+        strength: '10mg',
+        mealTiming: 'খাওয়ার আগে',
+        schedules: [{ id: 's3', timeSlot: 'সকাল', time: '09:00 AM', dosage: '১টি' }],
+        stock: 5,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-10-01',
+        expiryDate: '2026-11-13',
+        isChronic: true,
+        assignedPatientId: 'p-1',
+        status: 'active',
+        colorTag: 'rose',
+      },
+      {
+        id: 'med-course-ended',
+        brandName: 'FinishedCourse',
+        genericName: 'Antibiotic',
+        type: 'ক্যাপসুল',
+        strength: '500mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [{ id: 's4', timeSlot: 'দুপুর', time: '02:00 PM', dosage: '১টি' }],
+        stock: 0,
+        minStockAlert: 1,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        durationDays: 5, // ended after 2026-11-05
+        isChronic: false,
+        assignedPatientId: 'p-1',
+        status: 'active',
+        colorTag: 'amber',
+      },
+      {
+        id: 'med-as-needed',
+        brandName: 'Napa Extra',
+        genericName: 'Paracetamol + Caffeine',
+        type: 'ট্যাবলেট',
+        strength: '500mg',
+        mealTiming: 'প্রয়োজনমতো',
+        schedules: [],
+        stock: 10,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        assignedPatientId: 'p-1',
+        status: 'active',
+        colorTag: 'blue',
+      },
+      {
+        id: 'med-other-patient',
+        brandName: 'OtherPatientMed',
+        genericName: 'Other',
+        type: 'ট্যাবলেট',
+        strength: '20mg',
+        mealTiming: 'খাওয়ার আগে',
+        schedules: [{ id: 's5', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }],
+        stock: 10,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        assignedPatientId: 'p-2',
+        status: 'active',
+        colorTag: 'indigo',
+      },
+    ];
+
+    assert.strictEqual(isMedicineActiveWithinLimits(meds[0], refDate), true);
+    assert.strictEqual(isMedicineActiveWithinLimits(meds[1], refDate), false);
+    assert.strictEqual(isMedicineActiveWithinLimits(meds[2], refDate), false);
+
+    const summary = buildProfileTimeSummary({
+      medicines: meds,
+      doseLogs: [
+        {
+          id: 'log-1',
+          medicineId: 'med-multi',
+          patientId: 'p-1',
+          medicineName: 'Napa',
+          scheduledDate: '2026-11-14',
+          scheduledTime: '08:00 AM',
+          timeSlot: 'সকাল',
+          dosage: '১টি',
+          status: 'taken',
+        },
+      ],
+      patientId: 'p-1',
+      todayStr: '2026-11-14',
+      referenceDate: refDate,
+    });
+
+    // Empty buckets (noon & evening) are omitted
+    assert.deepStrictEqual(
+      summary.buckets.map((b) => b.key),
+      ['morning', 'night']
+    );
+    assert.strictEqual(summary.buckets[0].takenCount, 1);
+    assert.strictEqual(summary.buckets[0].totalCount, 1);
+    assert.strictEqual(summary.buckets[0].isAllTaken, true);
+    assert.strictEqual(summary.buckets[1].takenCount, 0);
+    assert.strictEqual(summary.buckets[1].totalCount, 1);
+    assert.strictEqual(summary.buckets[1].isAllTaken, false);
+    assert.strictEqual(summary.asNeededItems.length, 1);
+    assert.strictEqual(summary.asNeededItems[0].brandName, 'Napa Extra');
+  });
+
+  it('সব প্রোফাইল ও একক রোগীর স্লিপ এবং হোয়াটসঅ্যাপ শেয়ার টেক্সট সঠিকভাবে তৈরি করে', () => {
+    const refDate = new Date(2026, 10, 14, 9, 0, 0);
+    const patients: PatientProfile[] = [
+      {
+        id: 'p-1',
+        name: 'আব্দুর রহমান',
+        relation: 'বাবা',
+        age: 68,
+        gender: 'পুরুষ',
+        bloodGroup: 'O+',
+        chronicConditions: ['উচ্চ রক্তচাপ'],
+        allergies: ['Penicillin'],
+        emergencyContact: '০১৭১১০০০০০০',
+      },
+      {
+        id: 'p-2',
+        name: 'মাহমুদা বেগম',
+        relation: 'মা',
+        age: 60,
+        gender: 'মহিলা',
+        bloodGroup: 'B+',
+        chronicConditions: [],
+        allergies: [],
+        emergencyContact: '',
+      },
+      {
+        id: 'p-archived',
+        name: 'আর্কাইভ সদস্য',
+        relation: 'অন্যান্য',
+        age: 40,
+        gender: 'পুরুষ',
+        bloodGroup: 'A+',
+        chronicConditions: [],
+        allergies: [],
+        emergencyContact: '',
+        isArchived: true,
+      },
+    ];
+
+    const meds: Medicine[] = [
+      {
+        id: 'm-1',
+        brandName: 'Telma 40',
+        genericName: 'Telmisartan',
+        type: 'ট্যাবলেট',
+        strength: '40mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [{ id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }],
+        stock: 15,
+        minStockAlert: 3,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        assignedPatientId: 'p-1',
+        status: 'active',
+        colorTag: 'teal',
+      },
+    ];
+
+    const singleSlips = buildMedicineSlips({
+      scope: 'current',
+      patients,
+      activePatient: patients[0],
+      medicines: meds,
+      doseLogs: [],
+      referenceDate: refDate,
+    });
+    assert.strictEqual(singleSlips.length, 1);
+    assert.deepStrictEqual(singleSlips[0].allergies, ['Penicillin']);
+    assert.strictEqual(singleSlips[0].emergencyContact, '০১৭১১০০০০০০');
+
+    const allSlips = buildMedicineSlips({
+      scope: 'all',
+      patients,
+      activePatient: patients[0],
+      medicines: meds,
+      doseLogs: [],
+      referenceDate: refDate,
+    });
+    assert.strictEqual(allSlips.length, 2); // archived excluded
+    assert.strictEqual(allSlips[1].allergies.length, 0);
+    assert.strictEqual(allSlips[1].emergencyContact, undefined);
+
+    const shareText = buildMedicineSlipShareText(singleSlips);
+    assert.ok(shareText.includes('স্বাস্থ্যবন্ধু — দৈনিক ওষুধের স্লিপ'));
+    assert.ok(shareText.includes('☐ ১. Telma 40 40mg (Telmisartan)'));
+    assert.ok(shareText.includes('অ্যালার্জি: Penicillin'));
+    assert.ok(shareText.includes('এটি অ্যাপের তালিকা; ওষুধ বদলানোর আগে ডাক্তারের পরামর্শ নিন।'));
+
+    const waUrl = buildMedicineSlipWhatsAppUrl(singleSlips);
+    assert.ok(waUrl.startsWith('https://wa.me/?text='));
+  });
+});
+
+describe('ধাপ ২১: দ্রুত লাইব্রেরি সার্চ সূচি (librarySearchIndex) ও ইনক্রিমেন্টাল আপডেট', () => {
+  it('সূচি ক্যাশ করে, ইনক্রিমেন্টাল পরিবর্তনে পুরনো এন্ট্রি পুনর্ব্যবহার করে এবং ইংরেজি/বাংলা/টাইপো/দুই শব্দে সঠিক ফল দেয়', () => {
+    clearLibrarySearchIndexCache();
+    const meds: GlobalMedicine[] = [
+      {
+        id: 'lib-1',
+        brandName: 'Napa Extra',
+        brandNameBn: 'নাপা এক্সট্রা',
+        genericName: 'Paracetamol + Caffeine',
+        genericNameBn: 'প্যারাসিটামল + ক্যাফেইন',
+        strength: '500 mg',
+        dosageForm: 'ট্যাবলেট',
+        manufacturer: 'Beximco Pharma',
+        pricePerUnit: 2.5,
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA',
+        importedAt: '2026-11-01T00:00:00.000Z',
+        verifiedByAdmin: true,
+        status: 'published',
+        duplicateKey: 'napa_extra_500_beximco',
+      },
+      {
+        id: 'lib-2',
+        brandName: 'Seclo',
+        brandNameBn: 'সেক্লো',
+        genericName: 'Omeprazole',
+        genericNameBn: 'অমিপ্রাজল',
+        strength: '20 mg',
+        dosageForm: 'ক্যাপসুল',
+        manufacturer: 'Square Pharma',
+        pricePerUnit: 6,
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA',
+        importedAt: '2026-11-01T00:00:00.000Z',
+        verifiedByAdmin: true,
+        status: 'published',
+        duplicateKey: 'seclo_20_square',
+      },
+      {
+        id: 'lib-3',
+        brandName: 'DraftMed',
+        genericName: 'Azithromycin',
+        strength: '500 mg',
+        dosageForm: 'ট্যাবলেট',
+        manufacturer: 'Incepta',
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA',
+        importedAt: '2026-11-01T00:00:00.000Z',
+        verifiedByAdmin: false,
+        status: 'draft',
+        duplicateKey: 'draftmed_500_incepta',
+      },
+    ];
+
+    const idx1 = buildLibrarySearchIndexSync(meds, true);
+    const idx1Again = buildLibrarySearchIndexSync(meds, true);
+    assert.strictEqual(idx1, idx1Again); // Exact cached reference reused
+
+    const meta = computeLibraryMetadata(meds);
+    assert.deepStrictEqual(meta.uniqueForms, ['ক্যাপসুল', 'ট্যাবলেট']);
+    assert.strictEqual(meta.publishedCount, 2);
+    assert.strictEqual(meta.pendingCount, 1);
+    assert.ok(meta.availableLettersPublished.has('N'));
+    assert.ok(meta.availableLettersPublished.has('S'));
+    assert.ok(!meta.availableLettersPublished.has('D'));
+
+    // Incremental update: keep lib-1 unchanged, remove lib-3, add lib-4
+    const updatedMeds: GlobalMedicine[] = [
+      meds[0],
+      meds[1],
+      {
+        id: 'lib-4',
+        brandName: 'Monas',
+        brandNameBn: 'মোনাস',
+        genericName: 'Montelukast',
+        genericNameBn: 'মন্টেলুকাস্ট',
+        strength: '10 mg',
+        dosageForm: 'ট্যাবলেট',
+        manufacturer: 'Acme',
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA',
+        importedAt: '2026-11-02T00:00:00.000Z',
+        verifiedByAdmin: true,
+        status: 'published',
+        duplicateKey: 'monas_10_acme',
+      },
+    ];
+    const idx2 = buildLibrarySearchIndexSync(updatedMeds, true);
+    assert.strictEqual(idx2.entries[0], idx1.entries[0]); // Unchanged entry object reused!
+    assert.strictEqual(idx2.totalCount, 3);
+
+    const baseFilters = {
+      isAdmin: false,
+      adminStatusFilter: 'published' as const,
+      favoritesOnly: false,
+      favoriteIdSet: new Set<string>(),
+      selectedLetter: 'ALL',
+      selectedForm: 'all',
+      selectedManufacturer: 'all',
+      priceFilter: 'all' as const,
+      selectedSource: 'all',
+    };
+
+    // English, Bengali, Typo, Two-word searches
+    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'Napa Extra').medicines[0].id, 'lib-1');
+    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'সেক্লো').medicines[0].id, 'lib-2');
+    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'omeprazol').medicines[0].id, 'lib-2');
+    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'Paracetamol 500').medicines[0].id, 'lib-1');
+    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'montlukast').medicines[0].id, 'lib-4');
+
+    // Quick basic fallback also works cleanly during cold startup
+    assert.strictEqual(quickBasicSearchMedicines(updatedMeds, baseFilters, 'Monas').medicines[0].id, 'lib-4');
+  });
+});
+
+describe('ধাপ ২২: জরুরি কার্ড QR (টোকেন, গোপনীয়তা ফিল্টারিং, ৫০০ অক্ষর সীমা ও QR ম্যাট্রিক্স)', () => {
+  it('>= ১২৮-বিট নিরাপদ টোকেন, /e/{token} রাউট পার্সিং এবং ডিফল্ট গোপনীয়তা (ওষুধ বন্ধ) নিশ্চিত করে', () => {
+    const token = generateEmergencyToken();
+    assert.ok(token.length >= 20, 'Emergency token must be >= 20 chars');
+    assert.strictEqual(isValidEmergencyTokenFormat(token), true);
+    assert.strictEqual(isValidEmergencyTokenFormat('short'), false);
+
+    assert.strictEqual(extractEmergencyCardTokenFromPath(`/e/${token}`), token);
+    assert.strictEqual(extractEmergencyCardTokenFromPath(`/e/${token}/`), token);
+    assert.strictEqual(extractEmergencyCardTokenFromPath('/r/some_report_token_123456'), null);
+    assert.strictEqual(extractEmergencyCardTokenFromPath('/'), null);
+
+    // Medicines MUST default to OFF for privacy
+    assert.strictEqual(DEFAULT_EMERGENCY_CARD_SELECTION.medicines, false);
+    assert.strictEqual(DEFAULT_EMERGENCY_CARD_SELECTION.bloodGroup, true);
+    assert.strictEqual(DEFAULT_EMERGENCY_CARD_SELECTION.allergies, true);
+    assert.strictEqual(DEFAULT_EMERGENCY_CARD_SELECTION.conditions, true);
+    assert.strictEqual(DEFAULT_EMERGENCY_CARD_SELECTION.contact, true);
+
+    const url = buildEmergencyCardUrl(token, 'https://shasthobondhu.app/');
+    assert.strictEqual(url, `https://shasthobondhu.app/e/${token}`);
+
+    const matrix = generateQrMatrix(url);
+    assert.ok(matrix.size >= 21, 'QR matrix must be at least Version 1 (21x21)');
+    assert.strictEqual(matrix.modules.length, matrix.size);
+    assert.strictEqual(matrix.modules[0].length, matrix.size);
+
+    const waUrl = buildEmergencyCardWhatsAppUrl(url, 'রহিম উদ্দিন');
+    assert.ok(waUrl.startsWith('https://api.whatsapp.com/send?text='));
+    assert.ok(decodeURIComponent(waUrl).includes(url));
+  });
+
+  it('নির্বাচিত তথ্য ছাড়া বাকি ক্ষেত্র বাদ দেয়, ঠিকানা/NID/অতিরিক্ত নম্বর কখনো রাখে না এবং ৫০০ অক্ষরের মধ্যে সীমাবদ্ধ রাখে', () => {
+    const token = generateEmergencyToken();
+    const patient: PatientProfile = {
+      id: 'pat-1',
+      name: 'রহিম উদ্দিন',
+      relation: 'বাবা',
+      age: 66,
+      gender: 'পুরুষ',
+      bloodGroup: 'B+',
+      chronicConditions: ['উচ্চ রক্তচাপ', 'ডায়াবেটিস'],
+      allergies: ['Penicillin', 'Sulfa'],
+      emergencyContact: '01711000001',
+    };
+    const meds: Medicine[] = [
+      {
+        id: 'med-1',
+        brandName: 'Napa Extra '.repeat(40),
+        genericName: 'Paracetamol',
+        type: 'ট্যাবলেট',
+        strength: '500mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [{ id: 's1', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' }],
+        stock: 10,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        doctorName: 'ডা. কামাল হোসেন',
+        assignedPatientId: 'pat-1',
+        status: 'active',
+        colorTag: 'indigo',
+      },
+    ];
+
+    // Default selection: medicines and doctorName OFF
+    const defaultPayload = buildEmergencyCardPayload({
+      ownerUid: 'uid-1',
+      token,
+      patient,
+      medicines: meds,
+      selection: DEFAULT_EMERGENCY_CARD_SELECTION,
+      emergencyContactName: 'তানভীর (ছেলে)',
+      emergencyContactPhone: '01711000001',
+    });
+
+    assert.strictEqual(defaultPayload.patientName, 'রহিম উদ্দিন');
+    assert.strictEqual(defaultPayload.age, 66);
+    assert.strictEqual(defaultPayload.bloodGroup, 'B+');
+    assert.strictEqual(defaultPayload.allergies, 'Penicillin, Sulfa');
+    assert.strictEqual(defaultPayload.conditions, 'উচ্চ রক্তচাপ, ডায়াবেটিস');
+    assert.strictEqual(defaultPayload.contactName, 'তানভীর (ছেলে)');
+    assert.strictEqual(defaultPayload.contactPhone, '01711000001');
+    assert.strictEqual(defaultPayload.medicines, undefined);
+    assert.strictEqual(defaultPayload.doctorName, undefined);
+    assert.strictEqual('nid' in defaultPayload, false);
+    assert.strictEqual('address' in defaultPayload, false);
+
+    // Enable medicines & doctorName -> clamped <= 500 chars
+    const fullPayload = buildEmergencyCardPayload({
+      ownerUid: 'uid-1',
+      token,
+      patient,
+      medicines: meds,
+      selection: { ...DEFAULT_EMERGENCY_CARD_SELECTION, medicines: true, doctorName: true },
+    });
+    assert.ok(fullPayload.medicines && fullPayload.medicines.length <= EMERGENCY_CARD_FIELD_LIMIT);
+    assert.strictEqual(fullPayload.doctorName, 'ডা. কামাল হোসেন');
+
+    const derived = deriveSelectionFromEmergencyCard(fullPayload);
+    assert.deepStrictEqual(derived, {
+      bloodGroup: true,
+      allergies: true,
+      conditions: true,
+      contact: true,
+      medicines: true,
+      doctorName: true,
+    });
+
+    const summaryLabels = getEmergencyIncludedSummaryLabels(DEFAULT_EMERGENCY_CARD_SELECTION, defaultPayload);
+    assert.ok(summaryLabels.includes('রক্তের গ্রুপ'));
+    assert.ok(!summaryLabels.includes('চলমান ওষুধের তালিকা'));
+
+    // deleteField() sentinel survives stripUndefined
+    const updateSentinel = stripUndefined({
+      patientName: 'রহিম উদ্দিন',
+      medicines: deleteField(),
+      createdAt: serverTimestamp(),
+    });
+    assert.ok(updateSentinel.medicines instanceof FieldValue);
+    assert.ok(updateSentinel.createdAt instanceof FieldValue);
+  });
+});
+
+// ============================================================================
+// Suite 23: Caregiver Medicine Suggestions & Patient Approval Pure Logic
+// ============================================================================
+describe('Suite 23: Caregiver Medicine Suggestions & Patient Approval', () => {
+  const baseLink: CaregiverLinkDoc = {
+    id: 'ABC123',
+    inviteCode: 'ABC123',
+    patientUid: 'patient-uid-1',
+    caregiverUid: 'caregiver-uid-1',
+    patientName: 'রহিম উদ্দিন',
+    caregiverName: 'তানভীর (ছেলে)',
+    status: 'active',
+    allowFullView: false,
+    allowSuggestions: true,
+    createdAt: '2026-11-15T00:00:00.000Z',
+    expiresAtMs: Date.now() + 86400000,
+    updatedAt: '2026-11-15T00:00:00.000Z',
+  };
+
+  it('builds valid add suggestion payload with no undefined values and enforces allowFullView for edit/stop', () => {
+    const longNote = 'ক'.repeat(700);
+    const sug = buildCaregiverSuggestionPayload({
+      id: 'sug_test_1',
+      link: baseLink,
+      caregiverUid: 'caregiver-uid-1',
+      caregiverName: 'তানভীর (ছেলে)',
+      input: {
+        kind: 'add',
+        brandName: 'Napa Extend',
+        strength: '৬৬৫ মিগ্রা',
+        type: 'ট্যাবলেট',
+        dosage: '১টি',
+        timeSlots: ['রাত', 'সকাল', 'দুপুর'],
+        mealTiming: 'খাওয়ার পরে',
+        durationDays: 10,
+        stock: 30,
+        note: longNote,
+      },
+      nowMs: 1_700_000_000_000,
+    });
+
+    assert.strictEqual(sug.status, 'pending');
+    assert.strictEqual(sug.kind, 'add');
+    assert.deepStrictEqual(sug.medicine.timeSlots, ['সকাল', 'দুপুর', 'রাত']);
+    assert.strictEqual(sug.medicine.schedules?.length, 3);
+    assert.ok(sug.note && sug.note.length <= SUGGESTION_TEXT_LIMIT);
+    assert.strictEqual(Object.values(sug).includes(undefined), false);
+    assert.strictEqual(Object.values(sug.medicine).includes(undefined), false);
+
+    const headline = buildSuggestionSummaryHeadlineBn(sug);
+    assert.ok(headline.includes('তানভীর (ছেলে)'));
+    assert.ok(headline.includes('Napa Extend ৬৬৫ মিগ্রা'));
+    assert.ok(headline.includes('দিনে ৩ বার'));
+
+    assert.throws(() =>
+      buildCaregiverSuggestionPayload({
+        link: { ...baseLink, allowFullView: false },
+        caregiverUid: 'caregiver-uid-1',
+        caregiverName: 'তানভীর',
+        input: {
+          kind: 'edit',
+          brandName: 'Napa',
+          type: 'ট্যাবলেট',
+          dosage: '১টি',
+          timeSlots: ['সকাল'],
+          mealTiming: 'খাওয়ার পরে',
+          stock: 10,
+        },
+      })
+    );
+  });
+
+  it('filters expired (>30 days) pending suggestions and tracks max 10/day caregiver limit', () => {
+    const nowMs = 1_800_000_000_000;
+    const baseSug = buildCaregiverSuggestionPayload({
+      id: 'sug_fresh',
+      link: baseLink,
+      caregiverUid: 'caregiver-uid-1',
+      caregiverName: 'তানভীর',
+      input: {
+        kind: 'add',
+        brandName: 'Seclo',
+        type: 'ক্যাপসুল',
+        dosage: '১টি',
+        timeSlots: ['সকাল'],
+        mealTiming: 'খাওয়ার আগে',
+        stock: 14,
+      },
+      nowMs: nowMs - 1000,
+    });
+
+    const expiredSug: CaregiverSuggestionDoc = {
+      ...baseSug,
+      id: 'sug_old',
+      createdAtMs: nowMs - SUGGESTION_EXPIRY_MS - 1000,
+    };
+    const rejectedSug: CaregiverSuggestionDoc = {
+      ...baseSug,
+      id: 'sug_rejected',
+      status: 'rejected',
+    };
+
+    assert.strictEqual(isSuggestionExpired(expiredSug.createdAtMs, nowMs), true);
+    assert.strictEqual(isSuggestionExpired(baseSug.createdAtMs, nowMs), false);
+
+    const visible = filterVisiblePendingSuggestions([expiredSug, rejectedSug, baseSug], nowMs);
+    assert.strictEqual(visible.length, 1);
+    assert.strictEqual(visible[0].id, 'sug_fresh');
+
+    const map = new Map<string, string>();
+    const fakeStorage = {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+      removeItem: (k: string) => {
+        map.delete(k);
+      },
+      clear: () => map.clear(),
+      key: () => null,
+      length: 0,
+    } as unknown as Storage;
+
+    const dateIso = '2026-11-15';
+    assert.strictEqual(getCaregiverDailySuggestionCount('cg-1', [], fakeStorage, dateIso), 0);
+    for (let i = 0; i < MAX_DAILY_CAREGIVER_SUGGESTIONS; i++) {
+      incrementCaregiverDailySuggestionCount('cg-1', fakeStorage, dateIso);
+    }
+    assert.strictEqual(
+      getCaregiverDailySuggestionCount('cg-1', [], fakeStorage, dateIso),
+      MAX_DAILY_CAREGIVER_SUGGESTIONS
+    );
+  });
+
+  it('converts accepted suggestion into clean Medicine input and resolves edit/stop targets', () => {
+    const existingMed: Medicine = {
+      id: 'med-99',
+      brandName: 'Napa',
+      genericName: 'Paracetamol',
+      type: 'ট্যাবলেট',
+      strength: '500mg',
+      mealTiming: 'খাওয়ার পরে',
+      schedules: [{ id: '1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }],
+      stock: 12,
+      minStockAlert: 5,
+      unit: 'টি',
+      startDate: '2026-11-01',
+      isChronic: false,
+      colorTag: 'teal',
+      status: 'active',
+      assignedPatientId: 'p-1',
+    };
+
+    const defaults = buildFormDefaultsFromSharedMedicine({
+      id: existingMed.id,
+      brandName: existingMed.brandName,
+      strength: existingMed.strength,
+      type: existingMed.type,
+      mealTiming: existingMed.mealTiming,
+      stock: existingMed.stock,
+      unit: existingMed.unit,
+      schedules: existingMed.schedules,
+      schedulesText: 'সকাল',
+    });
+
+    const editSug = buildCaregiverSuggestionPayload({
+      id: 'sug_edit_1',
+      link: { ...baseLink, allowFullView: true },
+      caregiverUid: 'caregiver-uid-1',
+      caregiverName: 'তানভীর',
+      input: {
+        ...defaults,
+        kind: 'edit',
+        timeSlots: ['সকাল', 'রাত'],
+        stock: 20,
+      },
+    });
+
+    const matchedTarget = findTargetMedicineForSuggestion([existingMed], editSug);
+    assert.strictEqual(matchedTarget?.id, 'med-99');
+
+    const converted = buildMedicineInputFromSuggestion({
+      suggestion: editSug,
+      edited: { stock: 24 },
+      assignedPatientId: 'p-1',
+    });
+    assert.strictEqual(converted.brandName, 'Napa');
+    assert.strictEqual(converted.stock, 24);
+    assert.strictEqual(converted.schedules.length, 2);
+    assert.strictEqual(converted.assignedPatientId, 'p-1');
+    assert.strictEqual(Object.values(converted).some((v) => v === undefined), false);
+  });
+});
+
+// ============================================================================
+// Suite 24: Weekly Pillbox Grid, Course Bounds, DoseLog Indicators & Totals
+// ============================================================================
+describe('Suite 24: Weekly Pillbox (সাপ্তাহিক পিলবক্স)', () => {
+  it('computes Saturday (default), Sunday, and Monday week starts and cross-month Bengali ranges', () => {
+    // 2026-11-18 is Wednesday -> Saturday start = 2026-11-14, Friday end = 2026-11-20
+    const satStart = getWeekStartDate('2026-11-18', 'saturday');
+    const satDays = getWeekDays(satStart, '2026-11-18');
+    assert.strictEqual(satDays[0].iso, '2026-11-14');
+    assert.strictEqual(satDays[0].weekdayShortBn, 'শনি');
+    assert.strictEqual(satDays[6].iso, '2026-11-20');
+    assert.strictEqual(satDays[6].weekdayShortBn, 'শুক্র');
+    assert.strictEqual(satDays[4].isToday, true); // Wed Nov 18
+    assert.strictEqual(satDays[0].isPast, true);
+    assert.strictEqual(satDays[6].isFuture, true);
+    assert.strictEqual(formatWeekRangeBn(satDays), '১৪ – ২০ নভেম্বর ২০২৬');
+
+    // Sunday start -> 2026-11-15 to 2026-11-21
+    const sunStart = getWeekStartDate('2026-11-18', 'sunday');
+    const sunDays = getWeekDays(sunStart, '2026-11-18');
+    assert.strictEqual(sunDays[0].iso, '2026-11-15');
+    assert.strictEqual(sunDays[6].iso, '2026-11-21');
+
+    // Monday start -> 2026-11-16 to 2026-11-22
+    const monStart = getWeekStartDate('2026-11-18', 'monday');
+    const monDays = getWeekDays(monStart, '2026-11-18');
+    assert.strictEqual(monDays[0].iso, '2026-11-16');
+    assert.strictEqual(monDays[6].iso, '2026-11-22');
+
+    // Next week crosses Nov -> Dec (2026-11-28 to 2026-12-04)
+    const crossMonthStart = addWeeksToLocalDate(satStart, 2);
+    const crossDays = getWeekDays(crossMonthStart, '2026-11-18');
+    assert.strictEqual(formatWeekRangeBn(crossDays), '২৮ নভেম্বর – ৪ ডিসেম্বর ২০২৬');
+  });
+
+  it('enforces per-day course bounds, hides empty time rows, separates PRN, and never guesses missing DoseLogs', () => {
+    const meds: Medicine[] = [
+      {
+        id: 'med-napa',
+        brandName: 'Napa Extend',
+        genericName: 'Paracetamol',
+        type: 'ট্যাবলেট',
+        strength: '665mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [
+          { id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
+          { id: 's2', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' },
+        ],
+        stock: 20,
+        minStockAlert: 5,
+        unit: 'টি',
+        startDate: '2026-11-14',
+        durationDays: 3, // Active ONLY Nov 14, 15, 16 (expires before Nov 17)
+        isChronic: false,
+        colorTag: 'indigo',
+        status: 'active',
+        assignedPatientId: 'p-1',
+      },
+      {
+        id: 'med-seclo',
+        brandName: 'Seclo',
+        genericName: 'Omeprazole',
+        type: 'ক্যাপসুল',
+        strength: '20mg',
+        mealTiming: 'খাওয়ার আগে',
+        schedules: [
+          { id: 's3', timeSlot: 'সকাল', time: '07:30 AM', dosage: '১টি' },
+        ],
+        stock: 30,
+        minStockAlert: 5,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        colorTag: 'teal',
+        status: 'active',
+        assignedPatientId: 'p-1',
+      },
+      {
+        id: 'med-prn',
+        brandName: 'Alatrol',
+        genericName: 'Cetirizine',
+        type: 'ট্যাবলেট',
+        strength: '10mg',
+        mealTiming: 'প্রয়োজনমতো',
+        schedules: [],
+        stock: 10,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-11-10',
+        isChronic: true,
+        colorTag: 'indigo',
+        status: 'active',
+        assignedPatientId: 'p-1',
+      },
+      {
+        id: 'med-other-patient',
+        brandName: 'OtherMed',
+        genericName: 'Other',
+        type: 'ট্যাবলেট',
+        strength: '50mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [{ id: 's4', timeSlot: 'দুপুর', time: '01:00 PM', dosage: '১টি' }],
+        stock: 10,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        colorTag: 'indigo',
+        status: 'active',
+        assignedPatientId: 'p-2',
+      },
+    ];
+
+    const logs: DoseLog[] = [
+      // Past Nov 14 morning Seclo taken, Napa skipped
+      {
+        id: 'l1',
+        medicineId: 'med-seclo',
+        medicineName: 'Seclo',
+        patientId: 'p-1',
+        scheduledDate: '2026-11-14',
+        scheduledTime: '07:30 AM',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'taken',
+      },
+      {
+        id: 'l2',
+        medicineId: 'med-napa',
+        medicineName: 'Napa Extend',
+        patientId: 'p-1',
+        scheduledDate: '2026-11-14',
+        scheduledTime: '08:00 AM',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'skipped',
+      },
+      // Nov 15 & Nov 16 have NO logs at all — must stay undefined (no guessing!)
+      // Future Nov 20 log even if present must never show as past status
+      {
+        id: 'l3',
+        medicineId: 'med-seclo',
+        medicineName: 'Seclo',
+        patientId: 'p-1',
+        scheduledDate: '2026-11-20',
+        scheduledTime: '07:30 AM',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'taken',
+      },
+    ];
+
+    const weekStart = getWeekStartDate('2026-11-18', 'saturday'); // Nov 14 - Nov 20
+    const data = buildWeeklyPillbox({
+      medicines: meds,
+      doseLogs: logs,
+      patientId: 'p-1',
+      weekStartDate: weekStart,
+      weekStartDay: 'saturday',
+      todayStr: '2026-11-18',
+    });
+
+    // Only morning & night rows should be visible (noon belonging to p-2 & evening empty are hidden)
+    assert.deepStrictEqual(
+      data.visibleRows.map((r) => r.key),
+      ['morning', 'night']
+    );
+
+    const morningRow = data.visibleRows[0];
+    // Nov 14 morning: Seclo (taken ✓) + Napa Extend (missed ✗)
+    const nov14Morning = morningRow.cellsByDayIso['2026-11-14'];
+    assert.strictEqual(nov14Morning.length, 2);
+    assert.strictEqual(nov14Morning.find((i) => i.medicineId === 'med-seclo')?.logStatus, 'taken');
+    assert.strictEqual(nov14Morning.find((i) => i.medicineId === 'med-napa')?.logStatus, 'missed');
+
+    // Nov 15 morning (past, NO logs): both items MUST have logStatus === undefined
+    const nov15Morning = morningRow.cellsByDayIso['2026-11-15'];
+    assert.strictEqual(nov15Morning.length, 2);
+    assert.strictEqual(nov15Morning.every((i) => i.logStatus === undefined), true);
+
+    // Nov 17 morning (Napa 3-day course ended after Nov 16): ONLY Seclo remains!
+    const nov17Morning = morningRow.cellsByDayIso['2026-11-17'];
+    assert.deepStrictEqual(
+      nov17Morning.map((i) => i.medicineId),
+      ['med-seclo']
+    );
+
+    // Nov 20 morning (future): logStatus must be undefined
+    const nov20Morning = morningRow.cellsByDayIso['2026-11-20'];
+    assert.strictEqual(nov20Morning[0].logStatus, undefined);
+
+    // PRN separated
+    assert.deepStrictEqual(
+      data.asNeededItems.map((i) => i.medicineId),
+      ['med-prn']
+    );
+
+    // Weekly totals: Napa = 3 days * 2 doses = 6টি; Seclo = 7 days * 1 dose = 7টি
+    const napaTotal = data.weeklyTotals.find((t) => t.medicineId === 'med-napa');
+    const secloTotal = data.weeklyTotals.find((t) => t.medicineId === 'med-seclo');
+    assert.strictEqual(napaTotal?.totalUnits, 6);
+    assert.strictEqual(napaTotal?.summaryLabelBn, 'Napa Extend (665mg) — ৬টি');
+    assert.strictEqual(secloTotal?.totalUnits, 7);
+    assert.strictEqual(secloTotal?.summaryLabelBn, 'Seclo (20mg) — ৭টি');
+
+    // Short chip formatting
+    assert.strictEqual(formatShortMedicineChipLabel('Napa', '১টি'), 'Napa ১');
+    assert.strictEqual(formatShortMedicineChipLabel('Seclo', '১/২টি'), 'Seclo ১/২');
+  });
+});
+
+describe('Suite 25: Firestore দৈনিক Read হ্রাস (৪৫ দিন উইন্ডো, TTL ক্যাশ ও অন-ডিমান্ড লোড)', () => {
+  it('৪৫ দিনের কাটঅফ তারিখ সঠিকভাবে হিসাব করে এবং রিয়েল-টাইম উইন্ডোর সাথে পুরনো লগ অক্ষত রাখে', () => {
+    const refDate = new Date(2026, 10, 16); // 2026-11-16
+    const cutoff = getDoseLogsCutoffDate(DOSE_LOG_REALTIME_DAYS, refDate);
+    assert.strictEqual(cutoff, '2026-10-02');
+
+    const yesterday = getAppointmentsRecentCutoffDate(1, refDate);
+    assert.strictEqual(yesterday, '2026-11-15');
+
+    const existingLogs: DoseLog[] = [
+      {
+        id: 'log-old-1',
+        medicineId: 'm1',
+        medicineName: 'Napa',
+        scheduledDate: '2026-09-15',
+        scheduledTime: '08:00 AM',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'taken',
+      },
+      {
+        id: 'log-recent-deleted-on-cloud',
+        medicineId: 'm1',
+        medicineName: 'Napa',
+        scheduledDate: '2026-11-01',
+        scheduledTime: '08:00 AM',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'taken',
+      },
+    ];
+
+    const recentFromSnapshot: DoseLog[] = [
+      {
+        id: 'log-recent-live',
+        medicineId: 'm2',
+        medicineName: 'Seclo',
+        scheduledDate: '2026-11-16',
+        scheduledTime: '07:30 AM',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'taken',
+      },
+    ];
+
+    // Bounded snapshot preserves < cutoff cached logs and replaces >= cutoff window authoritatively
+    const merged = mergeDoseLogsWithWindow(existingLogs, recentFromSnapshot, cutoff);
+    assert.deepStrictEqual(
+      merged.map((l) => l.id),
+      ['log-recent-live', 'log-old-1']
+    );
+
+    // Lazy older load preserves live 45-day logs and refreshes < cutoff logs
+    const fetchedOlder: DoseLog[] = [
+      {
+        id: 'log-old-2',
+        medicineId: 'm1',
+        medicineName: 'Napa',
+        scheduledDate: '2026-08-20',
+        scheduledTime: '09:00 PM',
+        timeSlot: 'রাত',
+        dosage: '১টি',
+        status: 'skipped',
+      },
+    ];
+    const withOlder = replaceOlderDoseLogsKeepingRecent(merged, fetchedOlder, cutoff);
+    assert.deepStrictEqual(
+      withOlder.map((l) => l.id),
+      ['log-recent-live', 'log-old-2']
+    );
+  });
+
+  it('আসন্ন এবং পূর্ববর্তী অ্যাপয়েন্টমেন্ট আলাদাভাবে মার্জ ও ক্যাশ করে', () => {
+    const minDate = '2026-11-15';
+    const existingApts: DoctorAppointment[] = [
+      {
+        id: 'apt-past-cached',
+        patientId: 'p1',
+        doctorName: 'ডা. করিম',
+        appointmentDate: '2026-10-10',
+        appointmentTime: '10:00 AM',
+        location: 'ঢাকা',
+        status: 'completed',
+        createdAt: '2026-10-01T00:00:00Z',
+      },
+      {
+        id: 'apt-upcoming-stale',
+        patientId: 'p1',
+        doctorName: 'ডা. পুরনো',
+        appointmentDate: '2026-11-20',
+        appointmentTime: '05:00 PM',
+        location: 'ঢাকা',
+        status: 'upcoming',
+        createdAt: '2026-11-01T00:00:00Z',
+      },
+    ];
+    const upcomingCloud: DoctorAppointment[] = [
+      {
+        id: 'apt-upcoming-fresh',
+        patientId: 'p1',
+        doctorName: 'ডা. রহমান',
+        appointmentDate: '2026-11-18',
+        appointmentTime: '06:00 PM',
+        location: 'চেম্বার',
+        status: 'upcoming',
+        createdAt: '2026-11-10T00:00:00Z',
+      },
+    ];
+
+    const mergedBoot = mergeUpcomingAppointments(existingApts, upcomingCloud, minDate);
+    assert.deepStrictEqual(
+      mergedBoot.map((a) => a.id).sort(),
+      ['apt-past-cached', 'apt-upcoming-fresh']
+    );
+
+    const pastCloud: DoctorAppointment[] = [
+      {
+        id: 'apt-past-real',
+        patientId: 'p1',
+        doctorName: 'ডা. জামান',
+        appointmentDate: '2026-09-05',
+        appointmentTime: '11:00 AM',
+        location: 'ক্লিনিক',
+        status: 'completed',
+        createdAt: '2026-09-01T00:00:00Z',
+      },
+    ];
+    const mergedFull = replacePastAppointmentsKeepingUpcoming(mergedBoot, pastCloud, minDate);
+    assert.deepStrictEqual(
+      mergedFull.map((a) => a.id).sort(),
+      ['apt-past-real', 'apt-upcoming-fresh']
+    );
+  });
+
+  it('UID-ভিত্তিক TTL মেটা ও ২৪-ঘণ্টার ক্যাশ পুনরাবৃত্ত read আটকায় এবং লগআউটে পরিষ্কার হয়', () => {
+    const store = new Map<string, string>();
+    const prevWindow = (globalThis as any).window;
+    const prevStorage = (globalThis as any).localStorage;
+
+    const mockStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v);
+      },
+      removeItem: (k: string) => {
+        store.delete(k);
+      },
+    };
+    (globalThis as any).window = {};
+    (globalThis as any).localStorage = mockStorage;
+
+    try {
+      const uid = 'user-read-opt-1';
+      const otherUid = 'user-read-opt-2';
+      const t0 = 1_750_000_000_000;
+
+      // Fresh user must fetch on initial boot
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(uid, 'medicines', COLLECTION_SYNC_TTL_MS, t0),
+        true
+      );
+
+      markCollectionSynced(uid, 'medicines', t0);
+      // Within TTL: skip cloud read (0 reads!)
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(uid, 'medicines', COLLECTION_SYNC_TTL_MS, t0 + 30 * 60 * 1000),
+        false
+      );
+      // Force refresh overrides TTL
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(uid, 'medicines', COLLECTION_SYNC_TTL_MS, t0 + 30 * 60 * 1000, true),
+        true
+      );
+      // Different UID is isolated and still fetches
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(otherUid, 'medicines', COLLECTION_SYNC_TTL_MS, t0 + 1000),
+        true
+      );
+      // Expired TTL triggers fresh fetch
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(uid, 'medicines', COLLECTION_SYNC_TTL_MS, t0 + COLLECTION_SYNC_TTL_MS + 1),
+        true
+      );
+
+      // Older doseLogs cache hit/miss/cutoff rollover
+      const cutoff = '2026-10-02';
+      const oldLogs: DoseLog[] = [
+        {
+          id: 'old-log-1',
+          medicineId: 'm1',
+          medicineName: 'Napa',
+          scheduledDate: '2026-09-20',
+          scheduledTime: '08:00 AM',
+          timeSlot: 'সকাল',
+          dosage: '১টি',
+          status: 'taken',
+        },
+        {
+          id: 'recent-ignored',
+          medicineId: 'm1',
+          medicineName: 'Napa',
+          scheduledDate: '2026-11-01',
+          scheduledTime: '08:00 AM',
+          timeSlot: 'সকাল',
+          dosage: '১টি',
+          status: 'taken',
+        },
+      ];
+      saveCachedOlderDoseLogs(uid, cutoff, oldLogs, t0);
+
+      const hitSameDay = loadCachedOlderDoseLogs(uid, cutoff, t0 + 60_000);
+      assert.strictEqual(hitSameDay.hit, true);
+      assert.deepStrictEqual(hitSameDay.logs.map((l) => l.id), ['old-log-1']);
+
+      // After TTL expiry -> cache miss
+      const missExpired = loadCachedOlderDoseLogs(uid, cutoff, t0 + OLDER_LOGS_CACHE_TTL_MS + 1);
+      assert.strictEqual(missExpired.hit, false);
+
+      // If cutoff advances past cached cutoff -> miss so no 1-day gap can happen
+      const missRollover = loadCachedOlderDoseLogs(uid, '2026-10-03', t0 + 60_000);
+      assert.strictEqual(missRollover.hit, false);
+
+      // Past appointments cache
+      saveCachedPastAppointments(
+        uid,
+        '2026-11-15',
+        [
+          {
+            id: 'past-1',
+            patientId: 'p1',
+            doctorName: 'ডা. এ',
+            appointmentDate: '2026-10-01',
+            appointmentTime: '10:00 AM',
+            location: 'ঢাকা',
+            status: 'completed',
+            createdAt: '2026-10-01T00:00:00Z',
+          },
+        ],
+        t0
+      );
+      const aptHit = loadCachedPastAppointments(uid, '2026-11-15', t0 + 1000);
+      assert.strictEqual(aptHit.hit, true);
+      assert.strictEqual(aptHit.appointments.length, 1);
+
+      // Invalidation & full clear on logout
+      invalidateCollectionSyncMeta(uid, ['medicines']);
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(uid, 'medicines', COLLECTION_SYNC_TTL_MS, t0 + 1000),
+        true
+      );
+      clearUserReadOptimizerCaches(uid);
+      assert.strictEqual(loadCachedOlderDoseLogs(uid, cutoff, t0 + 1000).hit, false);
+      assert.strictEqual(loadCachedPastAppointments(uid, '2026-11-15', t0 + 1000).hit, false);
+    } finally {
+      (globalThis as any).window = prevWindow;
+      (globalThis as any).localStorage = prevStorage;
+    }
+  });
+});
+
+describe('আমার ডাক্তার (ডিরেক্টরি, ফোন যাচাই, অগ্রাধিকার ও Firestore-সাশ্রয়ী ক্যাশ)', () => {
+  it('বাংলা ও ইংরেজি সংখ্যায় বাংলাদেশি ফোন নম্বর যাচাই করে, কল/হোয়াটসঅ্যাপ লিংক বানায় এবং অস্বাভাবিক ফরম্যাটে নম্র সতর্কতা দেয়', () => {
+    assert.strictEqual(normalizeBengaliDigits('০১৭১২-৩৪৫৬৭৮'), '01712-345678');
+
+    const bdMobile = validateBangladeshiPhone('০১৭১২-৩৪৫৬৭৮');
+    assert.strictEqual(bdMobile.valid, true);
+    assert.strictEqual(bdMobile.normalized, '01712345678');
+    assert.strictEqual(bdMobile.telHref, 'tel:01712345678');
+    assert.strictEqual(bdMobile.waUrl, 'https://wa.me/8801712345678');
+    assert.strictEqual(bdMobile.warningBn, undefined);
+
+    const intlBd = validateBangladeshiPhone('+880 1811-223344');
+    assert.strictEqual(intlBd.valid, true);
+    assert.strictEqual(intlBd.telHref, 'tel:+8801811223344');
+    assert.strictEqual(intlBd.waUrl, 'https://wa.me/8801811223344');
+
+    const unusual = validateBangladeshiPhone('02-9661234');
+    assert.strictEqual(unusual.valid, false);
+    assert.ok(unusual.warningBn && unusual.warningBn.length > 0);
+    // Soft non-blocking: telHref still generated for landline
+    assert.strictEqual(unusual.telHref, 'tel:029661234');
+
+    const empty = validateBangladeshiPhone('   ');
+    assert.strictEqual(empty.isEmpty, true);
+    assert.strictEqual(empty.valid, true);
+    assert.strictEqual(empty.telHref, null);
+  });
+
+  it('জরুরি ডাক্তার (isEmergency) সবসময় প্রথমে পিন করে, এরপর আসন্ন ভিজিট ও নাম অনুযায়ী সাজায় এবং ফিল্টার করে', () => {
+    const refDate = new Date(2026, 10, 15, 10, 0, 0); // 2026-11-15
+    const docs: DoctorProfile[] = [
+      {
+        id: 'd-normal-later',
+        name: 'ডা. করিম',
+        specialty: 'মেডিসিন',
+        hospital: 'ঢাকা মেডিকেল',
+        forConditions: 'জ্বর ও ঠান্ডা',
+        patientIds: ['p-mom'],
+        nextVisitDate: '2026-11-20',
+        isEmergency: false,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:00Z',
+      },
+      {
+        id: 'd-normal-sooner',
+        name: 'ডা. আয়েশা',
+        specialty: 'হৃদরোগ',
+        hospital: 'জাতীয় হৃদরোগ ইনস্টিটিউট',
+        forConditions: 'উচ্চ রক্তচাপ',
+        patientIds: ['p-dad'],
+        nextVisitDate: '2026-11-16',
+        isEmergency: false,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:00Z',
+      },
+      {
+        id: 'd-emerg',
+        name: 'ডা. জহির',
+        specialty: 'কার্ডিওলজি',
+        phone: '01711000000',
+        patientIds: ['p-dad'],
+        isEmergency: true,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:00Z',
+      },
+    ];
+
+    const sorted = sortDoctors(docs, refDate);
+    assert.deepStrictEqual(
+      sorted.map((d) => d.id),
+      ['d-emerg', 'd-normal-sooner', 'd-normal-later']
+    );
+
+    assert.strictEqual(formatVisitCountdownBn('2026-11-15', refDate).label, 'আজ ভিজিট');
+    assert.strictEqual(formatVisitCountdownBn('2026-11-16', refDate).label, 'আগামীকাল ভিজিট');
+    assert.strictEqual(formatVisitCountdownBn('2026-11-20', refDate).label, 'আর ৫ দিন');
+    assert.strictEqual(formatVisitCountdownBn('2026-11-13', refDate).label, '২ দিন আগে');
+
+    assert.deepStrictEqual(
+      filterDoctors(sorted, 'হৃদরোগ', 'all').map((d) => d.id),
+      ['d-normal-sooner']
+    );
+    assert.deepStrictEqual(
+      filterDoctors(sorted, '', 'p-dad').map((d) => d.id),
+      ['d-emerg', 'd-normal-sooner']
+    );
+  });
+
+  it('undefined/খালি ফিল্ড বাদ দেয় এবং Timestamp, serverTimestamp ও deleteField অক্ষত রাখে', () => {
+    const clean = buildCleanDoctorInput({
+      name: '  ডা. সাবিনা ইয়াসমিন  ',
+      specialty: '   ',
+      phone: '০১৭১১২২৩৩৪৪',
+      hospital: '  স্কয়ার হাসপাতাল  ',
+      notes: 'x'.repeat(650),
+      patientIds: Array.from({ length: 25 }, (_, i) => `p-${i}`),
+      isEmergency: true,
+    });
+
+    assert.strictEqual(clean.name, 'ডা. সাবিনা ইয়াসমিন');
+    assert.strictEqual(clean.specialty, undefined);
+    assert.strictEqual(clean.phone, '01711223344');
+    assert.strictEqual(clean.hospital, 'স্কয়ার হাসপাতাল');
+    assert.strictEqual(clean.notes?.length, 500);
+    assert.strictEqual(clean.patientIds?.length, 20);
+    assert.strictEqual(clean.isEmergency, true);
+
+    const st = serverTimestamp();
+    const df = deleteField();
+    const ts = Timestamp.fromMillis(1_763_000_000_000);
+    const firestorePayload = stripUndefined({
+      ...clean,
+      id: 'doc_1',
+      specialty: df,
+      createdAt: ts,
+      updatedAt: st,
+    });
+
+    assert.strictEqual('whatsapp' in firestorePayload, false);
+    assert.strictEqual(firestorePayload.specialty, df);
+    assert.strictEqual(firestorePayload.createdAt, ts);
+    assert.strictEqual(firestorePayload.updatedAt, st);
+  });
+
+  it('অ্যাপয়েন্টমেন্ট পে-লোড, জরুরি কার্ড/QR অগ্রাধিকার, নাম মেলানো ও শেয়ার রিপোর্ট সংযোগ কাজ করে', () => {
+    const doctors: DoctorProfile[] = [
+      {
+        id: 'd1',
+        name: 'ডা. তানভীর আহমেদ',
+        specialty: 'মেডিসিন',
+        phone: '01711111111',
+        hospital: 'ল্যাবএইড',
+        patientIds: ['pat_1'],
+        nextVisitDate: '2026-11-25',
+        visitingHours: 'বিকাল ৫টা',
+        isEmergency: true,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:00Z',
+      },
+    ];
+
+    assert.strictEqual(doctorExistsByName(doctors, 'Dr. তানভীর আহমেদ'), true);
+    assert.strictEqual(doctorExistsByName(doctors, 'ডা. কামাল'), false);
+
+    const emerg = findEmergencyDoctorForPatient(doctors, 'pat_1');
+    assert.strictEqual(emerg?.id, 'd1');
+
+    const qrDoc = findDoctorForEmergencyQr(doctors, 'pat_1');
+    assert.strictEqual(qrDoc?.id, 'd1');
+    assert.ok(formatEmergencyDoctorLabelForQr(qrDoc!).includes('01711111111'));
+
+    const aptPayload = buildDoctorNextVisitAppointmentPayload(doctors[0]);
+    assert.ok(aptPayload);
+    assert.strictEqual(aptPayload.doctorName, 'ডা. তানভীর আহমেদ');
+    assert.strictEqual(aptPayload.appointmentDate, '2026-11-25');
+    assert.strictEqual(aptPayload.location, 'ল্যাবএইড');
+
+    const patient: PatientProfile = {
+      id: 'pat_1',
+      name: 'রহিম সাহেব',
+      relation: 'বাবা',
+      age: 62,
+      gender: 'পুরুষ',
+      bloodGroup: 'A+',
+      chronicConditions: ['ডায়াবেটিস'],
+      allergies: [],
+      emergencyContact: '01711000000',
+    };
+    const snap = buildSharedReportSnapshot({
+      ownerUid: 'u1',
+      token: generateShareToken(),
+      patient,
+      medicines: [],
+      healthRecords: [],
+      appointments: [],
+      selection: DEFAULT_SHARED_REPORT_SECTIONS,
+      expiryHours: 168,
+      selectedDoctor: doctors[0],
+    });
+    assert.strictEqual(snap.sections.doctor?.name, 'ডা. তানভীর আহমেদ');
+    assert.strictEqual(snap.sections.doctor?.specialty, 'মেডিসিন');
+    assert.strictEqual(snap.sections.doctor?.hospital, 'ল্যাবএইড');
+    assert.ok(getIncludedSectionLabels(snap.sections).includes('ডাক্তারের তথ্য'));
+  });
+
+  it('ফোনের ক্যাশ (৬ ঘণ্টার TTL) ও দ্বিমুখী সিঙ্ক মার্জ নতুন পরিবর্তন সংরক্ষণ করে', () => {
+    const store = new Map<string, string>();
+    const prevWindow = (globalThis as any).window;
+    const prevStorage = (globalThis as any).localStorage;
+    const mockStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v);
+      },
+      removeItem: (k: string) => {
+        store.delete(k);
+      },
+    };
+    (globalThis as any).window = {};
+    (globalThis as any).localStorage = mockStorage;
+
+    try {
+      const uid = 'doc-cache-user';
+      const t0 = 1_760_000_000_000;
+
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(uid, 'doctors', RECORDS_SYNC_TTL_MS, t0),
+        true
+      );
+      markCollectionSynced(uid, 'doctors', t0);
+      // Within 6 hours -> 0 cloud reads
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(uid, 'doctors', RECORDS_SYNC_TTL_MS, t0 + 3 * 60 * 60 * 1000),
+        false
+      );
+      // After 6 hours -> allows refresh
+      assert.strictEqual(
+        shouldFetchCollectionFromCloud(uid, 'doctors', RECORDS_SYNC_TTL_MS, t0 + RECORDS_SYNC_TTL_MS + 1),
+        true
+      );
+
+      const localOnly: DoctorProfile = {
+        id: 'doc-local-1',
+        name: 'ডা. স্থানীয়',
+        isEmergency: false,
+        createdAt: new Date(t0).toISOString(),
+        updatedAt: new Date(t0 + 5000).toISOString(),
+      };
+      const updatedLocal: DoctorProfile = {
+        id: 'doc-shared-1',
+        name: 'ডা. আপডেটেড (নতুন নম্বর)',
+        phone: '01811111111',
+        isEmergency: true,
+        createdAt: new Date(t0).toISOString(),
+        updatedAt: new Date(t0 + 10_000).toISOString(),
+      };
+      const olderCloud: DoctorProfile = {
+        id: 'doc-shared-1',
+        name: 'ডা. পুরনো',
+        phone: '01700000000',
+        isEmergency: false,
+        createdAt: new Date(t0).toISOString(),
+        updatedAt: new Date(t0 + 1000).toISOString(),
+      };
+      const cloudOnly: DoctorProfile = {
+        id: 'doc-cloud-2',
+        name: 'ডা. অন্য ডিভাইস',
+        isEmergency: false,
+        createdAt: new Date(t0).toISOString(),
+        updatedAt: new Date(t0 + 2000).toISOString(),
+      };
+
+      saveCachedDoctors(uid, [localOnly, updatedLocal]);
+      assert.strictEqual(loadCachedDoctors(uid).length, 2);
+
+      const mergedRes = mergeLocalAndCloudDoctors([localOnly, updatedLocal], [olderCloud, cloudOnly]);
+      assert.strictEqual(mergedRes.merged.length, 3);
+      assert.strictEqual(mergedRes.merged[0].id, 'doc-shared-1'); // Emergency pinned first & newer local wins
+      assert.deepStrictEqual(mergedRes.toCreateInCloud.map((d) => d.id), ['doc-local-1']);
+      assert.deepStrictEqual(mergedRes.toUpdateInCloud.map((d) => d.id), ['doc-shared-1']);
+
+      clearCachedDoctors(uid);
+      assert.strictEqual(loadCachedDoctors(uid).length, 0);
+    } finally {
+      (globalThis as any).window = prevWindow;
+      (globalThis as any).localStorage = prevStorage;
+    }
+  });
 });
 
 console.log('\n================================================================');
 console.log('  🎉 ALL NEW FEATURE TESTS PASSED SUCCESSFULLY!');
 console.log('================================================================\n');
+
+

@@ -10,12 +10,15 @@ import { MobileNav } from './components/layout/MobileNav';
 import { Toast } from './components/ui/Toast';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { MedicineList } from './components/medicines/MedicineList';
+import { WeeklyPillboxView } from './components/medicines/WeeklyPillboxView';
 import { AddMedicine } from './components/medicines/AddMedicine';
 import { ShoppingListPage } from './components/medicines/ShoppingListPage';
 import { MedicineReminder } from './components/reminders/MedicineReminder';
 import { MedicineHistory } from './components/history/MedicineHistory';
 import { Settings } from './components/settings/Settings';
-import { MedicineLibrary } from './components/library/MedicineLibrary';
+const MedicineLibrary = React.lazy(() =>
+  import('./components/library/MedicineLibrary').then((m) => ({ default: m.MedicineLibrary }))
+);
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AdminLibraryManager } from './components/admin/AdminLibraryManager';
 import { AuthModal } from './components/auth/AuthModal';
@@ -38,6 +41,10 @@ import { setNativeAlarmVoiceEnabled } from './services/nativeReminders';
 import { SharedReportViewer } from './components/reports/SharedReportViewer';
 import { ShareReportPage } from './components/reports/ShareReportPage';
 import { extractSharedReportTokenFromPath } from './utils/sharedReports';
+import { EmergencyCardViewer } from './components/emergency/EmergencyCardViewer';
+import { EmergencyQrPage } from './components/emergency/EmergencyQrPage';
+import { extractEmergencyCardTokenFromPath } from './utils/emergencyQr';
+import { DoctorsPage } from './components/doctors/DoctorsPage';
 
 const AppContent: React.FC = () => {
   const {
@@ -78,7 +85,7 @@ const AppContent: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors print-root-white print:bg-white print:text-black print:min-h-0">
+    <div className="min-h-screen flex flex-col bg-bg text-text transition-colors print-root-white print:bg-white print:text-black print:min-h-0">
       
       {/* Top Bar following Top Bar Contract */}
       <Navbar activePage={currentPage} onNavigate={setCurrentPage} />
@@ -89,16 +96,32 @@ const AppContent: React.FC = () => {
         {currentPage === 'me' && <MePage />}
         {currentPage === 'checklist' && <DailyChecklist />}
         {currentPage === 'medicines' && <MedicineList />}
+        {currentPage === 'weekly-pillbox' && <WeeklyPillboxView />}
         {currentPage === 'shopping-list' && <ShoppingListPage />}
         {currentPage === 'health-records' && <HealthRecordsPage />}
         {currentPage === 'appointments' && <AppointmentsPage />}
+        {currentPage === 'doctors' && <DoctorsPage />}
         {currentPage === 'add-medicine' && <AddMedicine />}
         {currentPage === 'ai-assistant' && <AiAssistantPage />}
         {currentPage === 'reminders' && <MedicineReminder />}
         {currentPage === 'history' && <MedicineHistory />}
         {currentPage === 'share-report' && <ShareReportPage />}
+        {currentPage === 'emergency-qr' && <EmergencyQrPage />}
         {currentPage === 'settings' && <Settings />}
-        {currentPage === 'library' && <MedicineLibrary />}
+        {currentPage === 'library' && (
+          <React.Suspense
+            fallback={
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 text-center">
+                <div className="inline-flex items-center gap-2.5 px-5 py-3 rounded-2xl bg-surface border border-border text-sm font-semibold text-text-muted shadow-xs">
+                  <span className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  <span>ওষুধ লাইব্রেরি খোলা হচ্ছে…</span>
+                </div>
+              </div>
+            }
+          >
+            <MedicineLibrary />
+          </React.Suspense>
+        )}
         {currentPage === 'admin-library' && <AdminLibraryManager />}
         {(currentPage === 'admin-import' || currentPage === 'admin-dashboard') && <AdminDashboard />}
       </main>
@@ -152,11 +175,11 @@ const AppContent: React.FC = () => {
       <OnboardingModal isOpen={showOnboarding} onComplete={handleCloseOnboarding} />
 
       {/* Quiet Footer */}
-      <footer className="no-print hidden md:block border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-6 text-xs text-slate-500 dark:text-slate-400">
+      <footer className="no-print hidden md:block border-t border-border bg-surface py-6 text-xs text-text-muted">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <AppLogo size="sm" showText={false} />
-            <span className="font-semibold text-slate-800 dark:text-slate-200">
+            <span className="font-semibold text-text">
               স্বাস্থ্যবন্ধু
             </span>
             <span aria-hidden="true">·</span>
@@ -164,9 +187,9 @@ const AppContent: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-6">
-            <span>জাতীয় স্বাস্থ্য হেল্পলাইন: <strong className="text-teal-700 dark:text-teal-400">১৬২৬৩</strong></span>
+            <span>জাতীয় স্বাস্থ্য হেল্পলাইন: <strong className="text-primary">১৬২৬৩</strong></span>
             <span aria-hidden="true">·</span>
-            <span>জাতীয় জরুরি সেবা: <strong className="text-teal-700 dark:text-teal-400">৯৯৯</strong></span>
+            <span>জাতীয় জরুরি সেবা: <strong className="text-primary">৯৯৯</strong></span>
             <span aria-hidden="true">·</span>
             <span>© ২০২৬ সর্বস্বত্ব সংরক্ষিত</span>
           </div>
@@ -178,13 +201,16 @@ const AppContent: React.FC = () => {
 };
 
 export default function App() {
-  const shareToken =
-    typeof window !== 'undefined'
-      ? extractSharedReportTokenFromPath(window.location.pathname)
-      : null;
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+  const shareToken = extractSharedReportTokenFromPath(pathname);
+  const emergencyToken = extractEmergencyCardTokenFromPath(pathname);
 
   if (shareToken) {
     return <SharedReportViewer token={shareToken} />;
+  }
+
+  if (emergencyToken) {
+    return <EmergencyCardViewer token={emergencyToken} />;
   }
 
   return (

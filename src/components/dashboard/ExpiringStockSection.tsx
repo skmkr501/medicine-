@@ -60,36 +60,36 @@ export const ExpiringStockSection: React.FC = () => {
     switch (status) {
       case 'out_of_stock':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-900">
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-danger-soft text-danger-text border border-danger/30">
             <XCircle className="w-3.5 h-3.5" />
             স্টক শেষ (০ টি)
           </span>
         );
       case 'urgent':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-danger-soft text-danger-text border border-danger/30">
+            <AlertTriangle className="w-3.5 h-3.5 text-danger" />
             জরুরি · আর {toBengaliNumber(daysRemaining ?? 0)} দিন
           </span>
         );
       case 'low_stock':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-            <Clock className="w-3.5 h-3.5 text-amber-600" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-warning-soft text-warning-text border border-warning/30">
+            <Clock className="w-3.5 h-3.5 text-warning" />
             স্বল্প স্টক · আর {toBengaliNumber(daysRemaining ?? 0)} দিন
           </span>
         );
       case 'safe':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-success-soft text-success-text border border-success/30">
+            <ShieldCheck className="w-3.5 h-3.5 text-success" />
             পর্যাপ্ত · {toBengaliNumber(daysRemaining ?? 0)} দিন
           </span>
         );
       case 'incalculable':
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-surface-2 text-text-muted border border-border">
             <Info className="w-3.5 h-3.5" />
             অনির্ধারিত ডোজ
           </span>
@@ -98,37 +98,37 @@ export const ExpiringStockSection: React.FC = () => {
   };
 
   return (
-    <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
+    <section className="bg-surface border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
       {/* Section Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
         <div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-teal-50 dark:bg-teal-950/80 text-teal-700 dark:text-teal-400 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-primary-soft text-primary flex items-center justify-center">
               <Sparkles className="w-4 h-4" />
             </div>
-            <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+            <h2 className="text-base sm:text-lg font-bold text-text">
               শিগগির শেষ হবে (Smart Stock Predictor)
             </h2>
             {attentionCount > 0 && (
-              <span className="bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 text-xs font-bold px-2 py-0.5 rounded-full">
+              <span className="bg-accent-soft text-accent-text border border-accent/25 text-xs font-bold px-2 py-0.5 rounded-full">
                 {toBengaliNumber(attentionCount)}টি নজরে রাখা দরকার
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+          <p className="text-xs text-text-muted mt-1">
             আপনার দৈনিক সেবনের মাত্রা বিশ্লেষণ করে সিস্টেম স্বয়ংক্রিয়ভাবে হিসাব করে কত দিন ওষুধ চলবে।
           </p>
         </div>
 
         {/* Filter buttons */}
-        <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl self-start sm:self-auto text-xs font-semibold">
+        <div className="flex flex-wrap items-center gap-1.5 bg-surface-2 p-1 rounded-xl self-start sm:self-auto text-xs font-semibold border border-border">
           <button
             type="button"
             onClick={() => setStatusFilter('all')}
             className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
               statusFilter === 'all'
-                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs font-bold'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                ? 'bg-surface text-text shadow-xs font-bold'
+                : 'text-text-muted hover:text-text'
             }`}
           >
             সকল ({toBengaliNumber(patientPredictions.length)})
@@ -139,8 +139,8 @@ export const ExpiringStockSection: React.FC = () => {
               onClick={() => setStatusFilter('urgent')}
               className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 statusFilter === 'urgent'
-                  ? 'bg-rose-600 text-white shadow-xs font-bold'
-                  : 'text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                  ? 'bg-danger text-white shadow-xs font-bold'
+                  : 'text-danger-text hover:bg-danger-soft'
               }`}
             >
               জরুরি ({toBengaliNumber(urgentCount)})
@@ -152,8 +152,8 @@ export const ExpiringStockSection: React.FC = () => {
               onClick={() => setStatusFilter('low_stock')}
               className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 statusFilter === 'low_stock'
-                  ? 'bg-amber-600 text-white shadow-xs font-bold'
-                  : 'text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+                  ? 'bg-warning text-white shadow-xs font-bold'
+                  : 'text-warning-text hover:bg-warning-soft'
               }`}
             >
               স্বল্প স্টক ({toBengaliNumber(lowStockCount)})
@@ -165,8 +165,8 @@ export const ExpiringStockSection: React.FC = () => {
               onClick={() => setStatusFilter('out_of_stock')}
               className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 statusFilter === 'out_of_stock'
-                  ? 'bg-rose-700 text-white shadow-xs font-bold'
-                  : 'text-rose-700 dark:text-rose-400'
+                  ? 'bg-danger text-white shadow-xs font-bold'
+                  : 'text-danger-text hover:bg-danger-soft'
               }`}
             >
               স্টক শেষ ({toBengaliNumber(outOfStockCount)})
@@ -177,12 +177,12 @@ export const ExpiringStockSection: React.FC = () => {
 
       {/* Predictions Grid */}
       {displayedPredictions.length === 0 ? (
-        <div className="p-8 text-center bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-2">
-          <ShieldCheck className="w-10 h-10 text-emerald-600 mx-auto" />
-          <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+        <div className="p-8 text-center bg-surface-2 rounded-2xl border border-border space-y-2">
+          <ShieldCheck className="w-10 h-10 text-success mx-auto" />
+          <h4 className="text-sm font-bold text-text">
             এই ফিল্টারে কোনো ওষুধ নেই
           </h4>
-          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+          <p className="text-xs text-text-muted max-w-sm mx-auto">
             আপনার সকল ওষুধের পর্যাপ্ত মজুত রয়েছে অথবা অন্য ফিল্টারে রয়েছে।
           </p>
         </div>
@@ -197,24 +197,24 @@ export const ExpiringStockSection: React.FC = () => {
             return (
               <div
                 key={med.id}
-                className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-3.5 bg-white dark:bg-slate-900 ${
+                className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-3.5 bg-surface ${
                   pred.status === 'out_of_stock'
-                    ? 'border-rose-300 dark:border-rose-900 bg-rose-50/20 dark:bg-rose-950/20'
+                    ? 'border-danger/50 bg-danger-soft/20'
                     : pred.status === 'urgent'
-                    ? 'border-rose-200 dark:border-rose-900/60 bg-rose-50/15 dark:bg-rose-950/10'
+                    ? 'border-danger/35 bg-danger-soft/15'
                     : pred.status === 'low_stock'
-                    ? 'border-amber-200 dark:border-amber-900/60 bg-amber-50/15 dark:bg-amber-950/10'
-                    : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'
+                    ? 'border-warning/35 bg-warning-soft/15'
+                    : 'border-border hover:border-primary/40'
                 }`}
               >
                 <div>
                   {/* Top: Brand, strength, and status badge */}
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                      <h4 className="text-sm font-bold text-text">
                         {med.brandName}
                       </h4>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      <p className="text-[11px] text-text-muted">
                         {med.genericName} · {med.strength}
                       </p>
                     </div>
@@ -224,24 +224,24 @@ export const ExpiringStockSection: React.FC = () => {
                   {/* Patient profile tag if assigned */}
                   {assignedPatient && (
                     <div className="mt-1.5">
-                      <span className="inline-block text-[10px] font-semibold text-teal-800 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-2 py-0.5 rounded-md">
+                      <span className="inline-block text-[10px] font-semibold text-primary bg-primary-soft px-2 py-0.5 rounded-md">
                         {assignedPatient.name} ({assignedPatient.relation})
                       </span>
                     </div>
                   )}
 
                   {/* Stock and Consumption Metrics */}
-                  <div className="mt-3 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-1.5 text-xs">
+                  <div className="mt-3 p-3 bg-surface-2 rounded-xl space-y-1.5 text-xs">
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500 dark:text-slate-400">বর্তমান মজুত:</span>
-                      <strong className="text-slate-900 dark:text-white tabular-nums">
+                      <span className="text-text-muted">বর্তমান মজুত:</span>
+                      <strong className="text-text tabular-nums">
                         {toBengaliNumber(med.stock)} {med.unit}
                       </strong>
                     </div>
 
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500 dark:text-slate-400">দৈনিক প্রয়োজন:</span>
-                      <strong className="text-slate-800 dark:text-slate-200 tabular-nums">
+                      <span className="text-text-muted">দৈনিক প্রয়োজন:</span>
+                      <strong className="text-text tabular-nums">
                         {pred.dailyConsumptionRate > 0
                           ? `${toBengaliNumber(pred.dailyConsumptionRate)} ${med.unit} / দিন`
                           : 'অনির্ধারিত'}
@@ -249,12 +249,12 @@ export const ExpiringStockSection: React.FC = () => {
                     </div>
 
                     {pred.runoutDate && (
-                      <div className="flex items-center justify-between pt-1 border-t border-slate-200/60 dark:border-slate-700/60 text-[11px]">
-                        <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-teal-600" />
+                      <div className="flex items-center justify-between pt-1 border-t border-border text-[11px]">
+                        <span className="text-text-muted flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-primary" />
                           সম্ভাব্য শেষ তারিখ:
                         </span>
-                        <strong className="text-teal-700 dark:text-teal-400">
+                        <strong className="text-primary">
                           {formatBengaliDate(pred.runoutDate)}
                         </strong>
                       </div>
@@ -262,21 +262,21 @@ export const ExpiringStockSection: React.FC = () => {
                   </div>
 
                   {/* Neutral Logistics Advice Note */}
-                  <div className="mt-2 text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                  <div className="mt-2 text-[11px] text-text-muted leading-relaxed">
                     {pred.status === 'out_of_stock' ? (
-                      <span className="text-rose-700 dark:text-rose-400 font-semibold">
+                      <span className="text-danger-text font-semibold">
                         ⚠️ কোনো মজুত অবশিষ্ট নেই। অবিলম্বে ফার্মেসি থেকে রিফিল নিশ্চিত করুন।
                       </span>
                     ) : pred.status === 'urgent' ? (
-                      <span className="text-rose-700 dark:text-rose-400 font-medium">
+                      <span className="text-danger-text font-medium">
                         পরবর্তী ৩ দিনের মধ্যে শেষ হবে। ডোজ ব্যাহত হওয়া রোধে দ্রুত রিফিল সংগ্রহ করুন।
                       </span>
                     ) : pred.status === 'low_stock' ? (
-                      <span className="text-amber-800 dark:text-amber-400 font-medium">
+                      <span className="text-warning-text font-medium">
                         পরবর্তী ৭ দিনের স্টক অবশিষ্ট আছে। সুবিধাজনক সময়ে রিফিল ক্রয় করে রাখুন।
                       </span>
                     ) : (
-                      <span className="text-slate-500 dark:text-slate-400">
+                      <span className="text-text-muted">
                         পর্যাপ্ত পরিমাণ স্টক রয়েছে। নিয়মিত ডোজ অনুসরণ করুন।
                       </span>
                     )}
@@ -284,11 +284,11 @@ export const ExpiringStockSection: React.FC = () => {
                 </div>
 
                 {/* Bottom Action Buttons */}
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
+                <div className="pt-2 border-t border-border flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => setSelectedMedicineIdForDetail(med.id)}
-                    className="text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-teal-700 dark:hover:text-teal-400 cursor-pointer"
+                    className="text-xs font-semibold text-text-muted hover:text-primary cursor-pointer"
                   >
                     বিস্তারিত দেখুন
                   </button>
@@ -296,7 +296,7 @@ export const ExpiringStockSection: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => openStockAdjustmentModal(med.id)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-50 dark:bg-teal-950/80 hover:bg-teal-100 dark:hover:bg-teal-900/80 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300 font-semibold text-xs rounded-xl transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-soft hover:bg-primary/15 border border-primary/25 text-primary font-semibold text-xs rounded-xl transition-colors cursor-pointer"
                   >
                     <Package className="w-3.5 h-3.5" />
                     <span>স্টক আপডেট / রিফিল</span>
@@ -309,9 +309,9 @@ export const ExpiringStockSection: React.FC = () => {
       )}
 
       {/* Deduped 24-Hour Non-Intrusive Notification Footer */}
-      <div className="p-3.5 bg-teal-50/50 dark:bg-teal-950/20 border border-teal-100 dark:border-teal-900/40 rounded-xl flex items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2 text-teal-900 dark:text-teal-200">
-          <Bell className="w-4 h-4 text-teal-600 shrink-0" />
+      <div className="p-3.5 bg-primary-soft/60 border border-primary/20 rounded-xl flex items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2 text-text">
+          <Bell className="w-4 h-4 text-primary shrink-0" />
           <span>
             <strong>স্মার্ট নোটিফিকেশন সুরক্ষা:</strong> ওষুধ শেষ হওয়ার সতর্কবার্তা দিনে সর্বোচ্চ একবার পাঠানো হয়, যা বিরক্তিহীন ও সুশৃঙ্খল রিমাইন্ডার নিশ্চিত করে।
           </span>
@@ -319,7 +319,7 @@ export const ExpiringStockSection: React.FC = () => {
         <button
           type="button"
           onClick={() => setCurrentPage('medicines')}
-          className="text-teal-700 dark:text-teal-400 hover:underline font-semibold text-[11px] whitespace-nowrap cursor-pointer shrink-0"
+          className="text-primary hover:underline font-semibold text-[11px] whitespace-nowrap cursor-pointer shrink-0"
         >
           সকল ওষুধ ব্যবস্থাপনা →
         </button>

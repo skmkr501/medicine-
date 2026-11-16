@@ -1,11 +1,102 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
-@layer base {
-  :root {
-    --font-sans: 'Hind Siliguri', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  }
+:root {
+  --font-sans: 'Hind Siliguri', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
+  --primary: #4F46E5;
+  --primary-hover: #4338CA;
+  --primary-soft: #EEF2FF;
+  --on-primary: #FFFFFF;
+
+  --accent: #F43F5E;
+  --accent-soft: #FFF1F2;
+  --accent-text: #BE123C;
+
+  --bg: #F8FAFC;
+  --surface: #FFFFFF;
+  --surface-2: #F1F5F9;
+  --border: #E2E8F0;
+
+  --text: #0F172A;
+  --text-muted: #475569;
+
+  --success: #16A34A;
+  --success-soft: #DCFCE7;
+  --success-text: #15803D;
+
+  --warning: #D97706;
+  --warning-soft: #FEF3C7;
+  --warning-text: #B45309;
+
+  --danger: #DC2626;
+  --danger-soft: #FEE2E2;
+  --danger-text: #B91C1C;
+}
+
+.dark {
+  --primary: #818CF8;
+  --primary-hover: #A5B4FC;
+  --primary-soft: #1E1B4B;
+  --on-primary: #0B1020;
+
+  --accent: #FB7185;
+  --accent-soft: #3F0F1B;
+  --accent-text: #FDA4AF;
+
+  --bg: #0B1020;
+  --surface: #151B2E;
+  --surface-2: #1C2440;
+  --border: #2A3358;
+
+  --text: #E8ECF8;
+  --text-muted: #9AA6C8;
+
+  --success: #4ADE80;
+  --success-soft: #052E16;
+  --success-text: #86EFAC;
+
+  --warning: #FBBF24;
+  --warning-soft: #451A03;
+  --warning-text: #FDE68A;
+
+  --danger: #F87171;
+  --danger-soft: #450A0A;
+  --danger-text: #FCA5A5;
+}
+
+@theme inline {
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-on-primary: var(--on-primary);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-text: var(--success-text);
+
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-text: var(--warning-text);
+
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-text: var(--danger-text);
+}
+
+@layer base {
   html {
     font-size: 16px;
   }
@@ -14,14 +105,52 @@
     font-family: var(--font-sans);
     font-size: 1rem;
     line-height: 1.5;
+    background-color: var(--bg);
+    color: var(--text);
     -webkit-tap-highlight-color: transparent;
   }
+}
+
+.bg-brand-gradient {
+  background: linear-gradient(135deg, #4F46E5 0%, #6366F1 100%);
+}
+
+.dark .bg-brand-gradient {
+  background: linear-gradient(135deg, #312E81 0%, #1E1B4B 100%);
 }
 
 @media print {
   @page {
     size: A4 portrait;
     margin: 14mm;
+  }
+
+  html,
+  html.dark,
+  :root,
+  .dark {
+    --primary: #4F46E5;
+    --primary-hover: #4338CA;
+    --primary-soft: #EEF2FF;
+    --on-primary: #FFFFFF;
+    --accent: #F43F5E;
+    --accent-soft: #FFF1F2;
+    --accent-text: #BE123C;
+    --bg: #FFFFFF;
+    --surface: #FFFFFF;
+    --surface-2: #EEF2FF;
+    --border: #CBD5E1;
+    --text: #000000;
+    --text-muted: #334155;
+    --success: #16A34A;
+    --success-soft: #DCFCE7;
+    --success-text: #15803D;
+    --warning: #D97706;
+    --warning-soft: #FEF3C7;
+    --warning-text: #B45309;
+    --danger: #DC2626;
+    --danger-soft: #FEE2E2;
+    --danger-text: #B91C1C;
   }
 
   html,
@@ -73,7 +202,7 @@
   }
 
   .print-table thead tr {
-    background-color: #f1f5f9 !important;
+    background-color: #EEF2FF !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
@@ -87,4 +216,184 @@
     font-weight: 400 !important;
     font-family: 'Noto Sans Bengali', 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
+
+  /* Daily Medicine Slip Print Isolation (prevents dark mode / trailing blank blocks) */
+  body.slip-preview-open {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.slip-preview-open #root {
+    display: none !important;
+  }
+
+  .slip-modal-overlay {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  .slip-modal-container {
+    max-width: none !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .slip-print-sheet {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 14pt !important;
+    line-height: 1.45 !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  .slip-section-block {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .slip-bucket-header {
+    background-color: #EEF2FF !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .slip-page-break {
+    break-after: page;
+    page-break-after: always;
+  }
+
+  /* Wallet Card Print Isolation (credit-card size 85.6mm x 53.98mm on pure white) */
+  body.wallet-card-print-active {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.wallet-card-print-active nav,
+  body.wallet-card-print-active footer,
+  body.wallet-card-print-active .no-print {
+    display: none !important;
+  }
+
+  body.wallet-card-print-active .wallet-print-wrapper {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 8mm !important;
+    background: #ffffff !important;
+  }
+
+  body.wallet-card-print-active .wallet-card-sheet {
+    width: 85.6mm !important;
+    height: 53.98mm !important;
+    max-width: 85.6mm !important;
+    max-height: 53.98mm !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #94a3b8 !important;
+    border-radius: 3mm !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Weekly Pillbox A4 Landscape Print Isolation (pure white sheet, soft row-header tint only) */
+  body.pillbox-print-active {
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.pillbox-print-active #root {
+    display: none !important;
+  }
+
+  .pillbox-modal-overlay {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  .pillbox-modal-container {
+    max-width: none !important;
+    width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .pillbox-print-sheet {
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+
+  .pillbox-print-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    table-layout: fixed !important;
+  }
+
+  .pillbox-print-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .pillbox-row-header {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color: #0f172a !important;
+  }
+}
+
+.wallet-card-sheet {
+  width: 85.6mm;
+  height: 53.98mm;
+  max-width: 100%;
 }

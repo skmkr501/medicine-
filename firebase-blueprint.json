@@ -135,6 +135,30 @@
       },
       "required": ["id", "doctorName", "appointmentDate", "appointmentTime"]
     },
+    "DoctorProfile": {
+      "title": "DoctorProfile",
+      "description": "Strictly private personal doctors directory for the user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "specialty": { "type": "string", "maxLength": 500 },
+        "phone": { "type": "string", "maxLength": 500 },
+        "whatsapp": { "type": "string", "maxLength": 500 },
+        "hospital": { "type": "string", "maxLength": 500 },
+        "address": { "type": "string", "maxLength": 500 },
+        "visitingHours": { "type": "string", "maxLength": 500 },
+        "forConditions": { "type": "string", "maxLength": 500 },
+        "patientIds": { "type": "array" },
+        "lastVisitDate": { "type": "string", "maxLength": 500 },
+        "nextVisitDate": { "type": "string", "maxLength": 500 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "isEmergency": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "isEmergency", "createdAt", "updatedAt"]
+    },
     "GlobalMedicine": {
       "title": "GlobalMedicine",
       "description": "Global pharmaceutical compendium medicine entry with compliance metadata",
@@ -227,6 +251,7 @@
         "caregiverName": { "type": "string", "maxLength": 128 },
         "status": { "type": "string", "maxLength": 16 },
         "allowFullView": { "type": "boolean" },
+        "allowSuggestions": { "type": "boolean" },
         "expiresAtMs": { "type": "number" },
         "createdAt": { "type": "string", "maxLength": 64 },
         "linkedAt": { "type": "string", "maxLength": 64 },
@@ -276,6 +301,49 @@
         "revoked": { "type": "boolean" }
       },
       "required": ["ownerUid", "token", "createdAt", "expiresAt", "patientName", "sections", "revoked"]
+    },
+    "EmergencyCard": {
+      "title": "EmergencyCard",
+      "description": "Privacy-controlled public emergency QR card without expiry, revocable anytime by owner",
+      "type": "object",
+      "properties": {
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "token": { "type": "string", "minLength": 20, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "patientName": { "type": "string", "maxLength": 500 },
+        "age": { "type": "number" },
+        "bloodGroup": { "type": "string", "maxLength": 500 },
+        "allergies": { "type": "string", "maxLength": 500 },
+        "conditions": { "type": "string", "maxLength": 500 },
+        "contactName": { "type": "string", "maxLength": 500 },
+        "contactPhone": { "type": "string", "maxLength": 500 },
+        "medicines": { "type": "string", "maxLength": 500 },
+        "doctorName": { "type": "string", "maxLength": 500 },
+        "active": { "type": "boolean" }
+      },
+      "required": ["ownerUid", "token", "createdAt", "patientName", "active"]
+    },
+    "CaregiverSuggestion": {
+      "title": "CaregiverSuggestion",
+      "description": "Remote medicine add/edit/stop suggestion sent by an authorized linked caregiver requiring explicit patient approval",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "patientUid": { "type": "string", "maxLength": 128 },
+        "caregiverUid": { "type": "string", "maxLength": 128 },
+        "linkId": { "type": "string", "maxLength": 16 },
+        "caregiverName": { "type": "string", "maxLength": 128 },
+        "patientName": { "type": "string", "maxLength": 128 },
+        "kind": { "type": "string", "maxLength": 16 },
+        "medicine": { "type": "object" },
+        "targetMedicineId": { "type": "string", "maxLength": 128 },
+        "targetMedicineName": { "type": "string", "maxLength": 128 },
+        "note": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "maxLength": 16 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdAtMs": { "type": "number" }
+      },
+      "required": ["id", "patientUid", "caregiverUid", "linkId", "caregiverName", "kind", "medicine", "status", "createdAt", "createdAtMs"]
     }
   },
   "firestore": {
@@ -307,6 +375,10 @@
       "schema": "DoctorAppointment",
       "description": "Doctor appointments tracked by user"
     },
+    "/users/{userId}/doctors/{doctorId}": {
+      "schema": "DoctorProfile",
+      "description": "Strictly private saved doctors directory for this user"
+    },
     "/global_medicines/{medicineId}": {
       "schema": "GlobalMedicine",
       "description": "Legacy global verified medicine catalog"
@@ -334,6 +406,14 @@
     "/shared_reports/{token}": {
       "schema": "SharedReport",
       "description": "Token-gated snapshot reports shared with doctors or family members"
+    },
+    "/emergency_cards/{token}": {
+      "schema": "EmergencyCard",
+      "description": "Token-gated emergency QR cards readable without login while active"
+    },
+    "/caregiver_suggestions/{suggestionId}": {
+      "schema": "CaregiverSuggestion",
+      "description": "Medicine add/edit/stop suggestions submitted by linked caregivers awaiting patient approval"
     }
   }
 }

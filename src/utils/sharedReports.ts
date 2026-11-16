@@ -10,6 +10,7 @@ import {
   SharedReportReadingItem,
   SharedReportAppointmentItem,
   SharedReportDoc,
+  DoctorProfile,
 } from '../types';
 import { formatBengaliDate, toBengaliNumber } from './bengaliUtils';
 
@@ -151,6 +152,7 @@ export function buildSharedReportWhatsAppUrl(
 
 export function getIncludedSectionLabels(sections: SharedReportSections): string[] {
   const labels: string[] = [];
+  if (sections.doctor?.name) labels.push('ডাক্তারের তথ্য');
   if (sections.medicines !== undefined) labels.push('চলমান ওষুধ');
   if (sections.allergiesEmergency !== undefined) labels.push('অ্যালার্জি ও জরুরি তথ্য');
   if (sections.recentReadings !== undefined) labels.push('সাম্প্রতিক রিডিং');
@@ -180,6 +182,7 @@ export interface BuildSnapshotParams {
   appointments: DoctorAppointment[];
   selection: SharedReportSectionSelection;
   expiryHours: SharedReportExpiryHours;
+  selectedDoctor?: DoctorProfile | null;
   nowMs?: number;
 }
 
@@ -208,6 +211,7 @@ export function buildSharedReportSnapshot(
     appointments,
     selection,
     expiryHours,
+    selectedDoctor,
     nowMs = Date.now(),
   } = params;
 
@@ -222,6 +226,18 @@ export function buildSharedReportSnapshot(
   }
 
   const sections: SharedReportSections = {};
+
+  if (selectedDoctor && selectedDoctor.name?.trim()) {
+    sections.doctor = {
+      name: selectedDoctor.name.trim().slice(0, 128),
+      ...(selectedDoctor.specialty?.trim()
+        ? { specialty: selectedDoctor.specialty.trim().slice(0, 128) }
+        : {}),
+      ...(selectedDoctor.hospital?.trim()
+        ? { hospital: selectedDoctor.hospital.trim().slice(0, 200) }
+        : {}),
+    };
+  }
 
   if (selection.medicines) {
     const activeMeds = medicines

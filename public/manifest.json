@@ -4,8 +4,8 @@
   "description": "বাংলা ভাষায় আধুনিক, দায়িত্বশীল ও সহজে ব্যবহারযোগ্য ডিজিটাল ওষুধ ব্যবস্থাপনা অ্যাপ্লিকেশন।",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0F766E",
-  "theme_color": "#0F766E",
+  "background_color": "#4F46E5",
+  "theme_color": "#4F46E5",
   "lang": "bn",
   "orientation": "portrait",
   "icons": [

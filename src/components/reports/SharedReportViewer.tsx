@@ -25,6 +25,7 @@ import {
   FileX2,
   Ban,
   Lock,
+  Stethoscope,
 } from 'lucide-react';
 
 interface SharedReportViewerProps {
@@ -136,7 +137,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
     return (
       <div className="min-h-screen bg-white text-slate-900 flex items-center justify-center p-6">
         <div className="max-w-md w-full text-center space-y-4">
-          <div className="w-12 h-12 rounded-full border-4 border-teal-200 border-t-teal-700 animate-spin mx-auto" />
+          <div className="w-12 h-12 rounded-full border-4 border-indigo-200 border-t-[#4F46E5] animate-spin mx-auto" />
           <p className="text-lg font-bold text-slate-900">রিপোর্ট খোলা হচ্ছে...</p>
           <p className="text-sm text-slate-600">অনুগ্রহ করে কয়েক সেকেন্ড অপেক্ষা করুন</p>
         </div>
@@ -156,7 +157,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
           <button
             type="button"
             onClick={loadReport}
-            className="min-h-[48px] px-6 py-3 bg-teal-700 hover:bg-teal-800 text-white font-bold text-base rounded-xl inline-flex items-center gap-2 cursor-pointer"
+            className="min-h-[48px] px-6 py-3 bg-[#4F46E5] hover:bg-[#4338CA] text-white font-bold text-base rounded-xl inline-flex items-center gap-2 cursor-pointer"
           >
             <RefreshCw className="w-5 h-5" />
             <span>আবার চেষ্টা করুন</span>
@@ -195,7 +196,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
   const { report } = state;
   const createdAtMs = report.createdAtMs || toMillisSafe(report.createdAt);
   const expiresAtMs = report.expiresAtMs || toMillisSafe(report.expiresAt);
-  const { medicines, allergiesEmergency, recentReadings, appointments } = report.sections;
+  const { medicines, allergiesEmergency, recentReadings, appointments, doctor } = report.sections;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 py-6 px-4 sm:px-6 print-root-white">
@@ -209,7 +210,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
         </div>
 
         {/* Report Header + Print Button */}
-        <div className="border-b-2 border-teal-700 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="border-b-2 border-[#4F46E5] pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <AppLogo size="md" showText={false} />
             <div>
@@ -225,7 +226,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
           <button
             type="button"
             onClick={() => window.print()}
-            className="no-print min-h-[48px] px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-base rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer shrink-0"
+            className="no-print min-h-[48px] px-5 py-2.5 bg-[#4F46E5] hover:bg-[#4338CA] text-white font-bold text-base rounded-xl inline-flex items-center justify-center gap-2 cursor-pointer shrink-0"
           >
             <Printer className="w-5 h-5" />
             <span>PDF / প্রিন্ট করুন</span>
@@ -261,11 +262,28 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
           </div>
         </div>
 
+        {/* Optional Recipient Doctor Header */}
+        {doctor?.name && (
+          <div className="p-4 rounded-xl bg-indigo-50/70 border border-indigo-200 flex items-start gap-3">
+            <Stethoscope className="w-5 h-5 text-[#4F46E5] shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <span className="text-xs text-slate-600 block">প্রাপক ডাক্তার</span>
+              <strong className="text-base font-bold text-slate-900">
+                {doctor.name}
+                {doctor.specialty ? ` · ${doctor.specialty}` : ''}
+              </strong>
+              {doctor.hospital && (
+                <div className="text-xs text-slate-700 mt-0.5">{doctor.hospital}</div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Section 1: Active Medicines Table */}
         {medicines !== undefined && (
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Pill className="w-5 h-5 text-teal-700" />
+              <Pill className="w-5 h-5 text-[#4F46E5]" />
               <span>চলমান ওষুধসমূহ ({toBengaliNumber(medicines.length)}টি)</span>
             </h2>
 
@@ -337,7 +355,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
               <div className="p-4 rounded-xl border border-slate-300 bg-white">
                 <span className="text-xs text-slate-500 block font-medium">জরুরি যোগাযোগ</span>
                 <strong className="text-base font-bold text-slate-900 inline-flex items-center gap-1.5 mt-0.5">
-                  <PhoneCall className="w-4 h-4 text-teal-700" />
+                  <PhoneCall className="w-4 h-4 text-[#4F46E5]" />
                   <span>{allergiesEmergency.emergencyContact || 'দেওয়া নেই'}</span>
                 </strong>
               </div>
@@ -371,7 +389,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
         {recentReadings !== undefined && (
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Activity className="w-5 h-5 text-teal-700" />
+              <Activity className="w-5 h-5 text-[#4F46E5]" />
               <span>সাম্প্রতিক স্বাস্থ্য রিডিং</span>
             </h2>
 
@@ -432,7 +450,7 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
         {appointments !== undefined && (
           <section className="space-y-3">
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-teal-700" />
+              <Calendar className="w-5 h-5 text-[#4F46E5]" />
               <span>ডাক্তারের অ্যাপয়েন্টমেন্ট</span>
             </h2>
 

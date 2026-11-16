@@ -293,11 +293,22 @@ export function evaluateCaregiverTriggers(
 
     // 1. Optional full-view medicine summary (used ONLY when patient explicitly enabled allowFullView)
     sharedMedicines.push({
+      id: med.id,
       brandName: med.brandName,
+      genericName: med.genericName || undefined,
       strength: med.strength || undefined,
+      type: med.type,
       mealTiming: med.mealTiming,
       stock: typeof med.stock === 'number' ? med.stock : 0,
       unit: med.unit || 'টি',
+      durationDays: typeof med.durationDays === 'number' ? med.durationDays : undefined,
+      isChronic: Boolean(med.isChronic),
+      schedules: schedules.map((s) => ({
+        id: s.id,
+        timeSlot: s.timeSlot,
+        time: s.time,
+        dosage: s.dosage,
+      })),
       schedulesText: schedules
         .map((s) => `${s.timeSlot} ${formatBengaliTime(s.time)} (${s.dosage})`)
         .join(', '),

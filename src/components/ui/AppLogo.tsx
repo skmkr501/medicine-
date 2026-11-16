@@ -29,9 +29,9 @@ export const AppLogo: React.FC<AppLogoProps> = ({
 
   return (
     <div className={`flex items-center gap-2.5 ${className}`}>
-      {/* Brand SVG Emblem */}
+      {/* Brand SVG Emblem on neutral surface */}
       <div
-        className={`relative ${currentSize.box} shrink-0 select-none ${
+        className={`relative ${currentSize.box} shrink-0 select-none rounded-2xl p-0.5 bg-white dark:bg-surface-2 border border-border/70 shadow-2xs ${
           animate ? 'transition-transform duration-300 hover:scale-105' : ''
         }`}
       >
@@ -42,16 +42,16 @@ export const AppLogo: React.FC<AppLogoProps> = ({
         >
           <defs>
             <linearGradient id="logoBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#0F766E" />
-              <stop offset="100%" stopColor="#0D9488" />
+              <stop offset="0%" stopColor="#4F46E5" />
+              <stop offset="100%" stopColor="#4338CA" />
             </linearGradient>
             <linearGradient id="logoPillWhite" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#FFFFFF" />
-              <stop offset="100%" stopColor="#F0FDFA" />
+              <stop offset="100%" stopColor="#EEF2FF" />
             </linearGradient>
-            <linearGradient id="logoPillMint" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#2DD4BF" />
-              <stop offset="100%" stopColor="#14B8A6" />
+            <linearGradient id="logoPillCoral" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#FB7185" />
+              <stop offset="100%" stopColor="#F43F5E" />
             </linearGradient>
           </defs>
 
@@ -71,10 +71,10 @@ export const AppLogo: React.FC<AppLogoProps> = ({
           <g transform="translate(32, 31) rotate(-40)">
             {/* Top White Half */}
             <path d="M-6.5,-12 C-6.5,-17 6.5,-17 6.5,-12 L6.5,0 L-6.5,0 Z" fill="url(#logoPillWhite)" />
-            {/* Bottom Mint Half */}
-            <path d="M-6.5,0 L6.5,0 L6.5,12 C6.5,17 -6.5,17 -6.5,12 Z" fill="url(#logoPillMint)" />
+            {/* Bottom Coral Half */}
+            <path d="M-6.5,0 L6.5,0 L6.5,12 C6.5,17 -6.5,17 -6.5,12 Z" fill="url(#logoPillCoral)" />
             {/* Center Separation */}
-            <line x1="-6.5" y1="0" x2="6.5" y2="0" stroke="#0F766E" strokeWidth="1.2" />
+            <line x1="-6.5" y1="0" x2="6.5" y2="0" stroke="#4338CA" strokeWidth="1.2" />
             {/* Highlight */}
             <rect x="-4" y="-11" width="1.5" height="7" rx="0.75" fill="rgba(255,255,255,0.7)" />
           </g>
@@ -97,7 +97,7 @@ export const AppLogo: React.FC<AppLogoProps> = ({
             className={`font-bold tracking-tight ${currentSize.text} ${
               variant === 'white'
                 ? 'text-white'
-                : 'text-teal-900 dark:text-teal-300'
+                : 'text-text'
             }`}
           >
             স্বাস্থ্যবন্ধু
@@ -106,8 +106,8 @@ export const AppLogo: React.FC<AppLogoProps> = ({
             <span
               className={`${currentSize.sub} font-medium ${
                 variant === 'white'
-                  ? 'text-teal-100'
-                  : 'text-slate-500 dark:text-slate-400'
+                  ? 'text-indigo-100'
+                  : 'text-text-muted'
               }`}
             >
               {subtext}

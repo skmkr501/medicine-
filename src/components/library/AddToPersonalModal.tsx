@@ -77,24 +77,24 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
       onClick={onClose}
     >
       <div
-        className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col max-h-[90vh]"
+        className="bg-surface rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-border flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-teal-50/60 dark:bg-teal-950/30">
+        <div className="p-5 border-b border-border flex items-center justify-between bg-primary-soft/50">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-10 h-10 rounded-xl bg-primary text-on-primary flex items-center justify-center shadow-xs">
               <Pill className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              <h3 className="text-base font-bold text-text">
                 ব্যক্তিগত তালিকায় যোগ করুন
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs text-text-muted">
                 {medicine.brandName} ({medicine.strength}) - {medicine.genericName}
               </p>
             </div>
@@ -102,7 +102,7 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            className="p-1.5 rounded-lg text-text-muted hover:text-text hover:bg-surface-2 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -113,14 +113,14 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
           
           {/* Patient Selector */}
           <div>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5 text-teal-600" />
+            <label className="block font-semibold text-text mb-1 flex items-center gap-1.5">
+              <User className="w-3.5 h-3.5 text-primary" />
               <span>কার জন্য এই ওষুধ? (প্রোফাইল নির্বাচন)</span>
             </label>
             <select
               value={selectedPatientId}
               onChange={(e) => setSelectedPatientId(e.target.value)}
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500 font-medium"
+              className="w-full bg-surface-2 border border-border rounded-xl p-2.5 text-xs text-text focus:outline-hidden focus:ring-1 focus:ring-primary font-medium"
             >
               <option value="">কোনো প্রোফাইল নির্ধারণ নয় (সাধারণ)</option>
               {patients.map((p) => (
@@ -133,7 +133,7 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
 
           {/* Meal Timing */}
           <div>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            <label className="block font-semibold text-text mb-1">
               খাওয়ার নিয়ম (Meal Timing)
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -145,8 +145,8 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
                     onClick={() => setMealTiming(timing)}
                     className={`py-2 px-2.5 rounded-lg text-xs font-medium border text-center transition-colors cursor-pointer ${
                       mealTiming === timing
-                        ? 'bg-teal-50 dark:bg-teal-950/60 border-teal-600 text-teal-800 dark:text-teal-300 font-semibold'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+                        ? 'bg-primary-soft border-primary text-primary font-semibold'
+                        : 'border-border text-text-muted hover:bg-surface-2'
                     }`}
                   >
                     {timing}
@@ -159,15 +159,15 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
           {/* Schedules */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-teal-600" />
+              <label className="font-semibold text-text flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-primary" />
                 <span>দৈনিক সেবনের সময় ও মাত্রা</span>
               </label>
               {schedules.length < 4 && (
                 <button
                   type="button"
                   onClick={addScheduleRow}
-                  className="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
                   <span>সময় যোগ</span>
@@ -179,12 +179,12 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
               {schedules.map((sch) => (
                 <div
                   key={sch.id}
-                  className="flex items-center gap-2 p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700"
+                  className="flex items-center gap-2 p-2 bg-surface-2 rounded-xl border border-border"
                 >
                   <select
                     value={sch.timeSlot}
                     onChange={(e) => updateSchedule(sch.id, { timeSlot: e.target.value as TimeSlot })}
-                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200 font-medium"
+                    className="bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text font-medium"
                   >
                     <option value="সকাল">সকাল</option>
                     <option value="দুপুর">দুপুর</option>
@@ -197,7 +197,7 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
                     value={sch.time}
                     onChange={(e) => updateSchedule(sch.id, { time: e.target.value })}
                     placeholder="০৮:০০ AM"
-                    className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200"
+                    className="flex-1 bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
                   />
 
                   <input
@@ -205,14 +205,14 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
                     value={sch.dosage}
                     onChange={(e) => updateSchedule(sch.id, { dosage: e.target.value })}
                     placeholder="১টি"
-                    className="w-16 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-800 dark:text-slate-200"
+                    className="w-16 bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
                   />
 
                   {schedules.length > 1 && (
                     <button
                       type="button"
                       onClick={() => removeScheduleRow(sch.id)}
-                      className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg cursor-pointer"
+                      className="p-1.5 text-danger-text hover:bg-danger-soft rounded-lg cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -225,7 +225,7 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
           {/* Stock & Unit */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-semibold text-text mb-1">
                 বর্তমান মজুদ (Stock)
               </label>
               <input
@@ -233,17 +233,17 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
                 min="0"
                 value={stock}
                 onChange={(e) => setStock(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs text-slate-900 dark:text-white font-medium"
+                className="w-full bg-surface-2 border border-border rounded-xl p-2.5 text-xs text-text font-medium"
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              <label className="block font-semibold text-text mb-1">
                 একক (Unit)
               </label>
               <select
                 value={unit}
                 onChange={(e) => setUnit(e.target.value)}
-                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs text-slate-900 dark:text-white font-medium"
+                className="w-full bg-surface-2 border border-border rounded-xl p-2.5 text-xs text-text font-medium"
               >
                 <option value="টি">টি (Tablets/Capsules)</option>
                 <option value="মিলি">মিলি (ml Syrup)</option>
@@ -256,7 +256,7 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
 
           {/* Special Instructions */}
           <div>
-            <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            <label className="block font-semibold text-text mb-1">
               বিশেষ নির্দেশনা / ডাক্তারের পরামর্শ (ঐচ্ছিক)
             </label>
             <input
@@ -264,22 +264,22 @@ export const AddToPersonalModal: React.FC<AddToPersonalModalProps> = ({
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
               placeholder="যেমন: কুসুম গরম পানি দিয়ে সেব্য"
-              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs text-slate-900 dark:text-white"
+              className="w-full bg-surface-2 border border-border rounded-xl p-2.5 text-xs text-text"
             />
           </div>
 
           {/* Actions */}
-          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-3">
+          <div className="pt-3 border-t border-border flex items-center justify-end gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+              className="px-4 py-2 font-semibold text-text-muted hover:text-text cursor-pointer"
             >
               বাতিল
             </button>
             <button
               type="submit"
-              className="flex items-center gap-1.5 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-xl shadow-xs cursor-pointer transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary-hover text-on-primary font-semibold rounded-xl shadow-xs cursor-pointer transition-colors"
             >
               <Check className="w-4 h-4" />
               <span>আমার ওষুধে সংরক্ষণ করুন</span>

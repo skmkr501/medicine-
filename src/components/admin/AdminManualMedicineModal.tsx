@@ -283,22 +283,22 @@ export const AdminManualMedicineModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-3xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl my-8 flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-surface rounded-3xl max-w-3xl w-full border border-border shadow-2xl my-8 flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150">
         
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-teal-100 dark:bg-teal-950/80 text-teal-700 dark:text-teal-300">
+            <div className="p-2.5 rounded-2xl bg-primary-soft text-primary">
               <Pill className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-bold text-text flex items-center gap-2">
                 <span>{isEditing ? 'ওষুধের তথ্য সম্পাদনা করুন' : 'ম্যানুয়ালি নতুন ওষুধ যোগ করুন'}</span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary-soft text-primary border border-primary/25">
                   {isEditing ? 'অ্যাডমিন সম্পাদনা' : 'অ্যাডমিন এন্ট্রি'}
                 </span>
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs text-text-muted">
                 {isEditing
                   ? 'পরিবর্তনগুলো সংরক্ষণ করলে লাইব্রেরির সব ফোনে নতুন সংস্করণ হিসেবে আপডেট হবে।'
                   : 'ফরম পূরণ করে সরাসরি ক্লাউড লাইব্রেরিতে ওষুধ অন্তর্ভুক্ত ও প্রকাশ করুন।'}
@@ -309,7 +309,7 @@ export const AdminManualMedicineModal: React.FC = () => {
           <button
             type="button"
             onClick={closeManualAddModal}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-1.5 rounded-xl text-text-muted hover:text-text hover:bg-surface-2 transition-colors cursor-pointer"
             aria-label="বন্ধ করুন"
           >
             <X className="w-5 h-5" />
@@ -321,9 +321,9 @@ export const AdminManualMedicineModal: React.FC = () => {
           
           {/* Section 1: মূল তথ্য (Primary Identification) */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-              <span className="w-2 h-2 rounded-full bg-teal-500" />
-              <h3 className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px]">
+            <div className="flex items-center gap-2 border-b border-border pb-2">
+              <span className="w-2 h-2 rounded-full bg-primary" />
+              <h3 className="font-bold text-text uppercase tracking-wider text-[11px]">
                 ১. ওষুধের নাম ও প্রাথমিক পরিচিতি
               </h3>
             </div>
@@ -332,29 +332,29 @@ export const AdminManualMedicineModal: React.FC = () => {
               
               {/* Brand Name (English) */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <label className="font-semibold text-text flex items-center gap-1">
                   <span>ব্র্যান্ড নাম (ইংরেজি)</span>
-                  <span className="text-rose-500">*</span>
+                  <span className="text-danger-text">*</span>
                 </label>
                 <input
                   type="text"
                   value={form.brandName}
                   onChange={(e) => handleInputChange('brandName', e.target.value)}
                   placeholder="যেমন: Napa Extra, Seclo, Maxpro"
-                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 ${
+                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 ${
                     errors.brandName
-                      ? 'border-rose-400 focus:ring-rose-500'
-                      : 'border-slate-200 dark:border-slate-700 focus:ring-teal-500'
+                      ? 'border-danger focus:ring-danger'
+                      : 'border-border focus:ring-primary'
                   }`}
                 />
                 {errors.brandName && (
-                  <p className="text-[11px] text-rose-500 font-medium">{errors.brandName}</p>
+                  <p className="text-[11px] text-danger-text font-medium">{errors.brandName}</p>
                 )}
               </div>
 
               {/* Brand Name (Bengali) */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   ব্র্যান্ড নাম (বাংলায় - ঐচ্ছিক)
                 </label>
                 <input
@@ -362,35 +362,35 @@ export const AdminManualMedicineModal: React.FC = () => {
                   value={form.brandNameBn}
                   onChange={(e) => handleInputChange('brandNameBn', e.target.value)}
                   placeholder="যেমন: নাপা এক্সট্রা, সেক্লো"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
 
               {/* Generic Name (English) */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <label className="font-semibold text-text flex items-center gap-1">
                   <span>জেনেরিক নাম (ইংরেজি)</span>
-                  <span className="text-rose-500">*</span>
+                  <span className="text-danger-text">*</span>
                 </label>
                 <input
                   type="text"
                   value={form.genericName}
                   onChange={(e) => handleInputChange('genericName', e.target.value)}
                   placeholder="যেমন: Paracetamol + Caffeine, Omeprazole"
-                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 ${
+                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 ${
                     errors.genericName
-                      ? 'border-rose-400 focus:ring-rose-500'
-                      : 'border-slate-200 dark:border-slate-700 focus:ring-teal-500'
+                      ? 'border-danger focus:ring-danger'
+                      : 'border-border focus:ring-primary'
                   }`}
                 />
                 {errors.genericName && (
-                  <p className="text-[11px] text-rose-500 font-medium">{errors.genericName}</p>
+                  <p className="text-[11px] text-danger-text font-medium">{errors.genericName}</p>
                 )}
               </div>
 
               {/* Generic Name (Bengali) */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   জেনেরিক নাম (বাংলায় - ঐচ্ছিক)
                 </label>
                 <input
@@ -398,40 +398,40 @@ export const AdminManualMedicineModal: React.FC = () => {
                   value={form.genericNameBn}
                   onChange={(e) => handleInputChange('genericNameBn', e.target.value)}
                   placeholder="যেমন: প্যারাসিটামল + ক্যাফেইন"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
 
               {/* Strength */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <label className="font-semibold text-text flex items-center gap-1">
                   <span>শক্তি / মাত্রা (Strength)</span>
-                  <span className="text-rose-500">*</span>
+                  <span className="text-danger-text">*</span>
                 </label>
                 <input
                   type="text"
                   value={form.strength}
                   onChange={(e) => handleInputChange('strength', e.target.value)}
                   placeholder="যেমন: 500 mg, 20 mg, 10 mg/5ml"
-                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 ${
+                  className={`w-full px-3.5 py-2.5 rounded-xl border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 ${
                     errors.strength
-                      ? 'border-rose-400 focus:ring-rose-500'
-                      : 'border-slate-200 dark:border-slate-700 focus:ring-teal-500'
+                      ? 'border-danger focus:ring-danger'
+                      : 'border-border focus:ring-primary'
                   }`}
                 />
                 {errors.strength && (
-                  <p className="text-[11px] text-rose-500 font-medium">{errors.strength}</p>
+                  <p className="text-[11px] text-danger-text font-medium">{errors.strength}</p>
                 )}
               </div>
 
               {/* Price Per Unit & Price Unit */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   খুচরা মূল্য ও একক (৳ - ঐচ্ছিক)
                 </label>
                 <div className="grid grid-cols-5 gap-2">
                   <div className="relative col-span-3">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted font-bold">
                       ৳
                     </span>
                     <input
@@ -441,10 +441,10 @@ export const AdminManualMedicineModal: React.FC = () => {
                       value={form.pricePerUnit}
                       onChange={(e) => handleInputChange('pricePerUnit', e.target.value)}
                       placeholder="যেমন: 2.50"
-                      className={`w-full pl-8 pr-3 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 ${
+                      className={`w-full pl-8 pr-3 py-2.5 rounded-xl border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 ${
                         errors.pricePerUnit
-                          ? 'border-rose-400 focus:ring-rose-500'
-                          : 'border-slate-200 dark:border-slate-700 focus:ring-teal-500'
+                          ? 'border-danger focus:ring-danger'
+                          : 'border-border focus:ring-primary'
                       }`}
                     />
                   </div>
@@ -452,7 +452,7 @@ export const AdminManualMedicineModal: React.FC = () => {
                     value={form.priceUnit}
                     onChange={(e) => handleInputChange('priceUnit', e.target.value)}
                     aria-label="দামের একক"
-                    className="col-span-2 px-2.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500 cursor-pointer"
+                    className="col-span-2 px-2.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text focus:outline-hidden focus:ring-1 focus:ring-primary cursor-pointer"
                   >
                     <option value="">একক (ঐচ্ছিক)</option>
                     <option value="পিস">প্রতি পিস</option>
@@ -464,7 +464,7 @@ export const AdminManualMedicineModal: React.FC = () => {
                   </select>
                 </div>
                 {errors.pricePerUnit && (
-                  <p className="text-[11px] text-rose-500 font-medium">{errors.pricePerUnit}</p>
+                  <p className="text-[11px] text-danger-text font-medium">{errors.pricePerUnit}</p>
                 )}
               </div>
 
@@ -473,9 +473,9 @@ export const AdminManualMedicineModal: React.FC = () => {
 
           {/* Section 2: ডোজের ধরন ও প্রস্তুতকারক কোম্পানি */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-              <span className="w-2 h-2 rounded-full bg-teal-500" />
-              <h3 className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px]">
+            <div className="flex items-center gap-2 border-b border-border pb-2">
+              <span className="w-2 h-2 rounded-full bg-primary" />
+              <h3 className="font-bold text-text uppercase tracking-wider text-[11px]">
                 ২. ডোজের ধরন ও প্রস্তুতকারক
               </h3>
             </div>
@@ -484,10 +484,10 @@ export const AdminManualMedicineModal: React.FC = () => {
               
               {/* Dosage Form Selector */}
               <div className="space-y-1.5">
-                <label className="font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                <label className="font-semibold text-text flex items-center justify-between">
                   <span className="flex items-center gap-1">
                     <span>ডোজের ধরন (Dosage Form)</span>
-                    <span className="text-rose-500">*</span>
+                    <span className="text-danger-text">*</span>
                   </span>
                   <button
                     type="button"
@@ -495,7 +495,7 @@ export const AdminManualMedicineModal: React.FC = () => {
                       setShowCustomForm(!showCustomForm);
                       if (!showCustomForm) setCustomFormInput('');
                     }}
-                    className="text-[10px] text-teal-700 dark:text-teal-400 hover:underline cursor-pointer font-bold"
+                    className="text-[10px] text-primary hover:underline cursor-pointer font-bold"
                   >
                     {showCustomForm ? 'তালিকা থেকে বাছুন' : 'অন্যান্য কাস্টম ধরন লিখুন'}
                   </button>
@@ -507,13 +507,13 @@ export const AdminManualMedicineModal: React.FC = () => {
                     value={customFormInput}
                     onChange={(e) => setCustomFormInput(e.target.value)}
                     placeholder="কাস্টম ধরন লিখুন (যেমন: ওরাল ড্রপ, নেবুলাইজার সল্যুশন)"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 focus:ring-primary"
                   />
                 ) : (
                   <select
                     value={form.dosageForm}
                     onChange={(e) => handleInputChange('dosageForm', e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500 cursor-pointer"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text focus:outline-hidden focus:ring-1 focus:ring-primary cursor-pointer"
                   >
                     {COMMON_FORMS.map((formOption) => (
                       <option key={formOption} value={formOption}>
@@ -523,15 +523,15 @@ export const AdminManualMedicineModal: React.FC = () => {
                   </select>
                 )}
                 {errors.dosageForm && (
-                  <p className="text-[11px] text-rose-500 font-medium">{errors.dosageForm}</p>
+                  <p className="text-[11px] text-danger-text font-medium">{errors.dosageForm}</p>
                 )}
               </div>
 
               {/* Manufacturer Company */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <label className="font-semibold text-text flex items-center gap-1">
                   <span>প্রস্তুতকারক কোম্পানি</span>
-                  <span className="text-rose-500">*</span>
+                  <span className="text-danger-text">*</span>
                 </label>
                 <div className="space-y-1.5">
                   <input
@@ -540,10 +540,10 @@ export const AdminManualMedicineModal: React.FC = () => {
                     value={form.manufacturer}
                     onChange={(e) => handleInputChange('manufacturer', e.target.value)}
                     placeholder="কোম্পানির নাম লিখুন বা তালিকা থেকে বাছুন"
-                    className={`w-full px-3.5 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 ${
+                    className={`w-full px-3.5 py-2.5 rounded-xl border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 ${
                       errors.manufacturer
-                        ? 'border-rose-400 focus:ring-rose-500'
-                        : 'border-slate-200 dark:border-slate-700 focus:ring-teal-500'
+                        ? 'border-danger focus:ring-danger'
+                        : 'border-border focus:ring-primary'
                     }`}
                   />
                   <datalist id="manufacturers-list">
@@ -553,13 +553,13 @@ export const AdminManualMedicineModal: React.FC = () => {
                   </datalist>
                 </div>
                 {errors.manufacturer && (
-                  <p className="text-[11px] text-rose-500 font-medium">{errors.manufacturer}</p>
+                  <p className="text-[11px] text-danger-text font-medium">{errors.manufacturer}</p>
                 )}
               </div>
 
               {/* Package Description */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   প্যাকেটের বিবরণ (ঐচ্ছিক)
                 </label>
                 <input
@@ -567,13 +567,13 @@ export const AdminManualMedicineModal: React.FC = () => {
                   value={form.packageDescription}
                   onChange={(e) => handleInputChange('packageDescription', e.target.value)}
                   placeholder="যেমন: ১০টি ট্যাবলেটের ব্লিস্টার স্ট্রিপ, ১০০ মিলি বোতল"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
 
               {/* DAR Number */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   DGDA রেজিস্ট্রেশন নম্বর (DAR - ঐচ্ছিক)
                 </label>
                 <input
@@ -581,7 +581,7 @@ export const AdminManualMedicineModal: React.FC = () => {
                   value={form.darNumber}
                   onChange={(e) => handleInputChange('darNumber', e.target.value)}
                   placeholder="যেমন: 028-023-011"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500 font-mono"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 focus:ring-primary font-mono"
                 />
               </div>
 
@@ -590,9 +590,9 @@ export const AdminManualMedicineModal: React.FC = () => {
 
           {/* Section 3: ক্লিনিক্যাল নির্দেশনা ও থেরাপিউটিক শ্রেণি */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-              <span className="w-2 h-2 rounded-full bg-teal-500" />
-              <h3 className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px]">
+            <div className="flex items-center gap-2 border-b border-border pb-2">
+              <span className="w-2 h-2 rounded-full bg-primary" />
+              <h3 className="font-bold text-text uppercase tracking-wider text-[11px]">
                 ৩. ক্লিনিক্যাল তথ্য ও ব্যবহার
               </h3>
             </div>
@@ -601,7 +601,7 @@ export const AdminManualMedicineModal: React.FC = () => {
               
               {/* Therapeutic Class */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   থেরাপিউটিক শ্রেণি (Therapeutic Class)
                 </label>
                 <input
@@ -609,13 +609,13 @@ export const AdminManualMedicineModal: React.FC = () => {
                   value={form.therapeuticClass}
                   onChange={(e) => handleInputChange('therapeuticClass', e.target.value)}
                   placeholder="যেমন: ব্যথানাশক ও জ্বর (Analgesic), PPI, অ্যান্টিবায়োটিক"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
 
               {/* Indication */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   কী কাজে লাগে / নির্দেশনা (Indication)
                 </label>
                 <input
@@ -623,7 +623,7 @@ export const AdminManualMedicineModal: React.FC = () => {
                   value={form.indication}
                   onChange={(e) => handleInputChange('indication', e.target.value)}
                   placeholder="যেমন: জ্বর, মাথাব্যথা, গ্যাস্ট্রিক আলসার"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
 
@@ -632,9 +632,9 @@ export const AdminManualMedicineModal: React.FC = () => {
 
           {/* Section 4: আইনানুগ উৎস ও প্রকাশনা নিয়ন্ত্রণ */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-              <span className="w-2 h-2 rounded-full bg-teal-500" />
-              <h3 className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px]">
+            <div className="flex items-center gap-2 border-b border-border pb-2">
+              <span className="w-2 h-2 rounded-full bg-primary" />
+              <h3 className="font-bold text-text uppercase tracking-wider text-[11px]">
                 ৪. ডাটা উৎস ও প্রকাশনা নিয়ন্ত্রণ
               </h3>
             </div>
@@ -643,13 +643,13 @@ export const AdminManualMedicineModal: React.FC = () => {
               
               {/* Source Profile */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   আইনানুগ উৎস নির্বাচন
                 </label>
                 <select
                   value={form.source}
                   onChange={(e) => handleSourceChange(e.target.value as ImportDataSource)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:ring-1 focus:ring-teal-500 cursor-pointer"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text focus:outline-hidden focus:ring-1 focus:ring-primary cursor-pointer"
                 >
                   <option value="DGDA_GOV">DGDA সরকারি উন্মুক্ত গেজেট ও ন্যাশনাল ফর্মুলারি</option>
                   <option value="MANUFACTURER">প্রস্তুতকারকের অফিসিয়াল প্রোডাক্ট মনোগ্রাফ</option>
@@ -659,22 +659,22 @@ export const AdminManualMedicineModal: React.FC = () => {
 
               {/* License Reference */}
               <div className="space-y-1">
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                <label className="font-semibold text-text">
                   আইনানুগ সনদ / রেফারেন্স
                 </label>
                 <input
                   type="text"
                   value={form.licenseReference}
                   onChange={(e) => handleInputChange('licenseReference', e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-1 focus:ring-teal-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-border bg-surface-2 text-text placeholder:text-text-muted focus:outline-hidden focus:ring-1 focus:ring-primary"
                 />
               </div>
 
             </div>
 
             {/* Publishing Option Selector */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
-              <span className="font-bold text-slate-800 dark:text-slate-200 block">
+            <div className="p-4 rounded-2xl bg-surface-2 border border-border space-y-2.5">
+              <span className="font-bold text-text block">
                 সংরক্ষণের পর কী করতে চান?
               </span>
 
@@ -682,8 +682,8 @@ export const AdminManualMedicineModal: React.FC = () => {
                 <label
                   className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
                     form.publishOption === 'publish'
-                      ? 'bg-teal-50 dark:bg-teal-950/60 border-teal-500 text-teal-950 dark:text-teal-200 shadow-xs'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                      ? 'bg-primary-soft border-primary text-text shadow-xs'
+                      : 'bg-surface border-border text-text-muted'
                   }`}
                 >
                   <input
@@ -692,14 +692,14 @@ export const AdminManualMedicineModal: React.FC = () => {
                     value="publish"
                     checked={form.publishOption === 'publish'}
                     onChange={() => handleInputChange('publishOption', 'publish')}
-                    className="mt-0.5 w-4 h-4 text-teal-600 focus:ring-teal-500"
+                    className="mt-0.5 w-4 h-4 accent-primary"
                   />
                   <div>
-                    <span className="font-bold flex items-center gap-1.5 text-xs">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span className="font-bold flex items-center gap-1.5 text-xs text-text">
+                      <CheckCircle2 className="w-4 h-4 text-success-text" />
                       সরাসরি লাইব্রেরিতে প্রকাশ করুন
                     </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5 leading-relaxed">
+                    <span className="text-[11px] text-text-muted block mt-0.5 leading-relaxed">
                       সব ফোনে ও সকল ব্যবহারকারীর ওষুধ লাইব্রেরিতে তৎক্ষণাৎ রিয়েল-টাইমে দৃশ্যমান হবে।
                     </span>
                   </div>
@@ -708,8 +708,8 @@ export const AdminManualMedicineModal: React.FC = () => {
                 <label
                   className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
                     form.publishOption === 'draft'
-                      ? 'bg-amber-50 dark:bg-amber-950/60 border-amber-500 text-amber-950 dark:text-amber-200 shadow-xs'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                      ? 'bg-warning-soft border-warning text-warning-text shadow-xs'
+                      : 'bg-surface border-border text-text-muted'
                   }`}
                 >
                   <input
@@ -718,14 +718,14 @@ export const AdminManualMedicineModal: React.FC = () => {
                     value="draft"
                     checked={form.publishOption === 'draft'}
                     onChange={() => handleInputChange('publishOption', 'draft')}
-                    className="mt-0.5 w-4 h-4 text-amber-600 focus:ring-amber-500"
+                    className="mt-0.5 w-4 h-4 accent-warning"
                   />
                   <div>
                     <span className="font-bold flex items-center gap-1.5 text-xs">
-                      <Clock className="w-4 h-4 text-amber-600" />
+                      <Clock className="w-4 h-4 text-warning-text" />
                       অপেক্ষমাণ খসড়া (Draft) রাখুন
                     </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5 leading-relaxed">
+                    <span className="text-[11px] text-text-muted block mt-0.5 leading-relaxed">
                       সাধারণ ব্যবহারকারীদের কাছে লুকানো থাকবে; অ্যাডমিন পরবর্তীতে অনুমোদন দিতে পারবেন।
                     </span>
                   </div>
@@ -737,47 +737,47 @@ export const AdminManualMedicineModal: React.FC = () => {
 
           {/* Section 5: লাইভ কার্ড প্রিভিউ (Live Card Preview) */}
           {(form.brandName || form.genericName || form.manufacturer) && (
-            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <span className="font-bold text-slate-500 dark:text-slate-400 text-[11px] uppercase tracking-wider block">
+            <div className="space-y-2 pt-2 border-t border-border">
+              <span className="font-bold text-text-muted text-[11px] uppercase tracking-wider block">
                 লাইব্রেরি কার্ড প্রিভিউ (ব্যবহারকারীরা যেমন দেখবে):
               </span>
 
-              <div className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-dashed border-teal-300 dark:border-teal-800/80">
-                <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <div className="bg-surface-2 p-4 rounded-2xl border border-dashed border-primary/50">
+                <div className="bg-surface rounded-2xl p-4 border border-border shadow-xs space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <h4 className="text-base font-bold text-slate-900 dark:text-white">
+                        <h4 className="text-base font-bold text-text">
                           {form.brandName || 'ওষুধের ব্র্যান্ড নাম'}
                         </h4>
                         {form.publishOption === 'draft' && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-warning-soft text-warning-text">
                             অপ্রকাশিত খসড়া
                           </span>
                         )}
                       </div>
-                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
+                      <p className="text-xs font-medium text-text-muted mt-0.5">
                         {form.genericName || 'জেনেরিক নাম'}
                       </p>
                     </div>
 
                     <div className="flex flex-col items-end gap-1">
-                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary-soft text-primary">
                         {form.strength || 'ডোজ/শক্তি'}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-medium">
+                      <span className="text-[10px] text-text-muted font-medium">
                         {showCustomForm && customFormInput ? customFormInput : form.dosageForm}
                       </span>
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                  <div className="pt-2 border-t border-border flex items-center justify-between text-[11px] text-text-muted">
                     <div className="flex items-center gap-1.5">
-                      <Building className="w-3.5 h-3.5 text-slate-400" />
+                      <Building className="w-3.5 h-3.5 text-text-muted" />
                       <span className="truncate max-w-[200px]">{form.manufacturer || 'কোম্পানি'}</span>
                     </div>
                     {form.pricePerUnit && (
-                      <span className="font-bold text-teal-700 dark:text-teal-400">
+                      <span className="font-bold text-primary">
                         ৳ {parseFloat(form.pricePerUnit).toFixed(2)}
                       </span>
                     )}
@@ -788,11 +788,11 @@ export const AdminManualMedicineModal: React.FC = () => {
           )}
 
           {/* Action Buttons */}
-          <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          <div className="pt-4 border-t border-border flex flex-wrap items-center justify-between gap-3">
             <button
               type="button"
               onClick={handleReset}
-              className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+              className="text-xs text-text-muted hover:text-text cursor-pointer"
             >
               ফর্ম ফাঁকা করুন (Reset)
             </button>
@@ -802,7 +802,7 @@ export const AdminManualMedicineModal: React.FC = () => {
                 type="button"
                 onClick={closeManualAddModal}
                 disabled={isSubmitting}
-                className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                className="px-4 py-2.5 rounded-xl border border-border text-text-muted font-semibold text-xs hover:bg-surface-2 cursor-pointer transition-colors"
               >
                 বাতিল করুন
               </button>
@@ -810,11 +810,11 @@ export const AdminManualMedicineModal: React.FC = () => {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 active:bg-teal-900 text-white font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-on-primary font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
               >
                 {isSubmitting ? (
                   <>
-                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin" />
                     <span>ক্লাউডে সংরক্ষিত হচ্ছে...</span>
                   </>
                 ) : (
