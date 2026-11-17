@@ -112,6 +112,7 @@ export const Dashboard: React.FC = () => {
     triggerManualSync,
     syncStatus,
     isQuotaExceeded,
+    pendingSyncCount,
     lastSyncedAt,
     isSyncing,
     openCreateProfileModal,
@@ -605,17 +606,23 @@ export const Dashboard: React.FC = () => {
             <button
               type="button"
               onClick={triggerManualSync}
-              disabled={syncStatus === 'syncing' || isSyncing}
-              className={`min-h-[48px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors cursor-pointer ${
-                syncStatus === 'synced'
+              disabled={syncStatus === 'syncing' || isSyncing || isQuotaExceeded}
+              className={`min-h-[48px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                syncStatus === 'synced' && !isQuotaExceeded
                   ? 'bg-success-soft text-success-text border-success/30'
                   : syncStatus === 'syncing' || isSyncing
                   ? 'bg-primary-soft text-primary border-primary/30'
-                  : syncStatus === 'offline'
+                  : syncStatus === 'offline' || isQuotaExceeded
                   ? 'bg-warning-soft text-warning-text border-warning/30'
                   : 'bg-danger-soft text-danger-text border-danger/30'
               }`}
-              title={lastSyncedAt ? `শেষ সিঙ্ক: ${lastSyncedAt}` : 'সিঙ্ক অবস্থা'}
+              title={
+                isQuotaExceeded
+                  ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
+                  : lastSyncedAt
+                  ? `শেষ সিঙ্ক: ${lastSyncedAt}`
+                  : 'সিঙ্ক অবস্থা'
+              }
             >
               {syncStatus === 'synced' ? (
                 <>
@@ -661,16 +668,17 @@ export const Dashboard: React.FC = () => {
           <div className="flex items-start gap-3">
             <CloudOff className="w-5 h-5 text-warning-text shrink-0 mt-0.5" />
             <p className="text-sm sm:text-base text-text font-medium">
-              আজকের ক্লাউড সীমা শেষ হয়েছে — আপনার সব পরিবর্তন ফোনেই নিরাপদে সংরক্ষিত হচ্ছে এবং আগামীকাল সীমা রিসেট হলে সিঙ্ক হবে।
+              আজকের ক্লাউড সীমা শেষ হয়েছে — আপনার সব পরিবর্তন ফোনেই নিরাপদে সংরক্ষিত হচ্ছে
+              {pendingSyncCount > 0 ? ` (${toBengaliNumber(pendingSyncCount)}টি পরিবর্তন অপেক্ষায়)` : ''}। বাংলাদেশ সময় দুপুর ২:০০টার পর সীমা রিসেট হলে সিঙ্ক হবে।
             </p>
           </div>
           <button
             type="button"
             onClick={triggerManualSync}
-            disabled={isSyncing}
-            className="min-h-[44px] shrink-0 px-4 py-2 bg-surface border border-warning/40 text-warning-text rounded-xl text-sm font-bold hover:bg-surface-2 transition-colors cursor-pointer disabled:opacity-50"
+            disabled={isSyncing || isQuotaExceeded}
+            className="min-h-[44px] shrink-0 px-4 py-2 bg-surface border border-warning/40 text-warning-text rounded-xl text-sm font-bold hover:bg-surface-2 transition-colors cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed"
           >
-            আবার চেষ্টা করুন
+            {isSyncing ? 'যাচাই হচ্ছে...' : 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'}
           </button>
         </section>
       )}

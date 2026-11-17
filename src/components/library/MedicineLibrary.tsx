@@ -73,7 +73,13 @@ export const MedicineLibrary: React.FC = () => {
     isCloudConnected,
     latestLibraryNotice,
     dismissLibraryNotice,
+    pendingPublishMedicines,
   } = useMedicine();
+
+  const pendingPublishIdSet = useMemo(
+    () => new Set((isAdmin ? pendingPublishMedicines : []).map((m) => m.id)),
+    [isAdmin, pendingPublishMedicines]
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchTransitionPending, startSearchTransition] = useTransition();
@@ -922,6 +928,7 @@ export const MedicineLibrary: React.FC = () => {
                   isAdmin={isAdmin}
                   isFavorite={favoriteIdSet.has(med.id)}
                   isUnpublished={isUnpublished}
+                  isPendingPublish={isAdmin && pendingPublishIdSet.has(med.id)}
                   isTest={isTest}
                   isDraftSelected={selectedDraftIds.has(med.id)}
                   isPublishing={publishingId === med.id}

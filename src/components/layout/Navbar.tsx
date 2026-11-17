@@ -22,6 +22,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
     syncLocalToCloud,
     isSyncing,
     syncStatus,
+    isQuotaExceeded,
     lastSyncedAt,
     triggerManualSync,
     isCloudConnected,
@@ -143,18 +144,20 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
             <button
               type="button"
               onClick={triggerManualSync}
-              disabled={syncStatus === 'syncing' || isSyncing}
-              className={`p-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center ${
-                syncStatus === 'synced'
+              disabled={syncStatus === 'syncing' || isSyncing || isQuotaExceeded}
+              className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center ${
+                syncStatus === 'synced' && !isQuotaExceeded
                   ? 'text-success-text hover:bg-success-soft'
                   : syncStatus === 'syncing' || isSyncing
                   ? 'text-primary bg-primary-soft'
-                  : syncStatus === 'offline'
+                  : syncStatus === 'offline' || isQuotaExceeded
                   ? 'text-warning-text hover:bg-warning-soft'
                   : 'text-danger-text hover:bg-danger-soft'
               }`}
               title={
-                syncStatus === 'synced'
+                isQuotaExceeded
+                  ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
+                  : syncStatus === 'synced'
                   ? `✓ ক্লাউড সিঙ্ক হয়েছে (${lastSyncedAt ? `শেষ সিঙ্ক: ${lastSyncedAt}` : 'সক্রিয়'})`
                   : syncStatus === 'syncing' || isSyncing
                   ? '⟳ চলছে...'
@@ -244,12 +247,21 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
                       e.stopPropagation();
                       syncLocalToCloud();
                     }}
-                    disabled={isSyncing}
-                    className="w-full text-left px-3 py-2.5 min-h-[48px] rounded-lg hover:bg-surface-2 flex items-center justify-between text-text cursor-pointer mt-1"
+                    disabled={isSyncing || isQuotaExceeded}
+                    title={
+                      isQuotaExceeded
+                        ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
+                        : 'ক্লাউডে সিঙ্ক করুন'
+                    }
+                    className="w-full text-left px-3 py-2.5 min-h-[48px] rounded-lg hover:bg-surface-2 flex items-center justify-between text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mt-1"
                   >
-                    <span className="flex items-center gap-2 text-base">
-                      <RefreshCw className={`w-4 h-4 text-primary ${isSyncing ? 'animate-spin' : ''}`} />
-                      <span>ক্লাউডে সিঙ্ক করুন</span>
+                    <span className="flex items-center gap-2 text-sm font-medium">
+                      <RefreshCw className={`w-4 h-4 text-primary shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
+                      <span>
+                        {isQuotaExceeded
+                          ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
+                          : 'ক্লাউডে সিঙ্ক করুন'}
+                      </span>
                     </span>
                   </button>
 

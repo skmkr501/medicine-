@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import {
@@ -23,12 +23,15 @@ import {
   HeartHandshake,
   RefreshCw,
   FilePlus2,
+  AlertTriangle,
+  Home,
 } from 'lucide-react';
 
 export const CaregiverSettingsSection: React.FC = () => {
   const {
     currentUser,
     openAuthModal,
+    setCurrentPage,
     settings,
     updateSettings,
     patients,
@@ -36,6 +39,8 @@ export const CaregiverSettingsSection: React.FC = () => {
     patientCaregiverLinks,
     caringForLinks,
     isCaregiverLoading,
+    caregiverError,
+    clearCaregiverError,
     refreshCaregiverLinks,
     createCaregiverInvite,
     redeemCaregiverInvite,
@@ -50,19 +55,34 @@ export const CaregiverSettingsSection: React.FC = () => {
   const [isRedeeming, setIsRedeeming] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [redeemSuccessMsg, setRedeemSuccessMsg] = useState<string | null>(null);
+  const [errorOrigin, setErrorOrigin] = useState<'invite' | 'redeem' | 'general'>('redeem');
   const [selfPhoneDraft, setSelfPhoneDraft] = useState(settings.patientSelfPhone || '');
+
+  useEffect(() => {
+    setSelfPhoneDraft(settings.patientSelfPhone || '');
+  }, [settings.patientSelfPhone]);
+
+  useEffect(() => {
+    if (currentUser?.uid) {
+      setErrorOrigin('general');
+      refreshCaregiverLinks();
+    }
+  }, [currentUser?.uid]);
 
   const activeCaregivers = patientCaregiverLinks.filter((l) => l.status === 'active');
   const pendingInvites = patientCaregiverLinks.filter((l) => l.status === 'pending');
   const thresholdMinutes = settings.caregiverMissedDoseMinutes || 30;
   const patientDisplayName = (
-    activePatient?.name ||
-    patients[0]?.name ||
-    currentUser?.displayName ||
+    activePatient?.name?.trim() ||
+    patients[0]?.name?.trim() ||
+    currentUser?.displayName?.trim() ||
     'পরিবারের সদস্য'
-  ).trim();
+  );
 
   const handleCreateInvite = async () => {
+    clearCaregiverError();
+    setErrorOrigin('invite');
     setIsGenerating(true);
     try {
       await createCaregiverInvite();
@@ -73,12 +93,17 @@ export const CaregiverSettingsSection: React.FC = () => {
 
   const handleRedeemCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteCodeInput.trim()) return;
+    const cleaned = normalizeInviteCodeInput(inviteCodeInput);
+    if (!cleaned) return;
+    clearCaregiverError();
+    setErrorOrigin('redeem');
+    setRedeemSuccessMsg(null);
     setIsRedeeming(true);
     try {
-      const ok = await redeemCaregiverInvite(inviteCodeInput);
+      const ok = await redeemCaregiverInvite(cleaned);
       if (ok) {
         setInviteCodeInput('');
+        setRedeemSuccessMsg('যত্নকারী হিসেবে সফলভাবে যুক্ত হয়েছেন! হোমে "পরিবার" কার্ডে খোঁজখবর দেখতে পাবেন।');
       }
     } finally {
       setIsRedeeming(false);
@@ -87,11 +112,31 @@ export const CaregiverSettingsSection: React.FC = () => {
 
   const handleCopyCode = async (code: string) => {
     try {
-      await navigator.clipboard.writeText(code);
-      setCopiedCode(code);
-      showToast('আমন্ত্রণ কোড কপি হয়েছে', 'success');
-      setTimeout(() => setCopiedCode(null), 2500);
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(code);
+        setCopiedCode(code);
+        showToast('আমন্ত্রণ কোড কপি হয়েছে', 'success');
+        setTimeout(() => setCopiedCode(null), 2500);
+        return;
+      }
+      throw new Error('Clipboard unavailable');
     } catch {
+      try {
+        const input = document.createElement('input');
+        input.value = code;
+        document.body.appendChild(input);
+        input.select();
+        const ok = document.execCommand('copy');
+        input.remove();
+        if (ok) {
+          setCopiedCode(code);
+          showToast('আমন্ত্রণ কোড কপি হয়েছে', 'success');
+          setTimeout(() => setCopiedCode(null), 2500);
+          return;
+        }
+      } catch {
+        // ignore fallback failure
+      }
       showToast(`কোড: ${code}`, 'info');
     }
   };
@@ -131,7 +176,10 @@ export const CaregiverSettingsSection: React.FC = () => {
         {currentUser && (
           <button
             type="button"
-            onClick={refreshCaregiverLinks}
+            onClick={() => {
+              setErrorOrigin('general');
+              refreshCaregiverLinks();
+            }}
             disabled={isCaregiverLoading}
             className="min-h-[48px] px-3.5 py-2 text-sm font-semibold text-primary bg-primary-soft border border-primary/25 rounded-xl hover:opacity-90 flex items-center gap-1.5 cursor-pointer"
           >
@@ -187,6 +235,16 @@ export const CaregiverSettingsSection: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-6">
+          {caregiverError && errorOrigin === 'general' && (
+            <div
+              role="alert"
+              className="p-3.5 rounded-xl bg-danger-soft border border-danger/30 text-danger-text text-sm font-semibold flex items-start gap-2"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{caregiverError}</span>
+            </div>
+          )}
+
           {/* Alert Delay Settings & Patient Phone */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="p-4 rounded-xl bg-surface-2 border border-border space-y-3">
@@ -278,6 +336,16 @@ export const CaregiverSettingsSection: React.FC = () => {
                 </span>
               </button>
             </div>
+
+            {caregiverError && errorOrigin === 'invite' && (
+              <div
+                role="alert"
+                className="p-3.5 rounded-xl bg-danger-soft border border-danger/30 text-danger-text text-sm font-semibold flex items-start gap-2"
+              >
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{caregiverError}</span>
+              </div>
+            )}
 
             {/* Pending Invite Codes */}
             {pendingInvites.length > 0 && (
@@ -463,29 +531,69 @@ export const CaregiverSettingsSection: React.FC = () => {
               </p>
             </div>
 
+            {caregiverError && errorOrigin === 'redeem' && (
+              <div
+                role="alert"
+                className="p-3.5 rounded-xl bg-danger-soft border border-danger/30 text-danger-text text-sm font-semibold flex items-start gap-2"
+              >
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{caregiverError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleRedeemCode} className="flex flex-col sm:flex-row gap-2.5">
               <input
                 type="text"
-                maxLength={8}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
                 value={inviteCodeInput}
-                onChange={(e) => setInviteCodeInput(normalizeInviteCodeInput(e.target.value))}
+                onChange={(e) => {
+                  clearCaregiverError();
+                  setRedeemSuccessMsg(null);
+                  setInviteCodeInput(normalizeInviteCodeInput(e.target.value));
+                }}
                 placeholder="৬ অক্ষরের কোড (যেমন: A7K9M2)"
                 className="min-h-[48px] flex-1 px-4 py-2 rounded-xl bg-surface-2 border border-border font-mono text-lg font-bold tracking-widest uppercase text-text focus:outline-hidden focus:border-primary"
               />
               <button
                 type="submit"
-                disabled={isRedeeming || inviteCodeInput.trim().length < 6}
+                disabled={isRedeeming || normalizeInviteCodeInput(inviteCodeInput).length < 6}
                 className="min-h-[48px] px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover disabled:opacity-50 text-on-primary font-bold text-base cursor-pointer shrink-0"
               >
                 {isRedeeming ? 'যুক্ত হচ্ছে...' : 'যুক্ত হোন'}
               </button>
             </form>
 
+            {redeemSuccessMsg && (
+              <div className="p-3.5 rounded-xl bg-success-soft border border-success/35 flex flex-wrap items-center justify-between gap-2.5">
+                <p className="text-sm font-bold text-success-text">{redeemSuccessMsg}</p>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage('dashboard')}
+                  className="min-h-[44px] px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-on-primary font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Home className="w-4 h-4" />
+                  <span>হোমে দেখুন</span>
+                </button>
+              </div>
+            )}
+
             {caringForLinks.length > 0 && (
               <div className="space-y-2 pt-2 border-t border-border">
-                <p className="text-xs font-bold text-text-muted">
-                  আপনি যাদের দেখাশোনা করছেন:
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-text-muted">
+                    আপনি যাদের দেখাশোনা করছেন:
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage('dashboard')}
+                    className="text-xs font-bold text-primary hover:underline inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Home className="w-3.5 h-3.5" />
+                    <span>হোমে গিয়ে দেখুন</span>
+                  </button>
+                </div>
                 {caringForLinks.map((link) => (
                   <div
                     key={link.id}

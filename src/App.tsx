@@ -33,6 +33,7 @@ import { HealthRecordsPage } from './components/health/HealthRecordsPage';
 import { AppointmentsPage } from './components/appointments/AppointmentsPage';
 import { DataConflictModal } from './components/auth/DataConflictModal';
 import { ResetConfirmationModal } from './components/settings/ResetConfirmationModal';
+import { SyncConfirmModal } from './components/settings/SyncConfirmModal';
 import { MePage } from './components/me/MePage';
 import { OnboardingModal } from './components/onboarding/OnboardingModal';
 import { markOnboardingDone, shouldShowOnboarding } from './utils/onboarding';
@@ -170,6 +171,9 @@ const AppContent: React.FC = () => {
         isLoggedIn={!!currentUser}
         userEmail={currentUser?.email}
       />
+
+      {/* Targeted Dirty-Only Manual Sync Confirmation Modal */}
+      <SyncConfirmModal />
 
       {/* First-launch 3-Slide Simple Onboarding */}
       <OnboardingModal isOpen={showOnboarding} onComplete={handleCloseOnboarding} />

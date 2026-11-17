@@ -16,6 +16,7 @@ import {
   isWriteQuotaPaused,
   markWriteQuotaExceeded,
 } from './quotaState';
+import { recordFirestoreWrite } from '../utils/firestoreUsageTracker';
 
 const app = initializeApp(firebaseConfig);
 
@@ -62,15 +63,24 @@ const pendingWriteRejectors = new Set<PendingWriteRejector>();
 let isFirestoreNetworkDisabledForQuota = false;
 let hasWarnedQuotaConsoleThisSession = false;
 
-function isFirestoreQuotaSdkMessage(text: string): boolean {
-  const lower = text.toLowerCase();
-  return (
+export function isFirestoreNetworkDisabled(): boolean {
+  return isFirestoreNetworkDisabledForQuota;
+}
+
+export function isFirestoreSdkQuotaErrorLog(
+  text: string,
+  hasPendingWrites: boolean = false
+): boolean {
+  const lower = (text || '').toLowerCase();
+  if (
     lower.includes('resource-exhausted') ||
     lower.includes('resource_exhausted') ||
     lower.includes('quota limit exceeded') ||
-    lower.includes('quota exceeded') ||
-    lower.includes('using maximum backoff delay')
-  );
+    lower.includes('quota exceeded')
+  ) {
+    return true;
+  }
+  return hasPendingWrites && lower.includes('using maximum backoff delay');
 }
 
 /**
@@ -109,7 +119,10 @@ if (!hasRegisteredQuotaGuards) {
 
   onLog(
     (log) => {
-      if (log.type === '@firebase/firestore' && isFirestoreQuotaSdkMessage(log.message)) {
+      if (
+        log.type === '@firebase/firestore' &&
+        isFirestoreSdkQuotaErrorLog(log.message, pendingWriteRejectors.size > 0)
+      ) {
         tripWriteQuotaCircuitBreaker(log.message);
       }
     },
@@ -126,7 +139,7 @@ if (!hasRegisteredQuotaGuards) {
         .join(' ');
       if (
         combined.includes('@firebase/firestore') &&
-        isFirestoreQuotaSdkMessage(combined)
+        isFirestoreSdkQuotaErrorLog(combined, pendingWriteRejectors.size > 0)
       ) {
         tripWriteQuotaCircuitBreaker(combined);
         return;
@@ -142,7 +155,10 @@ if (!hasRegisteredQuotaGuards) {
  * - Races the Firestore write promise against the SDK quota circuit breaker so callers never hang forever
  *   when Firestore treats resource-exhausted as a transient backoff error.
  */
-export async function executeGuardedWrite<T>(writeFn: () => Promise<T>): Promise<T> {
+export async function executeGuardedWrite<T>(
+  writeFn: () => Promise<T>,
+  usageMeta?: { collection: string; count?: number }
+): Promise<T> {
   if (isWriteQuotaPaused() || isFirestoreNetworkDisabledForQuota) {
     throw new QuotaExceededWriteError();
   }
@@ -166,6 +182,9 @@ export async function executeGuardedWrite<T>(writeFn: () => Promise<T>): Promise
           if (settled) return;
           settled = true;
           pendingWriteRejectors.delete(onQuotaTrip);
+          if (usageMeta?.collection) {
+            recordFirestoreWrite(usageMeta.collection, usageMeta.count ?? 1);
+          }
           resolve(val);
         },
         (err) => {
@@ -189,6 +208,7 @@ export async function executeGuardedWrite<T>(writeFn: () => Promise<T>): Promise
  */
 export async function resumeFirestoreNetwork(): Promise<void> {
   clearWriteQuotaPause();
+  hasWarnedQuotaConsoleThisSession = false;
   if (isFirestoreNetworkDisabledForQuota) {
     isFirestoreNetworkDisabledForQuota = false;
     await enableNetwork(db);
@@ -228,7 +248,7 @@ export function stripUndefined<T>(obj: T): T {
 
 // Test Firestore connectivity on boot as per skill guidelines
 export async function testFirestoreConnection(): Promise<boolean> {
-  if (isFirestoreNetworkDisabledForQuota || isWriteQuotaPaused()) {
+  if (isFirestoreNetworkDisabledForQuota) {
     return false;
   }
   try {

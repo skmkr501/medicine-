@@ -12,11 +12,13 @@ import {
 } from '../../utils/doctorsManager';
 import {
   AlertTriangle,
+  ArrowLeft,
   Building2,
   Calendar,
   CalendarPlus,
   Clock,
   Edit2,
+  FileText,
   MapPin,
   MessageCircle,
   PhoneCall,
@@ -29,6 +31,7 @@ import {
   UserCheck,
   X,
 } from 'lucide-react';
+import { DocumentsVaultTab } from './DocumentsVaultTab';
 
 interface DoctorFormState {
   name: string;
@@ -72,6 +75,9 @@ export const DoctorsPage: React.FC = () => {
     addDoctor,
     updateDoctor,
     deleteDoctor,
+    medicalDocuments,
+    loadMedicalDocuments,
+    unlinkOrDeleteDoctorPrescriptions,
     patients,
     activePatient,
     addAppointment,
@@ -81,12 +87,17 @@ export const DoctorsPage: React.FC = () => {
 
   useEffect(() => {
     void loadDoctors();
+    void loadMedicalDocuments();
   }, []);
 
   const activePatients = useMemo(
     () => patients.filter((p) => !p.isArchived),
     [patients]
   );
+
+  const [mainTab, setMainTab] = useState<'doctors' | 'reports'>('doctors');
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
+  const [doctorDetailTab, setDoctorDetailTab] = useState<'info' | 'prescriptions'>('info');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [patientFilter, setPatientFilter] = useState<string>('all');
@@ -97,12 +108,41 @@ export const DoctorsPage: React.FC = () => {
   const [formError, setFormError] = useState('');
 
   const [confirmDeleteDoc, setConfirmDeleteDoc] = useState<DoctorProfile | null>(null);
+  const [isHandlingCascadeDelete, setIsHandlingCascadeDelete] = useState(false);
   const [appointmentPromptDoc, setAppointmentPromptDoc] = useState<DoctorProfile | null>(null);
 
   const sortedDoctors = useMemo(() => sortDoctors(doctors), [doctors]);
   const visibleDoctors = useMemo(
     () => filterDoctors(sortedDoctors, searchQuery, patientFilter),
     [sortedDoctors, searchQuery, patientFilter]
+  );
+
+  const selectedDoctor = useMemo(
+    () => (selectedDoctorId ? doctors.find((d) => d.id === selectedDoctorId) || null : null),
+    [doctors, selectedDoctorId]
+  );
+
+  const prescriptionCountByDoctor = useMemo(() => {
+    const counts = new Map<string, number>();
+    medicalDocuments.forEach((docItem) => {
+      if (docItem.kind === 'prescription' && docItem.doctorId) {
+        counts.set(docItem.doctorId, (counts.get(docItem.doctorId) || 0) + 1);
+      }
+    });
+    return counts;
+  }, [medicalDocuments]);
+
+  const totalReportsCount = useMemo(
+    () => medicalDocuments.filter((d) => d.kind === 'report').length,
+    [medicalDocuments]
+  );
+
+  const unlinkedPrescriptionsCount = useMemo(
+    () =>
+      medicalDocuments.filter(
+        (d) => d.kind === 'prescription' && (!d.doctorId || !d.doctorId.trim())
+      ).length,
+    [medicalDocuments]
   );
 
   const emergencyCount = useMemo(
@@ -250,10 +290,26 @@ export const DoctorsPage: React.FC = () => {
     });
   };
 
-  const handleConfirmDelete = () => {
+  const deleteDocPrescriptionsCount = confirmDeleteDoc
+    ? prescriptionCountByDoctor.get(confirmDeleteDoc.id) || 0
+    : 0;
+
+  const handleConfirmDeleteWithMode = async (mode: 'keep_unlinked' | 'delete_all') => {
     if (!confirmDeleteDoc) return;
-    deleteDoctor(confirmDeleteDoc.id);
-    setConfirmDeleteDoc(null);
+    const targetId = confirmDeleteDoc.id;
+    setIsHandlingCascadeDelete(true);
+    try {
+      if (deleteDocPrescriptionsCount > 0) {
+        await unlinkOrDeleteDoctorPrescriptions(targetId, mode);
+      }
+      deleteDoctor(targetId);
+      if (selectedDoctorId === targetId) {
+        setSelectedDoctorId(null);
+      }
+      setConfirmDeleteDoc(null);
+    } finally {
+      setIsHandlingCascadeDelete(false);
+    }
   };
 
   const resolvePatientLabel = (pid: string): string => {
@@ -263,66 +319,328 @@ export const DoctorsPage: React.FC = () => {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-      {/* Page Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-text flex items-center gap-2.5">
-            <Stethoscope className="w-7 h-7 text-primary shrink-0" />
-            <span>আমার ডাক্তার</span>
-          </h1>
-          <p className="text-sm sm:text-base text-text-muted mt-1">
-            জরুরি কল, চেম্বারের ঠিকানা এবং পরবর্তী ভিজিটের হিসাব এক জায়গায়
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => {
-              void loadDoctors(true);
-              showToast('ডাক্তার তালিকা রিফ্রেশ করা হচ্ছে...', 'info');
-            }}
-            disabled={isLoadingDoctors}
-            className="min-h-[48px] px-4 py-2.5 bg-surface border border-border hover:bg-surface-2 text-text font-semibold text-sm sm:text-base rounded-2xl inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 text-primary ${isLoadingDoctors ? 'animate-spin' : ''}`} />
-            <span>রিফ্রেশ</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={openAddModal}
-            className="min-h-[48px] px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-base rounded-2xl shadow-xs inline-flex items-center gap-2 cursor-pointer"
-          >
-            <Plus className="w-5 h-5" />
-            <span>নতুন ডাক্তার যোগ</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Summary & Quick Shortcut Row */}
-      <div className="bg-surface border border-border rounded-2xl p-4 shadow-2xs flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3 text-sm sm:text-base">
-          <span className="font-bold text-text">
-            মোট ডাক্তার: {toBengaliNumber(doctors.length)} জন
-          </span>
-          {emergencyCount > 0 && (
-            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-300/60 text-xs sm:text-sm font-bold">
-              <Star className="w-4 h-4 fill-amber-500 text-amber-500" />
-              <span>জরুরি ডাক্তার: {toBengaliNumber(emergencyCount)} জন</span>
-            </span>
-          )}
-        </div>
+      {/* Top Main Tabs: [ডাক্তার] [রিপোর্ট] */}
+      <div className="flex items-center gap-2 bg-surface border border-border rounded-2xl p-1.5 shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setMainTab('doctors')}
+          className={`min-h-[48px] flex-1 px-4 py-2 rounded-xl font-bold text-base inline-flex items-center justify-center gap-2 cursor-pointer transition-colors ${
+            mainTab === 'doctors'
+              ? 'bg-primary text-on-primary shadow-xs'
+              : 'text-text hover:bg-surface-2'
+          }`}
+        >
+          <Stethoscope className="w-5 h-5" />
+          <span>ডাক্তার ({toBengaliNumber(doctors.length)})</span>
+        </button>
 
         <button
           type="button"
-          onClick={() => setCurrentPage('appointments')}
-          className="min-h-[44px] px-3.5 py-2 rounded-xl bg-primary-soft text-primary border border-primary/20 font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer hover:opacity-90"
+          onClick={() => {
+            setMainTab('reports');
+            void loadMedicalDocuments();
+          }}
+          className={`min-h-[48px] flex-1 px-4 py-2 rounded-xl font-bold text-base inline-flex items-center justify-center gap-2 cursor-pointer transition-colors ${
+            mainTab === 'reports'
+              ? 'bg-primary text-on-primary shadow-xs'
+              : 'text-text hover:bg-surface-2'
+          }`}
         >
-          <Calendar className="w-4 h-4" />
-          <span>সব অ্যাপয়েন্টমেন্ট দেখুন</span>
+          <FileText className="w-5 h-5" />
+          <span>রিপোর্ট ({toBengaliNumber(totalReportsCount)})</span>
         </button>
       </div>
+
+      {mainTab === 'reports' ? (
+        <DocumentsVaultTab kind="report" />
+      ) : selectedDoctor ? (
+        /* ==============================================================
+           DOCTOR DETAIL VIEW ([তথ্য] | [প্রেসক্রিপশন])
+           ============================================================== */
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setSelectedDoctorId(null)}
+              className="min-h-[48px] px-4 py-2 bg-surface border border-border hover:bg-surface-2 text-text font-bold text-sm sm:text-base rounded-2xl inline-flex items-center gap-2 cursor-pointer"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              <span>সব ডাক্তার</span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => openEditModal(selectedDoctor)}
+                className="min-h-[48px] px-3.5 py-2 bg-surface border border-border hover:border-primary text-text font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Edit2 className="w-4 h-4" />
+                <span>সম্পাদনা</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteDoc(selectedDoctor)}
+                className="min-h-[48px] px-3.5 py-2 bg-danger-soft border border-danger/25 text-danger-text font-bold text-sm rounded-xl inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>মুছুন</span>
+              </button>
+            </div>
+          </div>
+
+          <section className="bg-surface border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                {selectedDoctor.isEmergency && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 dark:bg-amber-900/50 text-amber-900 dark:text-amber-200 text-xs font-extrabold border border-amber-300/70 mb-2">
+                    <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+                    <span>জরুরি ডাক্তার</span>
+                  </span>
+                )}
+                <h2 className="text-2xl font-bold text-text">{selectedDoctor.name}</h2>
+                {selectedDoctor.specialty && (
+                  <p className="text-base font-semibold text-primary mt-0.5">
+                    {selectedDoctor.specialty}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleEmergencyPin(selectedDoctor)}
+                className={`min-h-[48px] px-3.5 py-2 rounded-xl border font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer ${
+                  selectedDoctor.isEmergency
+                    ? 'bg-amber-100 dark:bg-amber-900/40 border-amber-300 text-amber-800 dark:text-amber-200'
+                    : 'bg-surface-2 border-border text-text'
+                }`}
+              >
+                <Star className={`w-4 h-4 ${selectedDoctor.isEmergency ? 'fill-amber-500 text-amber-500' : ''}`} />
+                <span>{selectedDoctor.isEmergency ? 'জরুরি পিনকৃত' : 'জরুরি পিন'}</span>
+              </button>
+            </div>
+
+            {/* Detail Sub-Tabs: [তথ্য] [প্রেসক্রিপশন] */}
+            <div className="flex items-center gap-2 bg-surface-2 border border-border rounded-xl p-1">
+              <button
+                type="button"
+                onClick={() => setDoctorDetailTab('info')}
+                className={`min-h-[46px] flex-1 px-4 py-2 rounded-lg font-bold text-sm sm:text-base cursor-pointer transition-colors ${
+                  doctorDetailTab === 'info'
+                    ? 'bg-surface text-primary shadow-2xs border border-border'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                তথ্য
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDoctorDetailTab('prescriptions');
+                  void loadMedicalDocuments();
+                }}
+                className={`min-h-[46px] flex-1 px-4 py-2 rounded-lg font-bold text-sm sm:text-base inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                  doctorDetailTab === 'prescriptions'
+                    ? 'bg-surface text-primary shadow-2xs border border-border'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>
+                  প্রেসক্রিপশন ({toBengaliNumber(prescriptionCountByDoctor.get(selectedDoctor.id) || 0)})
+                </span>
+              </button>
+            </div>
+          </section>
+
+          {doctorDetailTab === 'prescriptions' ? (
+            <DocumentsVaultTab kind="prescription" fixedDoctor={selectedDoctor} />
+          ) : (
+            <section className="bg-surface border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+              {selectedDoctor.forConditions && (
+                <p className="text-base text-text-muted">
+                  কোন রোগের জন্য দেখান:{' '}
+                  <strong className="text-text">{selectedDoctor.forConditions}</strong>
+                </p>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm sm:text-base text-text">
+                {selectedDoctor.hospital && (
+                  <div className="flex items-start gap-2.5 bg-surface-2/80 p-3.5 rounded-xl border border-border/70">
+                    <Building2 className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                    <div>
+                      <span className="text-xs text-text-muted block">চেম্বার / হাসপাতাল</span>
+                      <span className="font-semibold">{selectedDoctor.hospital}</span>
+                    </div>
+                  </div>
+                )}
+
+                {selectedDoctor.visitingHours && (
+                  <div className="flex items-start gap-2.5 bg-surface-2/80 p-3.5 rounded-xl border border-border/70">
+                    <Clock className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                    <div>
+                      <span className="text-xs text-text-muted block">রোগী দেখার সময়</span>
+                      <span className="font-semibold">{selectedDoctor.visitingHours}</span>
+                    </div>
+                  </div>
+                )}
+
+                {selectedDoctor.address && (
+                  <div className="flex items-start gap-2.5 bg-surface-2/80 p-3.5 rounded-xl border border-border/70 sm:col-span-2">
+                    <MapPin className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                    <div>
+                      <span className="text-xs text-text-muted block">ঠিকানা</span>
+                      <span>{selectedDoctor.address}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {(selectedDoctor.lastVisitDate ||
+                selectedDoctor.nextVisitDate ||
+                selectedDoctor.patientIds?.length ||
+                selectedDoctor.notes) && (
+                <div className="space-y-2.5 text-sm text-text-muted">
+                  <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                    {selectedDoctor.lastVisitDate && (
+                      <span>
+                        শেষ ভিজিট:{' '}
+                        <strong className="text-text">
+                          {formatBengaliDate(selectedDoctor.lastVisitDate)}
+                        </strong>
+                      </span>
+                    )}
+                    {selectedDoctor.nextVisitDate && (
+                      <span>
+                        পরবর্তী ভিজিট:{' '}
+                        <strong className="text-primary">
+                          {formatBengaliDate(selectedDoctor.nextVisitDate)}
+                        </strong>
+                      </span>
+                    )}
+                  </div>
+
+                  {selectedDoctor.patientIds && selectedDoctor.patientIds.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <UserCheck className="w-4 h-4 text-primary shrink-0" />
+                      <span>সদস্য:</span>
+                      {selectedDoctor.patientIds.map((pid) => (
+                        <span
+                          key={pid}
+                          className="px-2.5 py-0.5 rounded-lg bg-primary-soft text-primary text-xs font-bold"
+                        >
+                          {resolvePatientLabel(pid)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedDoctor.notes && (
+                    <p className="p-3.5 rounded-xl bg-surface-2 border border-border text-text text-sm">
+                      নোট: {selectedDoctor.notes}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {(() => {
+                const pInfo = validateBangladeshiPhone(selectedDoctor.phone);
+                const wCandidate = selectedDoctor.whatsapp?.trim()
+                  ? selectedDoctor.whatsapp
+                  : pInfo.waUrl
+                  ? selectedDoctor.phone
+                  : '';
+                const wInfo = validateBangladeshiPhone(wCandidate);
+                if (!pInfo.telHref && !wInfo.waUrl) return null;
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    {pInfo.telHref && (
+                      <a
+                        href={pInfo.telHref}
+                        className="min-h-[52px] px-5 py-3 bg-primary hover:bg-primary-hover text-on-primary font-bold text-base rounded-xl flex items-center justify-center gap-2 shadow-xs"
+                      >
+                        <PhoneCall className="w-5 h-5" />
+                        <span>কল করুন ({selectedDoctor.phone})</span>
+                      </a>
+                    )}
+                    {wInfo.waUrl && (
+                      <a
+                        href={wInfo.waUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-h-[52px] px-5 py-3 bg-[#15803D] hover:bg-[#166534] text-white font-bold text-base rounded-xl flex items-center justify-center gap-2 shadow-xs"
+                      >
+                        <MessageCircle className="w-5 h-5" />
+                        <span>হোয়াটসঅ্যাপ</span>
+                      </a>
+                    )}
+                  </div>
+                );
+              })()}
+            </section>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Page Header */}
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-text flex items-center gap-2.5">
+                <Stethoscope className="w-7 h-7 text-primary shrink-0" />
+                <span>আমার ডাক্তার</span>
+              </h1>
+              <p className="text-sm sm:text-base text-text-muted mt-1">
+                জরুরি কল, চেম্বারের ঠিকানা এবং ডাক্তারের প্রেসক্রিপশন এক জায়গায়
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  void loadDoctors(true);
+                  void loadMedicalDocuments(true);
+                  showToast('ডাক্তার তালিকা রিফ্রেশ করা হচ্ছে...', 'info');
+                }}
+                disabled={isLoadingDoctors}
+                className="min-h-[48px] px-4 py-2.5 bg-surface border border-border hover:bg-surface-2 text-text font-semibold text-sm sm:text-base rounded-2xl inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 text-primary ${isLoadingDoctors ? 'animate-spin' : ''}`} />
+                <span>রিফ্রেশ</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={openAddModal}
+                className="min-h-[48px] px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-primary font-bold text-base rounded-2xl shadow-xs inline-flex items-center gap-2 cursor-pointer"
+              >
+                <Plus className="w-5 h-5" />
+                <span>নতুন ডাক্তার যোগ</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Summary & Quick Shortcut Row */}
+          <div className="bg-surface border border-border rounded-2xl p-4 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3 text-sm sm:text-base">
+              <span className="font-bold text-text">
+                মোট ডাক্তার: {toBengaliNumber(doctors.length)} জন
+              </span>
+              {emergencyCount > 0 && (
+                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-300/60 text-xs sm:text-sm font-bold">
+                  <Star className="w-4 h-4 fill-amber-500 text-amber-500" />
+                  <span>জরুরি ডাক্তার: {toBengaliNumber(emergencyCount)} জন</span>
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setCurrentPage('appointments')}
+              className="min-h-[44px] px-3.5 py-2 rounded-xl bg-primary-soft text-primary border border-primary/20 font-bold text-sm inline-flex items-center gap-1.5 cursor-pointer hover:opacity-90"
+            >
+              <Calendar className="w-4 h-4" />
+              <span>সব অ্যাপয়েন্টমেন্ট দেখুন</span>
+            </button>
+          </div>
 
       {/* Search & Patient Filter */}
       <div className="bg-surface border border-border rounded-2xl p-4 shadow-xs space-y-3">
@@ -596,36 +914,64 @@ export const DoctorsPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Big 1-Tap Call & WhatsApp Buttons */}
-                {(phoneInfo.telHref || waInfo.waUrl) && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                    {phoneInfo.telHref && (
-                      <a
-                        href={phoneInfo.telHref}
-                        className="min-h-[52px] px-5 py-3 bg-primary hover:bg-primary-hover text-on-primary font-bold text-base rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors"
-                      >
-                        <PhoneCall className="w-5 h-5" />
-                        <span>কল করুন ({docItem.phone})</span>
-                      </a>
-                    )}
+                {/* Big 1-Tap Call & WhatsApp Buttons + Prescription Corner Button */}
+                <div className="flex flex-wrap gap-3 pt-1">
+                  {phoneInfo.telHref && (
+                    <a
+                      href={phoneInfo.telHref}
+                      className="min-h-[52px] flex-1 min-w-[160px] px-5 py-3 bg-primary hover:bg-primary-hover text-on-primary font-bold text-base rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors"
+                    >
+                      <PhoneCall className="w-5 h-5" />
+                      <span>কল করুন ({docItem.phone})</span>
+                    </a>
+                  )}
 
-                    {waInfo.waUrl && (
-                      <a
-                        href={waInfo.waUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="min-h-[52px] px-5 py-3 bg-[#15803D] hover:bg-[#166534] text-white font-bold text-base rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors"
-                      >
-                        <MessageCircle className="w-5 h-5" />
-                        <span>হোয়াটসঅ্যাপ</span>
-                      </a>
-                    )}
-                  </div>
-                )}
+                  {waInfo.waUrl && (
+                    <a
+                      href={waInfo.waUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-h-[52px] flex-1 min-w-[140px] px-5 py-3 bg-[#15803D] hover:bg-[#166534] text-white font-bold text-base rounded-xl flex items-center justify-center gap-2 shadow-xs transition-colors"
+                    >
+                      <MessageCircle className="w-5 h-5" />
+                      <span>হোয়াটসঅ্যাপ</span>
+                    </a>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDoctorId(docItem.id);
+                      setDoctorDetailTab('prescriptions');
+                      void loadMedicalDocuments();
+                    }}
+                    className="min-h-[52px] flex-1 min-w-[180px] px-4 py-3 bg-primary-soft hover:opacity-90 text-primary border border-primary/25 font-bold text-sm sm:text-base rounded-xl flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <FileText className="w-5 h-5" />
+                    <span>
+                      প্রেসক্রিপশন ({toBengaliNumber(prescriptionCountByDoctor.get(docItem.id) || 0)})
+                    </span>
+                  </button>
+                </div>
               </article>
             );
           })}
         </div>
+      )}
+
+      {/* Unlinked Prescriptions kept when a Doctor was deleted */}
+      {unlinkedPrescriptionsCount > 0 && (
+        <section className="pt-4 border-t border-border space-y-3">
+          <h2 className="text-lg font-bold text-text flex items-center gap-2">
+            <FileText className="w-5 h-5 text-primary" />
+            <span>
+              ডাক্তারবিহীন সংরক্ষিত প্রেসক্রিপশন ({toBengaliNumber(unlinkedPrescriptionsCount)})
+            </span>
+          </h2>
+          <DocumentsVaultTab kind="prescription" unlinkedOnly />
+        </section>
+      )}
+        </>
       )}
 
       {/* Add / Edit Doctor Modal */}
@@ -953,11 +1299,11 @@ export const DoctorsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Delete Confirmation Modal (Never window.confirm) */}
+      {/* Delete Confirmation Modal (with Prescription Cascade Options) */}
       {confirmDeleteDoc && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
-          onClick={() => setConfirmDeleteDoc(null)}
+          onClick={() => !isHandlingCascadeDelete && setConfirmDeleteDoc(null)}
         >
           <div
             className="bg-surface border border-border rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4"
@@ -971,28 +1317,69 @@ export const DoctorsPage: React.FC = () => {
                 <h3 className="text-lg font-bold text-text">
                   ডাক্তারের তথ্য মুছে ফেলবেন?
                 </h3>
-                <p className="text-sm text-text-muted mt-1">
-                  <strong className="text-text">{confirmDeleteDoc.name}</strong> তালিকা থেকে মুছে যাবে। আগে করা কোনো অ্যাপয়েন্টমেন্ট বা রিপোর্ট মুছবে না।
-                </p>
+                {deleteDocPrescriptionsCount > 0 ? (
+                  <p className="text-sm text-text-muted mt-1 leading-relaxed">
+                    <strong className="text-text">{confirmDeleteDoc.name}</strong>-এর অধীনে{' '}
+                    <strong className="text-primary">
+                      {toBengaliNumber(deleteDocPrescriptionsCount)}টি প্রেসক্রিপশন
+                    </strong>{' '}
+                    আছে। সেগুলো কী করতে চান?
+                  </p>
+                ) : (
+                  <p className="text-sm text-text-muted mt-1">
+                    <strong className="text-text">{confirmDeleteDoc.name}</strong> তালিকা থেকে মুছে যাবে। আগে করা কোনো অ্যাপয়েন্টমেন্ট বা রিপোর্ট মুছবে না।
+                  </p>
+                )}
               </div>
             </div>
 
-            <div className="flex gap-3 pt-1">
-              <button
-                type="button"
-                onClick={() => setConfirmDeleteDoc(null)}
-                className="min-h-[48px] flex-1 px-4 py-2.5 bg-surface-2 border border-border text-text font-bold text-base rounded-xl cursor-pointer"
-              >
-                থাক
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                className="min-h-[48px] flex-1 px-4 py-2.5 bg-danger text-white font-bold text-base rounded-xl cursor-pointer hover:opacity-90"
-              >
-                হ্যাঁ, মুছে ফেলুন
-              </button>
-            </div>
+            {deleteDocPrescriptionsCount > 0 ? (
+              <div className="flex flex-col gap-2.5 pt-1">
+                <button
+                  type="button"
+                  disabled={isHandlingCascadeDelete}
+                  onClick={() => void handleConfirmDeleteWithMode('keep_unlinked')}
+                  className="min-h-[48px] w-full px-4 py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 text-on-primary font-bold text-sm sm:text-base rounded-xl cursor-pointer"
+                >
+                  ডাক্তার ছাড়া রাখুন (প্রেসক্রিপশন থাকবে)
+                </button>
+                <button
+                  type="button"
+                  disabled={isHandlingCascadeDelete}
+                  onClick={() => void handleConfirmDeleteWithMode('delete_all')}
+                  className="min-h-[48px] w-full px-4 py-2.5 bg-danger hover:opacity-90 disabled:opacity-50 text-white font-bold text-sm sm:text-base rounded-xl cursor-pointer"
+                >
+                  সব মুছুন (ডাক্তার ও প্রেসক্রিপশন)
+                </button>
+                <button
+                  type="button"
+                  disabled={isHandlingCascadeDelete}
+                  onClick={() => setConfirmDeleteDoc(null)}
+                  className="min-h-[48px] w-full px-4 py-2.5 bg-surface-2 border border-border text-text font-bold text-sm sm:text-base rounded-xl cursor-pointer"
+                >
+                  থাক
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  disabled={isHandlingCascadeDelete}
+                  onClick={() => setConfirmDeleteDoc(null)}
+                  className="min-h-[48px] flex-1 px-4 py-2.5 bg-surface-2 border border-border text-text font-bold text-base rounded-xl cursor-pointer"
+                >
+                  থাক
+                </button>
+                <button
+                  type="button"
+                  disabled={isHandlingCascadeDelete}
+                  onClick={() => void handleConfirmDeleteWithMode('keep_unlinked')}
+                  className="min-h-[48px] flex-1 px-4 py-2.5 bg-danger text-white font-bold text-base rounded-xl cursor-pointer hover:opacity-90"
+                >
+                  হ্যাঁ, মুছে ফেলুন
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -64,6 +64,8 @@ import {
   SharedReportDoc,
   EmergencyCardDoc,
   DoctorProfile,
+  MedicalDocument,
+  MedicalDocumentFile,
 } from '../types';
 import {
   BuiltSharedReportSnapshot,
@@ -75,6 +77,10 @@ import {
   isValidEmergencyTokenFormat,
 } from '../utils/emergencyQr';
 import { buildCleanDoctorInput, DoctorProfileInput } from '../utils/doctorsManager';
+import { buildCleanMedicalDocumentInput, DocumentFormInput } from '../utils/medicalDocuments';
+import { isValidInviteCode, normalizeInviteCodeInput } from '../utils/caregiverAlerts';
+import { CloudSyncOutbox } from '../utils/cloudSyncOutbox';
+import { recordFirestoreRead, recordFirestoreWrite } from '../utils/firestoreUsageTracker';
 
 export const ADMIN_EMAIL = 'sarashatikmkr501@gmail.com';
 
@@ -169,18 +175,20 @@ async function recordUserProfile(user: User): Promise<void> {
   if (isWriteQuotaPaused()) return;
   const path = `users/${user.uid}`;
   try {
-    await executeGuardedWrite(() =>
-      setDoc(
-        doc(db, 'users', user.uid),
-        {
-          uid: user.uid,
-          email: user.email || '',
-          displayName: user.displayName || user.email?.split('@')[0] || 'ব্যবহারকারী',
-          photoURL: user.photoURL || '',
-          lastLoginAt: new Date().toISOString(),
-        },
-        { merge: true }
-      )
+    await executeGuardedWrite(
+      () =>
+        setDoc(
+          doc(db, 'users', user.uid),
+          {
+            uid: user.uid,
+            email: user.email || '',
+            displayName: user.displayName || user.email?.split('@')[0] || 'ব্যবহারকারী',
+            photoURL: user.photoURL || '',
+            lastLoginAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ),
+      { collection: 'users', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -195,8 +203,9 @@ async function recordUserProfile(user: User): Promise<void> {
 export async function saveMedicineToCloud(userId: string, medicine: Medicine): Promise<void> {
   const path = `users/${userId}/medicines/${medicine.id}`;
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'users', userId, 'medicines', medicine.id), stripUndefined(medicine))
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'medicines', medicine.id), stripUndefined(medicine)),
+      { collection: 'medicines', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -210,8 +219,9 @@ export async function saveMedicineToCloud(userId: string, medicine: Medicine): P
 export async function deleteMedicineFromCloud(userId: string, medicineId: string): Promise<void> {
   const path = `users/${userId}/medicines/${medicineId}`;
   try {
-    await executeGuardedWrite(() =>
-      deleteDoc(doc(db, 'users', userId, 'medicines', medicineId))
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'users', userId, 'medicines', medicineId)),
+      { collection: 'medicines', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -226,8 +236,9 @@ export async function deleteMedicineFromCloud(userId: string, medicineId: string
 export async function savePatientToCloud(userId: string, patient: PatientProfile): Promise<void> {
   const path = `users/${userId}/patients/${patient.id}`;
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'users', userId, 'patients', patient.id), stripUndefined(patient))
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'patients', patient.id), stripUndefined(patient)),
+      { collection: 'patients', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -241,8 +252,9 @@ export async function savePatientToCloud(userId: string, patient: PatientProfile
 export async function deletePatientFromCloud(userId: string, patientId: string): Promise<void> {
   const path = `users/${userId}/patients/${patientId}`;
   try {
-    await executeGuardedWrite(() =>
-      deleteDoc(doc(db, 'users', userId, 'patients', patientId))
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'users', userId, 'patients', patientId)),
+      { collection: 'patients', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -257,8 +269,9 @@ export async function deletePatientFromCloud(userId: string, patientId: string):
 export async function saveDoseLogToCloud(userId: string, doseLog: DoseLog): Promise<void> {
   const path = `users/${userId}/doseLogs/${doseLog.id}`;
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'users', userId, 'doseLogs', doseLog.id), stripUndefined(doseLog))
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'doseLogs', doseLog.id), stripUndefined(doseLog)),
+      { collection: 'doseLogs', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -273,8 +286,9 @@ export async function saveDoseLogToCloud(userId: string, doseLog: DoseLog): Prom
 export async function saveSettingsToCloud(userId: string, settings: ReminderSettings): Promise<void> {
   const path = `users/${userId}/settings/preferences`;
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'users', userId, 'settings', 'preferences'), stripUndefined(settings), { merge: true })
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'settings', 'preferences'), stripUndefined(settings), { merge: true }),
+      { collection: 'settings', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -289,8 +303,9 @@ export async function saveSettingsToCloud(userId: string, settings: ReminderSett
 export async function saveHealthRecordToCloud(userId: string, record: HealthRecord): Promise<void> {
   const path = `users/${userId}/healthRecords/${record.id}`;
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'users', userId, 'healthRecords', record.id), stripUndefined(record))
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'healthRecords', record.id), stripUndefined(record)),
+      { collection: 'healthRecords', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -304,8 +319,9 @@ export async function saveHealthRecordToCloud(userId: string, record: HealthReco
 export async function deleteHealthRecordFromCloud(userId: string, recordId: string): Promise<void> {
   const path = `users/${userId}/healthRecords/${recordId}`;
   try {
-    await executeGuardedWrite(() =>
-      deleteDoc(doc(db, 'users', userId, 'healthRecords', recordId))
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'users', userId, 'healthRecords', recordId)),
+      { collection: 'healthRecords', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -320,8 +336,9 @@ export async function deleteHealthRecordFromCloud(userId: string, recordId: stri
 export async function saveAppointmentToCloud(userId: string, appointment: DoctorAppointment): Promise<void> {
   const path = `users/${userId}/appointments/${appointment.id}`;
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'users', userId, 'appointments', appointment.id), stripUndefined(appointment))
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'appointments', appointment.id), stripUndefined(appointment)),
+      { collection: 'appointments', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -335,8 +352,9 @@ export async function saveAppointmentToCloud(userId: string, appointment: Doctor
 export async function deleteAppointmentFromCloud(userId: string, appointmentId: string): Promise<void> {
   const path = `users/${userId}/appointments/${appointmentId}`;
   try {
-    await executeGuardedWrite(() =>
-      deleteDoc(doc(db, 'users', userId, 'appointments', appointmentId))
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'users', userId, 'appointments', appointmentId)),
+      { collection: 'appointments', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -360,6 +378,7 @@ export async function fetchUserDoctorsFromCloud(userId: string): Promise<DoctorP
     }
     snap = await getDocs(colRef);
   }
+  recordFirestoreRead('doctors', Math.max(1, snap.size));
   const items: DoctorProfile[] = [];
   snap.forEach((docSnap) => {
     const raw = docSnap.data() as DoctorProfile;
@@ -384,7 +403,10 @@ export async function createDoctorInCloud(
     updatedAt: serverTimestamp(),
   });
   try {
-    await executeGuardedWrite(() => setDoc(doc(db, 'users', userId, 'doctors', doctor.id), payload));
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'doctors', doctor.id), payload),
+      { collection: 'doctors', count: 1 }
+    );
   } catch (error) {
     if (isQuotaExceededError(error)) {
       markWriteQuotaExceeded();
@@ -435,7 +457,10 @@ export async function updateDoctorInCloud(
   }
 
   try {
-    await executeGuardedWrite(() => updateDoc(docRef, stripUndefined(patch)));
+    await executeGuardedWrite(
+      () => updateDoc(docRef, stripUndefined(patch)),
+      { collection: 'doctors', count: 1 }
+    );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
       markWriteQuotaExceeded();
@@ -454,8 +479,196 @@ export async function updateDoctorInCloud(
 export async function deleteDoctorFromCloud(userId: string, doctorId: string): Promise<void> {
   const path = `users/${userId}/doctors/${doctorId}`;
   try {
-    await executeGuardedWrite(() =>
-      deleteDoc(doc(db, 'users', userId, 'doctors', doctorId))
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'users', userId, 'doctors', doctorId)),
+      { collection: 'doctors', count: 1 }
+    );
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// ============================================================================
+// Prescriptions & Medical Reports Vault (users/{uid}/documents + documentFiles)
+// Strictly private to owner; ZERO onSnapshot listeners.
+// ============================================================================
+
+export async function fetchUserDocumentsMetaFromCloud(
+  userId: string
+): Promise<MedicalDocument[]> {
+  if (!userId) return [];
+  const colRef = collection(db, 'users', userId, 'documents');
+  let snap;
+  try {
+    snap = await getDocsFromServer(colRef);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDocs(colRef);
+  }
+  recordFirestoreRead('documents', Math.max(1, snap.size));
+  const items: MedicalDocument[] = [];
+  snap.forEach((docSnap) => {
+    const raw = docSnap.data() as MedicalDocument;
+    items.push({
+      ...raw,
+      id: raw.id || docSnap.id,
+      pages: Array.isArray(raw.pages) ? raw.pages : [],
+    });
+  });
+  return items;
+}
+
+export async function fetchDocumentFileFromCloud(
+  userId: string,
+  fileId: string
+): Promise<MedicalDocumentFile | null> {
+  if (!userId || !fileId) return null;
+  const docRef = doc(db, 'users', userId, 'documentFiles', fileId);
+  let snap;
+  try {
+    snap = await getDocFromServer(docRef);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw err;
+    }
+    snap = await getDoc(docRef);
+  }
+  recordFirestoreRead('documentFiles', 1);
+  if (!snap.exists()) return null;
+  const raw = snap.data() as MedicalDocumentFile;
+  return {
+    ...raw,
+    id: raw.id || snap.id,
+  };
+}
+
+export async function createDocumentFileInCloud(
+  userId: string,
+  file: { id: string; docId: string; data: string; bytes: number }
+): Promise<void> {
+  const path = `users/${userId}/documentFiles/${file.id}`;
+  const payload = stripUndefined({
+    id: file.id,
+    docId: file.docId,
+    data: file.data,
+    bytes: file.bytes,
+    createdAt: serverTimestamp(),
+  });
+  try {
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'documentFiles', file.id), payload),
+      { collection: 'documentFiles', count: 1 }
+    );
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function deleteDocumentFileFromCloud(
+  userId: string,
+  fileId: string
+): Promise<void> {
+  const path = `users/${userId}/documentFiles/${fileId}`;
+  try {
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'users', userId, 'documentFiles', fileId)),
+      { collection: 'documentFiles', count: 1 }
+    );
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function createDocumentMetaInCloud(
+  userId: string,
+  docId: string,
+  docInput: DocumentFormInput
+): Promise<void> {
+  const path = `users/${userId}/documents/${docId}`;
+  const clean = buildCleanMedicalDocumentInput(docInput);
+  const payload = stripUndefined({
+    id: docId,
+    ...clean,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  try {
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'users', userId, 'documents', docId), payload),
+      { collection: 'documents', count: 1 }
+    );
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function updateDocumentMetaInCloud(
+  userId: string,
+  docId: string,
+  docInput: DocumentFormInput
+): Promise<void> {
+  const path = `users/${userId}/documents/${docId}`;
+  const docRef = doc(db, 'users', userId, 'documents', docId);
+  const clean = buildCleanMedicalDocumentInput(docInput);
+
+  const patch: Record<string, any> = {
+    kind: clean.kind,
+    patientId: clean.patientId,
+    title: clean.title,
+    date: clean.date,
+    pages: clean.pages,
+    doctorId: clean.doctorId !== undefined ? clean.doctorId : deleteField(),
+    note: clean.note !== undefined ? clean.note : deleteField(),
+    reportType: clean.reportType !== undefined ? clean.reportType : deleteField(),
+    updatedAt: serverTimestamp(),
+  };
+
+  try {
+    await executeGuardedWrite(
+      () => updateDoc(docRef, stripUndefined(patch)),
+      { collection: 'documents', count: 1 }
+    );
+  } catch (error: any) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    const code = String(error?.code || error?.message || '').toLowerCase();
+    if (code.includes('not-found')) {
+      await createDocumentMetaInCloud(userId, docId, docInput);
+      return;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteDocumentMetaFromCloud(
+  userId: string,
+  docId: string
+): Promise<void> {
+  const path = `users/${userId}/documents/${docId}`;
+  try {
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'users', userId, 'documents', docId)),
+      { collection: 'documents', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -477,9 +690,10 @@ export async function migrateLocalDataToCloud(
   appointments?: DoctorAppointment[]
 ): Promise<{ medicinesCount: number; logsCount: number; patientsCount: number }> {
   try {
-    const writes: Array<{ ref: ReturnType<typeof doc>; data: Record<string, any> }> = [];
+    const writes: Array<{ col: string; ref: ReturnType<typeof doc>; data: Record<string, any> }> = [];
 
     writes.push({
+      col: 'users',
       ref: doc(db, 'users', userId),
       data: stripUndefined({
         uid: userId,
@@ -491,6 +705,7 @@ export async function migrateLocalDataToCloud(
 
     patients.forEach((patient) => {
       writes.push({
+        col: 'patients',
         ref: doc(db, 'users', userId, 'patients', patient.id),
         data: stripUndefined(patient),
       });
@@ -498,6 +713,7 @@ export async function migrateLocalDataToCloud(
 
     medicines.forEach((med) => {
       writes.push({
+        col: 'medicines',
         ref: doc(db, 'users', userId, 'medicines', med.id),
         data: stripUndefined(med),
       });
@@ -505,12 +721,14 @@ export async function migrateLocalDataToCloud(
 
     doseLogs.forEach((log) => {
       writes.push({
+        col: 'doseLogs',
         ref: doc(db, 'users', userId, 'doseLogs', log.id),
         data: stripUndefined(log),
       });
     });
 
     writes.push({
+      col: 'settings',
       ref: doc(db, 'users', userId, 'settings', 'preferences'),
       data: stripUndefined(settings),
     });
@@ -518,6 +736,7 @@ export async function migrateLocalDataToCloud(
     if (healthRecords && healthRecords.length > 0) {
       healthRecords.forEach((hr) => {
         writes.push({
+          col: 'healthRecords',
           ref: doc(db, 'users', userId, 'healthRecords', hr.id),
           data: stripUndefined(hr),
         });
@@ -527,6 +746,7 @@ export async function migrateLocalDataToCloud(
     if (appointments && appointments.length > 0) {
       appointments.forEach((apt) => {
         writes.push({
+          col: 'appointments',
           ref: doc(db, 'users', userId, 'appointments', apt.id),
           data: stripUndefined(apt),
         });
@@ -542,6 +762,13 @@ export async function migrateLocalDataToCloud(
         batch.set(ref, data, { merge: true });
       });
       await executeGuardedWrite(() => batch.commit());
+      const countsByCol: Record<string, number> = {};
+      for (const item of chunk) {
+        countsByCol[item.col] = (countsByCol[item.col] || 0) + 1;
+      }
+      for (const [col, count] of Object.entries(countsByCol)) {
+        recordFirestoreWrite(col, count);
+      }
     }
 
     return {
@@ -560,6 +787,164 @@ export async function migrateLocalDataToCloud(
 }
 
 /**
+ * Flushes ONLY locally queued offline/quota-paused/modified changes to Firestore (0 writes if empty).
+ */
+export async function flushOutboxToCloud(
+  userId: string,
+  outbox: CloudSyncOutbox,
+  snapshot: {
+    medicines: Medicine[];
+    patients: PatientProfile[];
+    doseLogs: DoseLog[];
+    settings: ReminderSettings;
+    healthRecords: HealthRecord[];
+    appointments: DoctorAppointment[];
+    doctors?: DoctorProfile[];
+  }
+): Promise<{ syncedOpsCount: number }> {
+  try {
+    const ops: Array<
+      | { col: string; kind: 'set'; ref: ReturnType<typeof doc>; data: any; merge?: boolean }
+      | { col: string; kind: 'delete'; ref: ReturnType<typeof doc> }
+    > = [];
+
+    const medMap = new Map(snapshot.medicines.map((m) => [m.id, m]));
+    for (const id of outbox.upserts.medicines) {
+      const item = medMap.get(id);
+      if (item) {
+        ops.push({ col: 'medicines', kind: 'set', ref: doc(db, 'users', userId, 'medicines', id), data: stripUndefined(item) });
+      }
+    }
+    for (const id of outbox.deletes.medicines) {
+      ops.push({ col: 'medicines', kind: 'delete', ref: doc(db, 'users', userId, 'medicines', id) });
+    }
+
+    const patientMap = new Map(snapshot.patients.map((p) => [p.id, p]));
+    for (const id of outbox.upserts.patients) {
+      const item = patientMap.get(id);
+      if (item) {
+        ops.push({ col: 'patients', kind: 'set', ref: doc(db, 'users', userId, 'patients', id), data: stripUndefined(item) });
+      }
+    }
+    for (const id of outbox.deletes.patients) {
+      ops.push({ col: 'patients', kind: 'delete', ref: doc(db, 'users', userId, 'patients', id) });
+    }
+
+    const logMap = new Map(snapshot.doseLogs.map((l) => [l.id, l]));
+    for (const id of outbox.upserts.doseLogs) {
+      const item = logMap.get(id);
+      if (item) {
+        ops.push({ col: 'doseLogs', kind: 'set', ref: doc(db, 'users', userId, 'doseLogs', id), data: stripUndefined(item) });
+      }
+    }
+    for (const id of outbox.deletes.doseLogs) {
+      ops.push({ col: 'doseLogs', kind: 'delete', ref: doc(db, 'users', userId, 'doseLogs', id) });
+    }
+
+    const hrMap = new Map(snapshot.healthRecords.map((h) => [h.id, h]));
+    for (const id of outbox.upserts.healthRecords) {
+      const item = hrMap.get(id);
+      if (item) {
+        ops.push({ col: 'healthRecords', kind: 'set', ref: doc(db, 'users', userId, 'healthRecords', id), data: stripUndefined(item) });
+      }
+    }
+    for (const id of outbox.deletes.healthRecords) {
+      ops.push({ col: 'healthRecords', kind: 'delete', ref: doc(db, 'users', userId, 'healthRecords', id) });
+    }
+
+    const aptMap = new Map(snapshot.appointments.map((a) => [a.id, a]));
+    for (const id of outbox.upserts.appointments) {
+      const item = aptMap.get(id);
+      if (item) {
+        ops.push({ col: 'appointments', kind: 'set', ref: doc(db, 'users', userId, 'appointments', id), data: stripUndefined(item) });
+      }
+    }
+    for (const id of outbox.deletes.appointments) {
+      ops.push({ col: 'appointments', kind: 'delete', ref: doc(db, 'users', userId, 'appointments', id) });
+    }
+
+    if (outbox.settingsDirty) {
+      ops.push({
+        col: 'settings',
+        kind: 'set',
+        ref: doc(db, 'users', userId, 'settings', 'preferences'),
+        data: stripUndefined(snapshot.settings),
+        merge: true,
+      });
+    }
+
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
+      const batch = writeBatch(db);
+      const chunk = ops.slice(i, i + CHUNK_SIZE);
+      chunk.forEach((op) => {
+        if (op.kind === 'delete') {
+          batch.delete(op.ref);
+        } else if (op.merge) {
+          batch.set(op.ref, op.data, { merge: true });
+        } else {
+          batch.set(op.ref, op.data);
+        }
+      });
+      await executeGuardedWrite(() => batch.commit());
+      const countsByCol: Record<string, number> = {};
+      for (const op of chunk) {
+        countsByCol[op.col] = (countsByCol[op.col] || 0) + 1;
+      }
+      for (const [col, count] of Object.entries(countsByCol)) {
+        recordFirestoreWrite(col, count);
+      }
+    }
+
+    let doctorOps = 0;
+    const doctorMap = new Map((snapshot.doctors || []).map((d) => [d.id, d]));
+    for (const id of outbox.upserts.doctors) {
+      const docItem = doctorMap.get(id);
+      if (docItem) {
+        await updateDoctorInCloud(userId, id, docItem);
+        doctorOps += 1;
+      }
+    }
+    for (const id of outbox.deletes.doctors) {
+      await deleteDoctorFromCloud(userId, id);
+      doctorOps += 1;
+    }
+
+    return { syncedOpsCount: ops.length + doctorOps };
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, `users/${userId}/[outbox_sync]`);
+    return { syncedOpsCount: 0 };
+  }
+}
+
+/**
+ * Lightweight 1-doc write probe used ONLY on manual retry after a prior quota pause when outbox is empty.
+ */
+export async function probeCloudWriteAvailability(userId: string): Promise<void> {
+  try {
+    await executeGuardedWrite(
+      () =>
+        setDoc(
+          doc(db, 'users', userId),
+          { lastSyncCheckAt: new Date().toISOString() },
+          { merge: true }
+        ),
+      { collection: 'users', count: 1 }
+    );
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      markWriteQuotaExceeded();
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, `users/${userId}`);
+  }
+}
+
+/**
  * Checks if a user already has data stored in Cloud Firestore (minimizing reads with limit(1) on history collections)
  */
 export async function checkUserHasCloudData(
@@ -568,11 +953,14 @@ export async function checkUserHasCloudData(
   const fetchCollection = async (sub: string, maxDocs?: number) => {
     const colRef = collection(db, 'users', userId, sub);
     const targetQuery = maxDocs ? query(colRef, limit(maxDocs)) : colRef;
+    let snap;
     try {
-      return await getDocsFromServer(targetQuery);
+      snap = await getDocsFromServer(targetQuery);
     } catch {
-      return await getDocs(targetQuery);
+      snap = await getDocs(targetQuery);
     }
+    recordFirestoreRead(sub, Math.max(1, snap.size));
+    return snap;
   };
 
   try {
@@ -615,6 +1003,7 @@ export async function fetchUserCollectionFromCloud<T>(
     }
     snap = await getDocs(colRef);
   }
+  recordFirestoreRead(subcollection, Math.max(1, snap.size));
   const items: T[] = [];
   snap.forEach((docSnap) => {
     items.push(docSnap.data() as T);
@@ -639,6 +1028,7 @@ export async function fetchUserSettingsFromCloud(
     }
     snap = await getDoc(settingsRef);
   }
+  recordFirestoreRead('settings', 1);
   return snap.exists() ? (snap.data() as ReminderSettings) : null;
 }
 
@@ -663,6 +1053,7 @@ export async function fetchOlderDoseLogsFromCloud(
     }
     snap = await getDocs(q);
   }
+  recordFirestoreRead('doseLogs', Math.max(1, snap.size));
   const logs: DoseLog[] = [];
   snap.forEach((docSnap) => {
     logs.push(docSnap.data() as DoseLog);
@@ -691,6 +1082,7 @@ export async function fetchUpcomingAppointmentsFromCloud(
     }
     snap = await getDocs(q);
   }
+  recordFirestoreRead('appointments', Math.max(1, snap.size));
   const items: DoctorAppointment[] = [];
   snap.forEach((docSnap) => {
     items.push(docSnap.data() as DoctorAppointment);
@@ -719,6 +1111,7 @@ export async function fetchPastAppointmentsFromCloud(
     }
     snap = await getDocs(q);
   }
+  recordFirestoreRead('appointments', Math.max(1, snap.size));
   const items: DoctorAppointment[] = [];
   snap.forEach((docSnap) => {
     items.push(docSnap.data() as DoctorAppointment);
@@ -748,6 +1141,7 @@ export async function fetchRecentHealthRecordsFromCloud(
     }
     snap = await getDocs(q);
   }
+  recordFirestoreRead('healthRecords', Math.max(1, snap.size));
   const docs: HealthRecord[] = [];
   snap.forEach((docSnap) => {
     docs.push(docSnap.data() as HealthRecord);
@@ -764,6 +1158,36 @@ export async function fetchRecentHealthRecordsFromCloud(
  */
 export async function clearUserCloudData(userId: string): Promise<void> {
   try {
+    // Delete documentFiles by ID first (documentFiles disallows list in security rules)
+    const docsSnap = await getDocs(collection(db, 'users', userId, 'documents'));
+    recordFirestoreRead('documents', Math.max(1, docsSnap.size));
+    if (!docsSnap.empty) {
+      const fileRefs: Array<ReturnType<typeof doc>> = [];
+      docsSnap.docs.forEach((d) => {
+        const raw = d.data() as Partial<MedicalDocument>;
+        if (Array.isArray(raw.pages)) {
+          raw.pages.forEach((p) => {
+            if (p && typeof p.fileId === 'string' && p.fileId.trim()) {
+              fileRefs.push(doc(db, 'users', userId, 'documentFiles', p.fileId.trim()));
+            }
+          });
+        }
+      });
+      const CHUNK_SIZE = 400;
+      for (let i = 0; i < fileRefs.length; i += CHUNK_SIZE) {
+        const chunk = fileRefs.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach((ref) => batch.delete(ref));
+        await executeGuardedWrite(() => batch.commit(), { collection: 'documentFiles', count: chunk.length });
+      }
+      for (let i = 0; i < docsSnap.docs.length; i += CHUNK_SIZE) {
+        const chunk = docsSnap.docs.slice(i, i + CHUNK_SIZE);
+        const batch = writeBatch(db);
+        chunk.forEach((d) => batch.delete(d.ref));
+        await executeGuardedWrite(() => batch.commit(), { collection: 'documents', count: chunk.length });
+      }
+    }
+
     const subcollections = [
       'patients',
       'medicines',
@@ -775,13 +1199,15 @@ export async function clearUserCloudData(userId: string): Promise<void> {
     ];
     for (const sub of subcollections) {
       const snap = await getDocs(collection(db, 'users', userId, sub));
+      recordFirestoreRead(sub, Math.max(1, snap.size));
       if (!snap.empty) {
         const docs = snap.docs;
         const CHUNK_SIZE = 400;
         for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
+          const chunk = docs.slice(i, i + CHUNK_SIZE);
           const batch = writeBatch(db);
-          docs.slice(i, i + CHUNK_SIZE).forEach((d) => batch.delete(d.ref));
-          await executeGuardedWrite(() => batch.commit());
+          chunk.forEach((d) => batch.delete(d.ref));
+          await executeGuardedWrite(() => batch.commit(), { collection: sub, count: chunk.length });
         }
       }
     }
@@ -815,19 +1241,24 @@ export async function cleanupDemoRecordsFromCloud(
   ];
 
   try {
-    const deleteRefs: Array<ReturnType<typeof doc>> = [];
-    const updateOps: Array<{ ref: ReturnType<typeof doc>; data: Record<string, any> }> = [];
+    const ops: Array<
+      | { col: string; kind: 'delete'; ref: ReturnType<typeof doc> }
+      | { col: string; kind: 'update'; ref: ReturnType<typeof doc>; data: Record<string, any> }
+    > = [];
 
     for (const sub of subcollections) {
       const colRef = collection(db, 'users', userId, sub);
       const snap = await getDocsFromServer(colRef);
+      recordFirestoreRead(sub, Math.max(1, snap.size));
       snap.forEach((docSnap) => {
         if (isDemoRecordId(docSnap.id, sub)) {
-          deleteRefs.push(docSnap.ref);
+          ops.push({ col: sub, kind: 'delete', ref: docSnap.ref });
         } else if (sub === 'medicines') {
           const data = docSnap.data() as Medicine;
           if (Array.isArray(data.schedules) && data.schedules.some((s) => hasDemoPrefix(s?.id))) {
-            updateOps.push({
+            ops.push({
+              col: sub,
+              kind: 'update',
               ref: docSnap.ref,
               data: {
                 schedules: data.schedules.filter((s) => !hasDemoPrefix(s?.id)),
@@ -842,13 +1273,16 @@ export async function cleanupDemoRecordsFromCloud(
     try {
       const settingsRef = doc(db, 'users', userId, 'settings', 'preferences');
       const settingsSnap = await getDocFromServer(settingsRef);
+      recordFirestoreRead('settings', 1);
       if (settingsSnap.exists()) {
         const sData = settingsSnap.data() as Partial<ReminderSettings>;
         if (
           sData.emergencyContactName === 'তানভীর করিম (ছেলে)' &&
           sData.emergencyContactPhone === '+8801711223344'
         ) {
-          updateOps.push({
+          ops.push({
+            col: 'settings',
+            kind: 'update',
             ref: settingsRef,
             data: {
               emergencyContactName: '',
@@ -862,20 +1296,13 @@ export async function cleanupDemoRecordsFromCloud(
       console.warn('cleanupDemoRecordsFromCloud settings check notice:', settingsErr);
     }
 
-    const totalOps = deleteRefs.length + updateOps.length;
-    if (totalOps > 0) {
+    const removedCount = ops.filter((o) => o.kind === 'delete').length;
+    if (ops.length > 0) {
       const CHUNK_SIZE = 400;
-      const allOps: Array<
-        | { kind: 'delete'; ref: ReturnType<typeof doc> }
-        | { kind: 'update'; ref: ReturnType<typeof doc>; data: Record<string, any> }
-      > = [
-        ...deleteRefs.map((ref) => ({ kind: 'delete' as const, ref })),
-        ...updateOps.map((op) => ({ kind: 'update' as const, ref: op.ref, data: op.data })),
-      ];
-
-      for (let i = 0; i < allOps.length; i += CHUNK_SIZE) {
+      for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
+        const chunk = ops.slice(i, i + CHUNK_SIZE);
         const batch = writeBatch(db);
-        allOps.slice(i, i + CHUNK_SIZE).forEach((op) => {
+        chunk.forEach((op) => {
           if (op.kind === 'delete') {
             batch.delete(op.ref);
           } else {
@@ -883,10 +1310,17 @@ export async function cleanupDemoRecordsFromCloud(
           }
         });
         await executeGuardedWrite(() => batch.commit());
+        const countsByCol: Record<string, number> = {};
+        for (const op of chunk) {
+          countsByCol[op.col] = (countsByCol[op.col] || 0) + 1;
+        }
+        for (const [col, count] of Object.entries(countsByCol)) {
+          recordFirestoreWrite(col, count);
+        }
       }
     }
 
-    return { removedCount: deleteRefs.length, completed: true };
+    return { removedCount, completed: true };
   } catch (error) {
     if (isQuotaExceededError(error)) {
       markWriteQuotaExceeded();
@@ -904,6 +1338,7 @@ export async function cleanupDemoRecordsFromCloud(
 export async function fetchLibraryMetaFromCloud(): Promise<LibraryMetaDoc | null> {
   try {
     const snap = await getDoc(doc(db, 'library_meta', 'current'));
+    recordFirestoreRead('library_meta', 1);
     if (!snap.exists()) return null;
     return snap.data() as LibraryMetaDoc;
   } catch (error) {
@@ -931,6 +1366,7 @@ export async function fetchLibraryChunksByVersion(version: number): Promise<Glob
     // Offline/cache fallback
     snap = await getDocs(q);
   }
+  recordFirestoreRead('library_chunks', Math.max(1, snap.size));
 
   const chunkDocs: LibraryChunkDoc[] = [];
   snap.forEach((docSnap) => {
@@ -985,6 +1421,7 @@ export async function publishChunkedLibraryCatalog(
         serverVersion = data.version;
       }
     }
+    recordFirestoreRead('library_meta', 1);
   } catch (err) {
     if (isQuotaExceededError(err)) {
       throw err;
@@ -1013,7 +1450,10 @@ export async function publishChunkedLibraryCatalog(
         const ref = doc(db, 'library_chunks', `${newVersion}_${chunkDoc.index}`);
         batch.set(ref, stripUndefined(chunkDoc));
       });
-      await executeGuardedWrite(() => batch.commit());
+      await executeGuardedWrite(() => batch.commit(), {
+        collection: 'library_chunks',
+        count: docsToWrite.length,
+      });
       totalWrites += docsToWrite.length;
     };
 
@@ -1038,8 +1478,9 @@ export async function publishChunkedLibraryCatalog(
 
     // 2. Write optional import batch audit doc
     if (importBatchInfo) {
-      await executeGuardedWrite(() =>
-        setDoc(doc(db, 'import_batches', importBatchInfo.id), stripUndefined(importBatchInfo))
+      await executeGuardedWrite(
+        () => setDoc(doc(db, 'import_batches', importBatchInfo.id), stripUndefined(importBatchInfo)),
+        { collection: 'import_batches', count: 1 }
       );
       totalWrites += 1;
     }
@@ -1051,8 +1492,9 @@ export async function publishChunkedLibraryCatalog(
       totalCount: cleanMedicines.length,
       updatedAt: new Date().toISOString(),
     };
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'library_meta', 'current'), metaPayload)
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'library_meta', 'current'), metaPayload),
+      { collection: 'library_meta', count: 1 }
     );
     totalWrites += 1;
 
@@ -1061,13 +1503,18 @@ export async function publishChunkedLibraryCatalog(
       const oldChunksSnap = await getDocs(
         query(collection(db, 'library_chunks'), where('version', '<', newVersion))
       );
+      recordFirestoreRead('library_chunks', Math.max(1, oldChunksSnap.size));
       if (!oldChunksSnap.empty) {
         const docsToDelete = oldChunksSnap.docs;
         const DELETE_BATCH_SIZE = 300;
         for (let i = 0; i < docsToDelete.length; i += DELETE_BATCH_SIZE) {
+          const chunk = docsToDelete.slice(i, i + DELETE_BATCH_SIZE);
           const delBatch = writeBatch(db);
-          docsToDelete.slice(i, i + DELETE_BATCH_SIZE).forEach((d) => delBatch.delete(d.ref));
-          await executeGuardedWrite(() => delBatch.commit());
+          chunk.forEach((d) => delBatch.delete(d.ref));
+          await executeGuardedWrite(() => delBatch.commit(), {
+            collection: 'library_chunks',
+            count: chunk.length,
+          });
         }
       }
     } catch (cleanupErr) {
@@ -1117,6 +1564,7 @@ export async function migrateLegacyGlobalMedicinesToChunks(
     }
     snap = await getDocs(collection(db, 'global_medicines'));
   }
+  recordFirestoreRead('global_medicines', Math.max(1, snap.size));
 
   const legacyMeds: GlobalMedicine[] = [];
   snap.forEach((docSnap) => {
@@ -1164,6 +1612,7 @@ export async function fetchImportBatches(): Promise<ImportBatch[]> {
   try {
     assertAdminAuth();
     const snap = await getDocs(collection(db, 'import_batches'));
+    recordFirestoreRead('import_batches', Math.max(1, snap.size));
     return snap.docs.map((docSnap) => docSnap.data() as ImportBatch);
   } catch (error) {
     console.warn('Could not fetch import batches from firestore:', error);
@@ -1184,6 +1633,7 @@ export async function fetchRegisteredUsers(): Promise<{
   try {
     assertAdminAuth();
     const snap = await getDocs(collection(db, 'users'));
+    recordFirestoreRead('users', Math.max(1, snap.size));
     return snap.docs.map((d) => d.data() as any);
   } catch (error) {
     console.warn('Could not fetch registered users:', error);
@@ -1198,6 +1648,7 @@ export async function fetchTotalPatientsCount(): Promise<number> {
   try {
     assertAdminAuth();
     const snap = await getDocs(collectionGroup(db, 'patients'));
+    recordFirestoreRead('patients', Math.max(1, snap.size));
     return snap.size;
   } catch (error) {
     console.warn('Could not fetch patient profiles count via collectionGroup:', error);
@@ -1225,8 +1676,9 @@ export async function recordAdminActivity(
       timestamp: activity.timestamp || new Date().toISOString(),
       adminEmail: activity.adminEmail || auth.currentUser?.email || ADMIN_EMAIL,
     };
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'admin_activities', activityId), act)
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'admin_activities', activityId), act),
+      { collection: 'admin_activities', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -1245,6 +1697,7 @@ export async function fetchAdminActivities(): Promise<AdminActivity[]> {
     assertAdminAuth();
     const q = query(collection(db, 'admin_activities'), orderBy('timestamp', 'desc'), limit(50));
     const snap = await getDocs(q);
+    recordFirestoreRead('admin_activities', Math.max(1, snap.size));
     return snap.docs.map((d) => d.data() as AdminActivity);
   } catch (error) {
     console.warn('Could not fetch admin activities:', error);
@@ -1270,6 +1723,7 @@ export async function testFirebaseDetailedStatus(): Promise<{
 
   try {
     await getDoc(doc(db, 'library_meta', 'current'));
+    recordFirestoreRead('library_meta', 1);
     const latencyMs = Math.round(performance.now() - start);
     return {
       isConnected: true,
@@ -1302,8 +1756,16 @@ export async function testFirebaseDetailedStatus(): Promise<{
 
 export async function createCaregiverInviteInCloud(linkDoc: CaregiverLinkDoc): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'caregiver_links', linkDoc.id), stripUndefined(linkDoc))
+    await executeGuardedWrite(
+      () =>
+        setDoc(
+          doc(db, 'caregiver_links', linkDoc.id),
+          stripUndefined({
+            ...linkDoc,
+            serverCreatedAt: serverTimestamp(),
+          })
+        ),
+      { collection: 'caregiver_links', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -1319,15 +1781,24 @@ export async function redeemCaregiverInviteInCloud(
   caregiverUid: string,
   caregiverName: string
 ): Promise<CaregiverLinkDoc> {
-  const docRef = doc(db, 'caregiver_links', inviteCode);
+  const cleanCode = normalizeInviteCodeInput(inviteCode);
+  if (!isValidInviteCode(cleanCode)) {
+    throw new Error('অনুগ্রহ করে সঠিক ৬ অক্ষরের কোড লিখুন');
+  }
+
+  const docRef = doc(db, 'caregiver_links', cleanCode);
   let snap;
   try {
     snap = await getDocFromServer(docRef);
+    recordFirestoreRead('caregiver_links', 1);
   } catch (err: any) {
     if (isQuotaExceededError(err)) throw err;
     const msg = String(err?.code || err?.message || '').toLowerCase();
     if (msg.includes('permission-denied')) {
-      throw new Error('কোডটি সঠিক নয় বা ইতিমধ্যেই ব্যবহৃত হয়েছে');
+      throw new Error('কোডটি আগেই ব্যবহার করা হয়েছে অথবা ৪৮ ঘণ্টার মেয়াদ শেষ হয়েছে');
+    }
+    if (msg.includes('unauthenticated')) {
+      throw new Error('কোড ব্যবহার করতে অনুগ্রহ করে আগে লগইন করুন');
     }
     throw new Error('ইন্টারনেট সংযোগ চালু রেখে কোডটি যাচাই করুন');
   }
@@ -1341,27 +1812,37 @@ export async function redeemCaregiverInviteInCloud(
     throw new Error('আপনি নিজের আমন্ত্রণ কোডে নিজে যত্নকারী হতে পারবেন না');
   }
   if (data.status !== 'pending') {
+    if (data.caregiverUid === caregiverUid) {
+      return data;
+    }
     throw new Error('এই আমন্ত্রণ কোডটি আগেই ব্যবহার করা হয়েছে');
   }
-  if (!data.expiresAtMs || Date.now() >= data.expiresAtMs) {
+  // Only run client-clock expiry check for legacy invites lacking serverCreatedAt;
+  // invites with serverCreatedAt are authoritatively validated against Firestore server request.time.
+  if (!data.serverCreatedAt && (!data.expiresAtMs || Date.now() >= data.expiresAtMs)) {
     throw new Error('এই কোডের ৪৮ ঘণ্টার মেয়াদ শেষ হয়ে গেছে। নতুন কোড চান।');
+  }
+  if (isWriteQuotaPaused()) {
+    throw new QuotaExceededWriteError();
   }
 
   const nowIso = new Date().toISOString();
-  const safeCaregiverName = (caregiverName || 'পরিবারের যত্নকারী').trim().slice(0, 128);
+  const safeCaregiverName = ((caregiverName || '').trim() || 'পরিবারের যত্নকারী').slice(0, 128);
 
   try {
-    await executeGuardedWrite(() =>
-      updateDoc(
-        docRef,
-        stripUndefined({
-          caregiverUid,
-          caregiverName: safeCaregiverName,
-          status: 'active',
-          linkedAt: nowIso,
-          updatedAt: nowIso,
-        })
-      )
+    await executeGuardedWrite(
+      () =>
+        updateDoc(
+          docRef,
+          stripUndefined({
+            caregiverUid,
+            caregiverName: safeCaregiverName,
+            status: 'active',
+            linkedAt: nowIso,
+            updatedAt: nowIso,
+          })
+        ),
+      { collection: 'caregiver_links', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -1370,9 +1851,9 @@ export async function redeemCaregiverInviteInCloud(
     }
     const msg = String((error as any)?.code || (error as any)?.message || '').toLowerCase();
     if (msg.includes('permission-denied')) {
-      throw new Error('কোডটি আর বৈধ নয় বা মেয়াদ শেষ হয়ে গেছে');
+      throw new Error('কোডটির মেয়াদ শেষ হয়ে গেছে বা ইতিমধ্যেই ব্যবহৃত হয়েছে');
     }
-    handleFirestoreError(error, OperationType.UPDATE, `caregiver_links/${inviteCode}`);
+    handleFirestoreError(error, OperationType.UPDATE, `caregiver_links/${cleanCode}`);
   }
 
   return {
@@ -1390,9 +1871,10 @@ export async function fetchPatientCaregiverLinks(patientUid: string): Promise<Ca
     const q = query(
       collection(db, 'caregiver_links'),
       where('patientUid', '==', patientUid),
-      limit(10)
+      limit(25)
     );
     const snap = await getDocs(q);
+    recordFirestoreRead('caregiver_links', Math.max(1, snap.size));
     return snap.docs.map((d) => d.data() as CaregiverLinkDoc);
   } catch (error) {
     if (isQuotaExceededError(error)) throw error;
@@ -1406,9 +1888,10 @@ export async function fetchCaregiverPatientsLinks(caregiverUid: string): Promise
     const q = query(
       collection(db, 'caregiver_links'),
       where('caregiverUid', '==', caregiverUid),
-      limit(10)
+      limit(25)
     );
     const snap = await getDocs(q);
+    recordFirestoreRead('caregiver_links', Math.max(1, snap.size));
     return snap.docs
       .map((d) => d.data() as CaregiverLinkDoc)
       .filter((item) => item.status === 'active');
@@ -1424,8 +1907,9 @@ export async function updateCaregiverLinkInCloud(
   updates: Partial<CaregiverLinkDoc>
 ): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      updateDoc(doc(db, 'caregiver_links', linkId), stripUndefined(updates))
+    await executeGuardedWrite(
+      () => updateDoc(doc(db, 'caregiver_links', linkId), stripUndefined(updates)),
+      { collection: 'caregiver_links', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -1439,8 +1923,9 @@ export async function updateCaregiverLinkInCloud(
 
 export async function deleteCaregiverLinkInCloud(linkId: string): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      deleteDoc(doc(db, 'caregiver_links', linkId))
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'caregiver_links', linkId)),
+      { collection: 'caregiver_links', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -1454,8 +1939,9 @@ export async function deleteCaregiverLinkInCloud(linkId: string): Promise<void> 
 export async function createFamilyAlertInCloud(alertDoc: FamilyAlertDoc): Promise<void> {
   const alertRef = doc(db, 'family_alerts', alertDoc.id);
   try {
-    await executeGuardedWrite(() =>
-      setDoc(alertRef, stripUndefined(alertDoc))
+    await executeGuardedWrite(
+      () => setDoc(alertRef, stripUndefined(alertDoc)),
+      { collection: 'family_alerts', count: 1 }
     );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
@@ -1467,6 +1953,7 @@ export async function createFamilyAlertInCloud(alertDoc: FamilyAlertDoc): Promis
     if (msg.includes('permission-denied')) {
       try {
         const existingSnap = await getDoc(alertRef);
+        recordFirestoreRead('family_alerts', 1);
         if (existingSnap.exists()) {
           return;
         }
@@ -1483,10 +1970,12 @@ export async function markFamilyAlertSeenInCloud(
   caregiverUid: string
 ): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      updateDoc(doc(db, 'family_alerts', alertId), {
-        seenBy: arrayUnion(caregiverUid),
-      })
+    await executeGuardedWrite(
+      () =>
+        updateDoc(doc(db, 'family_alerts', alertId), {
+          seenBy: arrayUnion(caregiverUid),
+        }),
+      { collection: 'family_alerts', count: 1 }
     );
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -1509,6 +1998,7 @@ export async function cleanupOldFamilyAlertsInCloud(
       limit(25)
     );
     const snap = await getDocs(q);
+    recordFirestoreRead('family_alerts', Math.max(1, snap.size));
     const cutoff = Date.now() - retentionMs;
     const toDelete = snap.docs.filter((d) => {
       const data = d.data() as Partial<FamilyAlertDoc>;
@@ -1519,7 +2009,10 @@ export async function cleanupOldFamilyAlertsInCloud(
 
     const batch = writeBatch(db);
     toDelete.forEach((d) => batch.delete(d.ref));
-    await executeGuardedWrite(() => batch.commit());
+    await executeGuardedWrite(() => batch.commit(), {
+      collection: 'family_alerts',
+      count: toDelete.length,
+    });
     return toDelete.length;
   } catch (error) {
     if (isQuotaExceededError(error)) {
@@ -1542,13 +2035,27 @@ export function subscribeToCaregiverAlerts(
   let activeUnsub: (() => void) | null = null;
   let cancelled = false;
   let usedFallback = false;
+  let hasRecordedInitial = false;
 
   const sortAlertsDesc = (items: FamilyAlertDoc[]) =>
     [...items].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
 
+  const recordServerSnapshot = (snapshot: any) => {
+    if (!snapshot.metadata?.fromCache) {
+      if (!hasRecordedInitial) {
+        hasRecordedInitial = true;
+        recordFirestoreRead('family_alerts', Math.max(1, snapshot.size));
+      } else {
+        const changed = snapshot.docChanges().length;
+        if (changed > 0) recordFirestoreRead('family_alerts', changed);
+      }
+    }
+  };
+
   const attachFallbackListener = () => {
     if (cancelled || usedFallback) return;
     usedFallback = true;
+    hasRecordedInitial = false;
     const fallbackQuery = query(
       collection(db, 'family_alerts'),
       where('caregiverUids', 'array-contains', caregiverUid),
@@ -1558,6 +2065,7 @@ export function subscribeToCaregiverAlerts(
       fallbackQuery,
       (snapshot) => {
         if (cancelled) return;
+        recordServerSnapshot(snapshot);
         const list: FamilyAlertDoc[] = [];
         snapshot.forEach((d) => list.push(d.data() as FamilyAlertDoc));
         onData(sortAlertsDesc(list));
@@ -1579,6 +2087,7 @@ export function subscribeToCaregiverAlerts(
     primaryQuery,
     (snapshot) => {
       if (cancelled) return;
+      recordServerSnapshot(snapshot);
       const list: FamilyAlertDoc[] = [];
       snapshot.forEach((d) => list.push(d.data() as FamilyAlertDoc));
       onData(sortAlertsDesc(list));
@@ -1643,8 +2152,9 @@ export async function createSharedReportInCloud(
   });
 
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'shared_reports', snapshot.token), firestorePayload)
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'shared_reports', snapshot.token), firestorePayload),
+      { collection: 'shared_reports', count: 1 }
     );
     return {
       ...firestorePayload,
@@ -1678,6 +2188,7 @@ export async function fetchSharedReportByTokenFromCloud(
 
   try {
     const snap = await getDocFromServer(doc(db, 'shared_reports', token));
+    recordFirestoreRead('shared_reports', 1);
     if (!snap.exists()) {
       return {
         status: 'not_found',
@@ -1757,6 +2268,7 @@ export async function fetchOwnerSharedReportsFromCloud(
       limit(30)
     );
     const snap = await getDocsFromServer(q);
+    recordFirestoreRead('shared_reports', Math.max(1, snap.size));
     const items = snap.docs.map((d) => {
       const raw = d.data() as SharedReportDoc;
       return {
@@ -1780,10 +2292,12 @@ export async function fetchOwnerSharedReportsFromCloud(
 
 export async function revokeSharedReportInCloud(token: string): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      updateDoc(doc(db, 'shared_reports', token), {
-        revoked: true,
-      })
+    await executeGuardedWrite(
+      () =>
+        updateDoc(doc(db, 'shared_reports', token), {
+          revoked: true,
+        }),
+      { collection: 'shared_reports', count: 1 }
     );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
@@ -1800,8 +2314,9 @@ export async function revokeSharedReportInCloud(token: string): Promise<void> {
 
 export async function deleteSharedReportInCloud(token: string): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      deleteDoc(doc(db, 'shared_reports', token))
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'shared_reports', token)),
+      { collection: 'shared_reports', count: 1 }
     );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
@@ -1850,8 +2365,9 @@ export async function createEmergencyCardInCloud(
   });
 
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'emergency_cards', payload.token), firestorePayload)
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'emergency_cards', payload.token), firestorePayload),
+      { collection: 'emergency_cards', count: 1 }
     );
     return {
       ...payload,
@@ -1897,8 +2413,9 @@ export async function updateEmergencyCardInCloud(
   };
 
   try {
-    await executeGuardedWrite(() =>
-      updateDoc(doc(db, 'emergency_cards', token), updateFields)
+    await executeGuardedWrite(
+      () => updateDoc(doc(db, 'emergency_cards', token), updateFields),
+      { collection: 'emergency_cards', count: 1 }
     );
     return {
       ...payload,
@@ -1945,7 +2462,7 @@ export async function rotateEmergencyCardInCloud(
     const batch = writeBatch(db);
     batch.update(doc(db, 'emergency_cards', oldToken), { active: false });
     batch.set(doc(db, 'emergency_cards', newPayload.token), newFirestorePayload);
-    await executeGuardedWrite(() => batch.commit());
+    await executeGuardedWrite(() => batch.commit(), { collection: 'emergency_cards', count: 2 });
     return {
       ...newPayload,
       createdAt: Timestamp.now(),
@@ -1970,10 +2487,12 @@ export async function rotateEmergencyCardInCloud(
 
 export async function revokeEmergencyCardInCloud(token: string): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      updateDoc(doc(db, 'emergency_cards', token), {
-        active: false,
-      })
+    await executeGuardedWrite(
+      () =>
+        updateDoc(doc(db, 'emergency_cards', token), {
+          active: false,
+        }),
+      { collection: 'emergency_cards', count: 1 }
     );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
@@ -1990,8 +2509,9 @@ export async function revokeEmergencyCardInCloud(token: string): Promise<void> {
 
 export async function deleteEmergencyCardInCloud(token: string): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      deleteDoc(doc(db, 'emergency_cards', token))
+    await executeGuardedWrite(
+      () => deleteDoc(doc(db, 'emergency_cards', token)),
+      { collection: 'emergency_cards', count: 1 }
     );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {
@@ -2016,6 +2536,7 @@ export async function fetchOwnerEmergencyCardsFromCloud(
       limit(30)
     );
     const snap = await getDocsFromServer(q);
+    recordFirestoreRead('emergency_cards', Math.max(1, snap.size));
     const items = snap.docs.map((d) => {
       const raw = d.data() as EmergencyCardDoc;
       return {
@@ -2058,6 +2579,7 @@ export async function fetchEmergencyCardByTokenFromCloud(
 
   try {
     const snap = await getDocFromServer(doc(db, 'emergency_cards', token));
+    recordFirestoreRead('emergency_cards', 1);
     if (!snap.exists()) {
       return {
         status: 'not_found',
@@ -2147,8 +2669,9 @@ export async function createCaregiverSuggestionInCloud(
   });
 
   try {
-    await executeGuardedWrite(() =>
-      setDoc(doc(db, 'caregiver_suggestions', suggestion.id), firestorePayload)
+    await executeGuardedWrite(
+      () => setDoc(doc(db, 'caregiver_suggestions', suggestion.id), firestorePayload),
+      { collection: 'caregiver_suggestions', count: 1 }
     );
     return {
       ...suggestion,
@@ -2183,10 +2706,20 @@ export function subscribeToPatientPendingSuggestions(
     where('status', '==', 'pending'),
     limit(10)
   );
+  let hasRecordedInitial = false;
 
   return onSnapshot(
     q,
     (snapshot) => {
+      if (!snapshot.metadata?.fromCache) {
+        if (!hasRecordedInitial) {
+          hasRecordedInitial = true;
+          recordFirestoreRead('caregiver_suggestions', Math.max(1, snapshot.size));
+        } else {
+          const changed = snapshot.docChanges().length;
+          if (changed > 0) recordFirestoreRead('caregiver_suggestions', changed);
+        }
+      }
       const items: CaregiverSuggestionDoc[] = [];
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as CaregiverSuggestionDoc;
@@ -2218,6 +2751,7 @@ export async function fetchCaregiverSentSuggestions(
       limit(20)
     );
     const snap = await getDocs(q);
+    recordFirestoreRead('caregiver_suggestions', Math.max(1, snap.size));
     const items: CaregiverSuggestionDoc[] = snap.docs.map((docSnap) => {
       const raw = docSnap.data() as CaregiverSuggestionDoc;
       return {
@@ -2239,10 +2773,12 @@ export async function updateCaregiverSuggestionStatusInCloud(
   nextStatus: Exclude<CaregiverSuggestionStatus, 'pending'>
 ): Promise<void> {
   try {
-    await executeGuardedWrite(() =>
-      updateDoc(doc(db, 'caregiver_suggestions', suggestionId), {
-        status: nextStatus,
-      })
+    await executeGuardedWrite(
+      () =>
+        updateDoc(doc(db, 'caregiver_suggestions', suggestionId), {
+          status: nextStatus,
+        }),
+      { collection: 'caregiver_suggestions', count: 1 }
     );
   } catch (error: any) {
     if (isQuotaExceededError(error)) {

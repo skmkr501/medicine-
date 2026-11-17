@@ -93,10 +93,25 @@ export function generateInviteCode(length: number = 6): string {
 }
 
 export function normalizeInviteCodeInput(raw: string): string {
-  return (raw || '')
+  const ascii = (raw || '')
+    .replace(/[০-৯]/g, (ch) => BENGALI_DIGITS_MAP[ch] || ch)
     .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
+    .toUpperCase();
+
+  if (!ascii) return '';
+
+  // If user pasted a multi-word WhatsApp invite message, extract the 6-char code token cleanly
+  if (/\s|:/.test(ascii)) {
+    const strictAlphabetMatch = ascii.match(
+      /(?:^|[^A-Z0-9])([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6})(?:$|[^A-Z0-9])/
+    );
+    if (strictAlphabetMatch) return strictAlphabetMatch[1];
+
+    const generalSixMatch = ascii.match(/(?:^|[^A-Z0-9])([A-Z0-9]{6})(?:$|[^A-Z0-9])/);
+    if (generalSixMatch) return generalSixMatch[1];
+  }
+
+  return ascii.replace(/[^A-Z0-9]/g, '').slice(0, 6);
 }
 
 export function isValidInviteCode(code: string): boolean {

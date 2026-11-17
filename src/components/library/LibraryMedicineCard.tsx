@@ -17,6 +17,7 @@ interface LibraryMedicineCardProps {
   isAdmin: boolean;
   isFavorite: boolean;
   isUnpublished: boolean;
+  isPendingPublish?: boolean;
   isTest: boolean;
   isDraftSelected: boolean;
   isPublishing: boolean;
@@ -67,6 +68,7 @@ export const LibraryMedicineCard: React.FC<LibraryMedicineCardProps> = React.mem
     isAdmin,
     isFavorite,
     isUnpublished,
+    isPendingPublish = false,
     isTest,
     isDraftSelected,
     isPublishing,
@@ -105,6 +107,12 @@ export const LibraryMedicineCard: React.FC<LibraryMedicineCardProps> = React.mem
                   <h3 className="text-base font-bold text-text group-hover:text-primary transition-colors">
                     {med.brandName}
                   </h3>
+                  {isAdmin && isPendingPublish && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-primary-soft text-primary border border-primary/30 flex items-center gap-0.5">
+                      <Clock className="w-2.5 h-2.5" />
+                      অপেক্ষমাণ
+                    </span>
+                  )}
                   {isUnpublished && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-warning-soft text-warning-text flex items-center gap-0.5">
                       <Clock className="w-2.5 h-2.5" />

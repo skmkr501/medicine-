@@ -130,6 +130,36 @@ service cloud.firestore {
         && (!('patientIds' in data) || (data.patientIds is list && data.patientIds.size() <= 20));
     }
 
+    function isValidMedicalDocument(data, docId) {
+      return data.keys().hasAll(['id', 'kind', 'patientId', 'title', 'date', 'pages', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'kind', 'patientId', 'doctorId', 'title', 'date',
+          'note', 'reportType', 'pages', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == docId && data.id.size() > 0 && data.id.size() <= 128
+        && data.kind in ['prescription', 'report']
+        && data.patientId is string && data.patientId.size() > 0 && data.patientId.size() <= 128
+        && (!('doctorId' in data) || (data.doctorId is string && data.doctorId.size() > 0 && data.doctorId.size() <= 128))
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 130
+        && data.date is string && data.date.size() >= 8 && data.date.size() <= 32
+        && (!('note' in data) || (data.note is string && data.note.size() <= 1000))
+        && (!('reportType' in data) || (data.reportType is string && data.reportType.size() <= 64))
+        && data.pages is list && data.pages.size() >= 1 && data.pages.size() <= 10
+        && data.pages[0] is map
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMedicalDocumentFile(data, fileId) {
+      return data.keys().hasAll(['id', 'docId', 'data', 'bytes', 'createdAt'])
+        && data.keys().hasOnly(['id', 'docId', 'data', 'bytes', 'createdAt'])
+        && data.id is string && data.id == fileId && data.id.size() > 0 && data.id.size() <= 128
+        && data.docId is string && data.docId.size() > 0 && data.docId.size() <= 128
+        && data.data is string && data.data.size() > 0 && data.data.size() <= 950000
+        && data.bytes is number && data.bytes > 0 && data.bytes <= 950000
+        && data.createdAt is timestamp;
+    }
+
     function isAdmin() {
       return isSignedIn() && request.auth.token.email == 'sarashatikmkr501@gmail.com';
     }
@@ -197,6 +227,39 @@ service cloud.firestore {
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time;
         allow delete: if isOwner(userId) && isValidId(doctorId);
+      }
+
+      // Personal Prescriptions & Reports Metadata (Strictly private to the owner; never readable by caregivers)
+      match /documents/{docId} {
+        allow get: if isOwner(userId) && isValidId(docId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidId(docId)
+          && isValidMedicalDocument(incoming(), docId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isOwner(userId)
+          && isValidId(docId)
+          && isValidMedicalDocument(incoming(), docId)
+          && incoming().id == existing().id
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'kind', 'patientId', 'doctorId', 'title', 'date', 'note', 'reportType', 'pages', 'updatedAt'
+          ]);
+        allow delete: if isOwner(userId) && isValidId(docId);
+      }
+
+      // Personal Document Full-Size Page Images (Strictly private to owner; single-get only, never list/update)
+      match /documentFiles/{fileId} {
+        allow get: if isOwner(userId) && isValidId(fileId);
+        allow list: if false;
+        allow create: if isOwner(userId)
+          && isValidId(fileId)
+          && isValidMedicalDocumentFile(incoming(), fileId)
+          && incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(fileId);
       }
     }
 
@@ -303,7 +366,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'id', 'inviteCode', 'patientUid', 'patientName', 'patientPhone', 'caregiverUid',
           'caregiverName', 'status', 'allowFullView', 'allowSuggestions', 'expiresAtMs', 'createdAt',
-          'linkedAt', 'updatedAt', 'todaySummary', 'sharedMedicines'
+          'serverCreatedAt', 'linkedAt', 'updatedAt', 'todaySummary', 'sharedMedicines'
         ])
         && data.id is string && data.id.matches('^[A-Z0-9]{6}$')
         && data.inviteCode == data.id
@@ -317,6 +380,7 @@ service cloud.firestore {
         && (!('allowSuggestions' in data) || data.allowSuggestions is bool)
         && data.expiresAtMs is number && data.expiresAtMs > 0
         && data.createdAt is string && data.createdAt.size() <= 64
+        && (!('serverCreatedAt' in data) || data.serverCreatedAt is timestamp)
         && data.updatedAt is string && data.updatedAt.size() <= 64
         && (!('linkedAt' in data) || (data.linkedAt is string && data.linkedAt.size() <= 64))
         && (!('todaySummary' in data) || data.todaySummary is map)
@@ -325,6 +389,12 @@ service cloud.firestore {
           data.sharedMedicines.size() <= 40 &&
           (data.allowFullView == true || data.sharedMedicines.size() == 0)
         ));
+    }
+
+    function isCaregiverInviteUnexpired(data) {
+      return ('serverCreatedAt' in data)
+        ? (data.serverCreatedAt is timestamp && request.time < data.serverCreatedAt + duration.value(48, 'h'))
+        : (data.expiresAtMs is number && request.time.toMillis() < data.expiresAtMs);
     }
 
     function isValidCaregiverLinkCreate(data, linkId) {
@@ -336,8 +406,10 @@ service cloud.firestore {
         && data.status == 'pending'
         && data.allowFullView == false
         && (!('allowSuggestions' in data) || data.allowSuggestions == false)
-        && data.expiresAtMs > request.time.toMillis()
-        && data.expiresAtMs <= request.time.toMillis() + 259200000;
+        && (
+          ('serverCreatedAt' in data && data.serverCreatedAt == request.time) ||
+          (!('serverCreatedAt' in data) && data.expiresAtMs > request.time.toMillis() && data.expiresAtMs <= request.time.toMillis() + 259200000)
+        );
     }
 
     function isLinkedActiveCaregiver(linkId, pUid, cUid) {
@@ -394,10 +466,14 @@ service cloud.firestore {
 
     match /caregiver_links/{linkId} {
       // Single-doc lookup allowed for owner, linked caregiver, or pending invite holder who knows exact 6-char code
+      // (also allows checking non-existent 6-char code cleanly so client can tell invalid code vs used/expired code)
       allow get: if isSignedIn() && isValidId(linkId) && (
-        existing().patientUid == request.auth.uid ||
-        existing().caregiverUid == request.auth.uid ||
-        (existing().status == 'pending' && request.time.toMillis() < existing().expiresAtMs)
+        (resource == null && linkId.matches('^[A-Z0-9]{6}$')) ||
+        (resource != null && (
+          existing().patientUid == request.auth.uid ||
+          existing().caregiverUid == request.auth.uid ||
+          (existing().status == 'pending' && isCaregiverInviteUnexpired(existing()))
+        ))
       );
       // Queries strictly scoped to own links only (never allows listing pending invites)
       allow list: if isSignedIn() && (
@@ -406,13 +482,14 @@ service cloud.firestore {
       );
       allow create: if isSignedIn() && isValidId(linkId) && isValidCaregiverLinkCreate(incoming(), linkId);
       allow update: if isSignedIn() && isValidId(linkId) && isValidCaregiverLinkShape(incoming()) && (
-        // Case 1: Patient updates todaySummary or toggles allowFullView (immutable identity fields preserved)
+        // Case 1: Patient updates todaySummary or toggles allowFullView/allowSuggestions (immutable identity fields preserved)
         (
           existing().patientUid == request.auth.uid &&
           incoming().patientUid == existing().patientUid &&
           incoming().caregiverUid == existing().caregiverUid &&
           incoming().status == existing().status &&
           incoming().createdAt == existing().createdAt &&
+          (!('serverCreatedAt' in existing()) || incoming().serverCreatedAt == existing().serverCreatedAt) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
             'patientName', 'patientPhone', 'allowFullView', 'allowSuggestions', 'todaySummary', 'sharedMedicines', 'updatedAt'
           ])
@@ -421,9 +498,10 @@ service cloud.firestore {
         (
           existing().status == 'pending' &&
           existing().patientUid != request.auth.uid &&
-          request.time.toMillis() < existing().expiresAtMs &&
+          isCaregiverInviteUnexpired(existing()) &&
           incoming().patientUid == existing().patientUid &&
           incoming().createdAt == existing().createdAt &&
+          (!('serverCreatedAt' in existing()) || incoming().serverCreatedAt == existing().serverCreatedAt) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
             'caregiverUid', 'caregiverName', 'status', 'linkedAt', 'updatedAt'
           ]) &&

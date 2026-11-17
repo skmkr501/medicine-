@@ -10,6 +10,7 @@ import {
 import { AdminActivity, AdminOverviewStats } from '../../types';
 import { getFriendlyErrorMessage } from '../../firebase/errors';
 import { AdminImportView } from './AdminImportView';
+import { toBengaliNumber } from '../../utils/bengaliUtils';
 import {
   ShieldCheck,
   ShieldAlert,
@@ -58,6 +59,12 @@ export const AdminDashboard: React.FC = () => {
     deleteGlobalMedicineAction,
     bulkDeleteGlobalMedicinesAction,
     publishGlobalMedicineAction,
+    pendingPublishMedicines,
+    pendingPublishLastRetryAttemptMs,
+    isRetryingPendingPublish,
+    retryPendingPublishNow,
+    cancelPendingPublishItem,
+    clearPendingPublishQueue,
   } = useMedicine();
 
   // Sub-tab Navigation: 'overview' | 'import' | 'queue' | 'history'
@@ -374,6 +381,87 @@ export const AdminDashboard: React.FC = () => {
             পুনরায় চেষ্টা করুন
           </button>
         </div>
+      )}
+
+      {/* 2.5 Pending Admin Library Publish Queue Card ("অপেক্ষমাণ প্রকাশ") */}
+      {pendingPublishMedicines.length > 0 && (
+        <section
+          aria-label="অপেক্ষমাণ প্রকাশ"
+          className="bg-warning-soft/75 border border-warning/40 rounded-3xl p-5 shadow-xs space-y-3"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="p-2 rounded-xl bg-warning/15 text-warning-text">
+                  <UploadCloud className="w-4 h-4" />
+                </span>
+                <h2 className="text-sm sm:text-base font-bold text-text">
+                  অপেক্ষমাণ প্রকাশ ({toBengaliNumber(pendingPublishMedicines.length)} টি)
+                </h2>
+              </div>
+              <p className="text-xs text-text-muted">
+                ক্লাউড সীমা শেষ বা অফলাইন থাকায় ফোনে (IndexedDB) সংরক্ষিত আছে। সীমা ফিরলে (বাংলাদেশ সময় দুপুর ২টার পর) বা নিচের বোতামে চাপলে সবগুলো একসাথে একটি নতুন সংস্করণ হিসেবে প্রকাশিত হবে।
+                {pendingPublishLastRetryAttemptMs && (
+                  <span className="ml-1 text-[11px] font-medium">
+                    (সর্বশেষ চেষ্টা:{' '}
+                    {new Date(pendingPublishLastRetryAttemptMs).toLocaleTimeString('bn-BD', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    )
+                  </span>
+                )}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={isRetryingPendingPublish}
+                onClick={() => void retryPendingPublishNow()}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRetryingPendingPublish ? 'animate-spin' : ''}`} />
+                <span>{isRetryingPendingPublish ? 'প্রকাশ হচ্ছে...' : 'এখনই চেষ্টা করুন'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={isRetryingPendingPublish}
+                onClick={() => void clearPendingPublishQueue()}
+                className="px-3.5 py-2 text-xs font-bold text-danger-text bg-surface border border-danger/30 hover:bg-danger-soft rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+              >
+                বাতিল
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            {pendingPublishMedicines.slice(0, 12).map((med) => (
+              <div
+                key={med.id}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-surface border border-border text-xs"
+              >
+                <span className="font-bold text-text">{med.brandName}</span>
+                {med.strength && <span className="text-text-muted">({med.strength})</span>}
+                <button
+                  type="button"
+                  onClick={() => void cancelPendingPublishItem(med.id)}
+                  disabled={isRetryingPendingPublish}
+                  className="text-text-muted hover:text-danger-text cursor-pointer disabled:opacity-40"
+                  title="সারি থেকে সরান"
+                  aria-label={`${med.brandName} সারি থেকে সরান`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+            {pendingPublishMedicines.length > 12 && (
+              <span className="inline-flex items-center px-3 py-1.5 rounded-xl bg-surface-2 border border-border text-xs font-semibold text-text-muted">
+                +{toBengaliNumber(pendingPublishMedicines.length - 12)} টি আরও
+              </span>
+            )}
+          </div>
+        </section>
       )}
 
       {/* 3. Firebase Connection Status Health Card (Requirement 7) */}

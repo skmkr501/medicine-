@@ -3,13 +3,16 @@ import {
   CheckCircle2,
   RefreshCw,
   AlertCircle,
-  Cloud,
   CloudOff,
   Clock,
   ShieldCheck,
-  User,
+  ExternalLink,
 } from 'lucide-react';
 import { useMedicine } from '../../context/MedicineContext';
+import { toBengaliNumber } from '../../utils/bengaliUtils';
+import firebaseConfig from '../../../firebase-applet-config.json';
+
+const FIRESTORE_CONSOLE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
 
 export const SyncStatusCard: React.FC = () => {
   const {
@@ -17,6 +20,7 @@ export const SyncStatusCard: React.FC = () => {
     isSyncing,
     syncStatus,
     isQuotaExceeded,
+    pendingSyncCount,
     lastSyncedAt,
     triggerManualSync,
     openAuthModal,
@@ -85,7 +89,7 @@ export const SyncStatusCard: React.FC = () => {
           </div>
 
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-bold text-text">
                 সিঙ্ক অবস্থা:
               </h3>
@@ -116,7 +120,11 @@ export const SyncStatusCard: React.FC = () => {
 
             <p className="text-[11px] text-text-muted mt-0.5">
               {isQuotaExceeded
-                ? 'আজকের বিনামূল্যে ক্লাউড সংরক্ষণ সীমা পূর্ণ; পরিবর্তন ফোনে সংরক্ষিত হচ্ছে'
+                ? pendingSyncCount > 0
+                  ? `ক্লাউড লেখা সাময়িকভাবে বিরতিতে; ফোনে ${toBengaliNumber(pendingSyncCount)}টি পরিবর্তন নিরাপদে জমা আছে`
+                  : 'আজকের ক্লাউড লেখার সীমা পূর্ণ; পরিবর্তন ফোনে সংরক্ষিত হচ্ছে (ক্লাউড ডেটা পড়া চালু আছে)'
+                : pendingSyncCount > 0
+                ? `ফোনে ${toBengaliNumber(pendingSyncCount)}টি পরিবর্তন ক্লাউডে সিঙ্কের অপেক্ষায় আছে`
                 : 'ক্লাউডের সাথে স্বয়ংক্রিয় অফলাইন সংরক্ষণ ও সমন্বয়'}
             </p>
           </div>
@@ -126,12 +134,23 @@ export const SyncStatusCard: React.FC = () => {
         <div className="flex items-center gap-2 self-start sm:self-center">
           <button
             type="button"
-            disabled={isSyncInProgress}
+            disabled={isSyncInProgress || isQuotaExceeded}
             onClick={triggerManualSync}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-on-primary bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            title={
+              isQuotaExceeded
+                ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
+                : 'পরিবর্তিত ডেটা ক্লাউডে সিঙ্ক করুন'
+            }
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-on-primary bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isSyncInProgress ? 'animate-spin' : ''}`} />
-            <span>{isSyncInProgress ? 'সিঙ্ক হচ্ছে...' : 'এখনই সিঙ্ক করুন'}</span>
+            <span>
+              {isSyncInProgress
+                ? 'সিঙ্ক হচ্ছে...'
+                : isQuotaExceeded
+                ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
+                : 'এখনই সিঙ্ক করুন'}
+            </span>
           </button>
         </div>
       </div>
@@ -158,11 +177,33 @@ export const SyncStatusCard: React.FC = () => {
 
       {/* Security / Quota note */}
       {isQuotaExceeded ? (
-        <div className="p-3 bg-warning-soft border border-warning/30 rounded-xl text-[11px] text-warning-text flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
-          <span>
-            আজকের ক্লাউড সংরক্ষণ সীমা পূর্ণ হয়ে গেছে। আপনার সব নতুন ওষুধ ও ডোজের হিসাব ফোনেই নিরাপদে সংরক্ষিত থাকছে—আগামীকাল সীমা রিসেট হলে আবার সিঙ্ক করতে পারবেন।
-          </span>
+        <div className="p-3.5 bg-warning-soft border border-warning/30 rounded-xl text-[11px] text-warning-text space-y-2">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
+            <span>
+              Google Firestore-এর আজকের ফ্রি দৈনিক লেখার সীমা পূর্ণ হয়েছে। আপনার সব নতুন ওষুধ ও ডোজের হিসাব ফোনেই নিরাপদে থাকছে—প্যাসিফিক মধ্যরাতে (বাংলাদেশ সময় দুপুর ২:০০টা) সীমা রিসেট হলে শুধু পরিবর্তিত তথ্যটুকু সিঙ্ক হবে।
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 pl-6">
+            <a
+              href={FIRESTORE_CONSOLE_UPGRADE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-bold text-primary hover:underline"
+            >
+              <span>Firebase কনসোলে সীমা দেখুন</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+            <a
+              href="https://firebase.google.com/pricing#cloud-firestore"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-semibold text-text-muted hover:text-text hover:underline"
+            >
+              <span>কোটা নীতিমালা</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
         </div>
       ) : (
         <div className="p-3 bg-primary-soft border border-primary/20 rounded-xl text-[11px] text-text flex items-center gap-2">

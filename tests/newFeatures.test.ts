@@ -148,6 +148,25 @@ import {
 } from '../src/utils/caregiverSuggestions';
 import { CaregiverLinkDoc, CaregiverSuggestionDoc, DoseLog } from '../src/types';
 import {
+  createEmptyOutbox,
+  setLastSuccessfulSyncMs,
+  getLastSuccessfulSyncMs,
+  collectDirtySyncPlan,
+} from '../src/utils/cloudSyncOutbox';
+import {
+  dedupeAndMergeQueueMedicines,
+  removeIdsFromPublishQueue,
+  mergePendingQueueForAdminDisplay,
+  combineCatalogWithPendingQueueForSingleVersionPublish,
+  shouldAttemptAdminQueueAutoPublish,
+} from '../src/utils/adminPublishQueue';
+import {
+  recordFirestoreWrite,
+  recordFirestoreRead,
+  getTodayFirestoreUsage,
+  resetFirestoreUsageForTests,
+} from '../src/utils/firestoreUsageTracker';
+import {
   DEFAULT_SHARED_REPORT_SECTIONS,
   SHARED_REPORT_DELETE_AFTER_EXPIRY_MS,
   SHARED_REPORT_UNAVAILABLE_MSG,
@@ -165,10 +184,21 @@ import {
 import { Timestamp, serverTimestamp, GeoPoint, FieldValue, deleteField } from 'firebase/firestore';
 import {
   executeGuardedWrite,
+  isFirestoreSdkQuotaErrorLog,
   resumeFirestoreNetwork,
   stripUndefined,
   tripWriteQuotaCircuitBreaker,
 } from '../src/firebase/config';
+import {
+  clearCloudSyncOutbox,
+  clearOutboxEntry,
+  countPendingOutboxChanges,
+  loadCloudSyncOutbox,
+  markOutboxDelete,
+  markOutboxSettingsDirty,
+  markOutboxUpsert,
+  OutboxStorageLike,
+} from '../src/utils/cloudSyncOutbox';
 import {
   DEFAULT_EMERGENCY_CARD_SELECTION,
   EMERGENCY_CARD_FIELD_LIMIT,
@@ -250,6 +280,35 @@ import {
   clearCachedDoctors,
   mergeLocalAndCloudDoctors,
 } from '../src/utils/doctorsManager';
+import {
+  MAX_DOCUMENT_PAGES,
+  MAX_PRINT_PAGES,
+  MAX_USER_DOCUMENT_PAGES,
+  buildCleanMedicalDocumentInput,
+  buildDefaultDocumentTitle,
+  buildDocumentPrintBundle,
+  canAddUserPages,
+  countTotalUserPages,
+  estimateBase64DataUrlBytes,
+  filterAndSortMedicalDocuments,
+  movePageInList,
+  removePageFromList,
+  rotateDegreeClockwise,
+  validatePrintSelectionPageCount,
+} from '../src/utils/medicalDocuments';
+import {
+  clearDocSyncQueue,
+  countPendingDocSyncOps,
+  enqueueDocDelete,
+  enqueueDocUpsert,
+  getPendingDocIdSet,
+  loadDocSyncQueue,
+  markDocDeleteSyncedInQueue,
+  markDocUpsertSyncedInQueue,
+  markFileDeletedInQueue,
+  markFileUploadedInQueue,
+} from '../src/utils/documentsIndexedDb';
+import { MedicalDocument } from '../src/types';
 
 console.log('\n================================================================');
 console.log('  স্বাস্থ্যবন্ধু (Shasthobondhu) - New Features Verification Tests');
@@ -1240,6 +1299,70 @@ describe('ধাপ ১৩: চাঙ্কড লাইব্রেরি, ম�
     clearWriteQuotaPause();
     resetQuotaNoticeForTests();
   });
+
+  it('read-only নেটওয়ার্ক backoff-এ 24h write-লক ট্রিগার হয় না, এবং cloudSyncOutbox শুধু পরিবর্তিত আইটেম ট্র্যাক করে', () => {
+    // Flaky Wi-Fi / read-stream backoff with 0 pending writes must NOT trip write quota circuit breaker
+    assert.strictEqual(
+      isFirestoreSdkQuotaErrorLog('Using maximum backoff delay to prevent overloading the backend.', false),
+      false
+    );
+    // Backoff while a write is actively pending DOES trigger quota guard
+    assert.strictEqual(
+      isFirestoreSdkQuotaErrorLog('Using maximum backoff delay to prevent overloading the backend.', true),
+      true
+    );
+    // Explicit resource-exhausted always triggers regardless of hasPendingWrites
+    assert.strictEqual(
+      isFirestoreSdkQuotaErrorLog('FirebaseError: [code=resource-exhausted]: Quota limit exceeded.', false),
+      true
+    );
+
+    const storeMap = new Map<string, string>();
+    const mockStorage: OutboxStorageLike = {
+      getItem: (k) => storeMap.get(k) ?? null,
+      setItem: (k, v) => {
+        storeMap.set(k, v);
+      },
+      removeItem: (k) => {
+        storeMap.delete(k);
+      },
+    };
+    const uid = 'user-quota-test';
+
+    markOutboxUpsert(uid, 'medicines', ['med-1', 'med-2', 'med-1'], mockStorage);
+    markOutboxUpsert(uid, 'doseLogs', 'log-1', mockStorage);
+    markOutboxSettingsDirty(uid, true, mockStorage);
+    let outbox = loadCloudSyncOutbox(uid, mockStorage);
+    assert.deepStrictEqual(outbox.upserts.medicines, ['med-1', 'med-2']);
+    assert.strictEqual(countPendingOutboxChanges(outbox), 4);
+
+    // Deleting an unsynced item replaces its pending upsert with a delete (never duplicates)
+    markOutboxDelete(uid, 'medicines', 'med-2', mockStorage);
+    outbox = loadCloudSyncOutbox(uid, mockStorage);
+    assert.deepStrictEqual(outbox.upserts.medicines, ['med-1']);
+    assert.deepStrictEqual(outbox.deletes.medicines, ['med-2']);
+    assert.strictEqual(countPendingOutboxChanges(outbox), 4);
+
+    // Re-upserting cancels delete
+    markOutboxUpsert(uid, 'medicines', 'med-2', mockStorage);
+    outbox = loadCloudSyncOutbox(uid, mockStorage);
+    assert.deepStrictEqual(outbox.deletes.medicines, []);
+    assert.deepStrictEqual(outbox.upserts.medicines, ['med-1', 'med-2']);
+
+    // Clearing entries leaves storage clean when count reaches 0
+    clearOutboxEntry(uid, 'upsert', 'medicines', ['med-1', 'med-2'], mockStorage);
+    clearOutboxEntry(uid, 'upsert', 'doseLogs', 'log-1', mockStorage);
+    markOutboxSettingsDirty(uid, false, mockStorage);
+    outbox = loadCloudSyncOutbox(uid, mockStorage);
+    assert.strictEqual(countPendingOutboxChanges(outbox), 0);
+    assert.strictEqual(storeMap.size, 0);
+
+    // clearCloudSyncOutbox wipes remaining items
+    markOutboxUpsert(uid, 'doctors', 'doc-1', mockStorage);
+    assert.strictEqual(storeMap.size, 1);
+    clearCloudSyncOutbox(uid, mockStorage);
+    assert.strictEqual(storeMap.size, 0);
+  });
 });
 
 describe('ধাপ ১৪: ওষুধ কেনার তালিকা হিসাব, বাফার, মেয়াদ সতর্কতা ও প্যাক হিসাব', () => {
@@ -1789,6 +1912,8 @@ describe('ধাপ ১৫: পরিবারের সদস্যকে স�
     assert.strictEqual(code.length, 6);
     assert.ok(isValidInviteCode(code));
     assert.strictEqual(normalizeInviteCodeInput(' a7k-9m2 '), 'A7K9M2');
+    assert.strictEqual(normalizeInviteCodeInput('a৭k৯m২'), 'A7K9M2');
+    assert.strictEqual(normalizeInviteCodeInput('A7K9M2XYZ'), 'A7K9M2');
 
     const nowMs = Date.now();
     assert.strictEqual(isInviteExpired(nowMs + CAREGIVER_INVITE_TTL_MS, nowMs), false);
@@ -1796,8 +1921,10 @@ describe('ধাপ ১৫: পরিবারের সদস্যকে স�
 
     const inviteUrl = buildCaregiverInviteWhatsAppUrl(code, 'যমুনা আপা');
     assert.ok(inviteUrl.startsWith('https://wa.me/?text='));
-    assert.ok(decodeURIComponent(inviteUrl).includes(code));
-    assert.ok(decodeURIComponent(inviteUrl).includes('৪৮ ঘণ্টা'));
+    const decodedInviteText = decodeURIComponent(inviteUrl);
+    assert.ok(decodedInviteText.includes(code));
+    assert.ok(decodedInviteText.includes('৪৮ ঘণ্টা'));
+    assert.strictEqual(normalizeInviteCodeInput(decodedInviteText.split('text=')[1]), code);
 
     const checkInUrl = buildCaregiverAlertCheckInWhatsAppUrl(
       '+8801711223344',
@@ -4005,6 +4132,405 @@ describe('আমার ডাক্তার (ডিরেক্টরি, ফ�
       (globalThis as any).window = prevWindow;
       (globalThis as any).localStorage = prevStorage;
     }
+  });
+});
+
+describe('ধাপ ২০: প্রেসক্রিপশন ও রিপোর্ট ভল্ট (কোটা সীমা, ঘোরানো, ফিল্টার, PDF বান্ডেল ও সিঙ্ক কিউ)', () => {
+  const samplePage = (idx: number) => ({
+    fileId: `file-${idx}`,
+    thumb: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+    width: 200,
+    height: 260,
+    rotation: 0 as const,
+  });
+
+  const makeDoc = (id: string, pagesCount: number, overrides: Partial<MedicalDocument> = {}): MedicalDocument => ({
+    id,
+    kind: 'prescription',
+    patientId: 'pat-1',
+    doctorId: 'doc-1',
+    title: `প্রেসক্রিপশন — ${id}`,
+    date: '2026-11-15',
+    pages: Array.from({ length: pagesCount }, (_, i) => samplePage(i + 1)),
+    createdAt: '2026-11-15T10:00:00Z',
+    updatedAt: '2026-11-15T10:00:00Z',
+    ...overrides,
+  });
+
+  it('base64 আকার হিসাব, ছবি ঘোরানো, আগে-পরে সাজানো ও পাতা বাদ দেওয়া কাজ করে', () => {
+    const raw = Buffer.from('Hello Shasthobondhu!').toString('base64');
+    assert.strictEqual(
+      estimateBase64DataUrlBytes(`data:image/jpeg;base64,${raw}`),
+      Buffer.byteLength('Hello Shasthobondhu!')
+    );
+
+    assert.strictEqual(rotateDegreeClockwise(0), 90);
+    assert.strictEqual(rotateDegreeClockwise(90), 180);
+    assert.strictEqual(rotateDegreeClockwise(180), 270);
+    assert.strictEqual(rotateDegreeClockwise(270), 0);
+
+    const movedUp = movePageInList(['a', 'b', 'c'], 1, 'up');
+    assert.deepStrictEqual(movedUp, ['b', 'a', 'c']);
+    const movedDown = movePageInList(['a', 'b', 'c'], 1, 'down');
+    assert.deepStrictEqual(movedDown, ['a', 'c', 'b']);
+    assert.deepStrictEqual(removePageFromList(['a', 'b', 'c'], 1), ['a', 'c']);
+  });
+
+  it('প্রতি নথিতে সর্বোচ্চ ১০ পাতা ও ব্যবহারকারীর মোট ১২০ পাতার সীমা যাচাই করে', () => {
+    const existing = [
+      ...Array.from({ length: 11 }, (_, i) => makeDoc(`d-${i + 1}`, 10)),
+      makeDoc('d-edit', 8),
+    ];
+    assert.strictEqual(countTotalUserPages(existing), 118);
+
+    // 11 pages in one document violates MAX_DOCUMENT_PAGES (10)
+    const perDocExceeded = canAddUserPages([], MAX_DOCUMENT_PAGES + 1);
+    assert.strictEqual(perDocExceeded.allowed, false);
+
+    // 118 + 3 = 121 exceeds MAX_USER_DOCUMENT_PAGES (120)
+    const userLimitExceeded = canAddUserPages(existing, 3);
+    assert.strictEqual(userLimitExceeded.allowed, false);
+    assert.strictEqual(userLimitExceeded.remaining, 2);
+
+    // Editing d-edit from 8 to 10 pages results in 110 + 10 = 120 (allowed)
+    const editWithinLimit = canAddUserPages(existing, 10, 8);
+    assert.strictEqual(editWithinLimit.allowed, true);
+    assert.strictEqual(editWithinLimit.projectedTotal, MAX_USER_DOCUMENT_PAGES);
+  });
+
+  it('ডিফল্ট বাংলা শিরোনাম ও মেটাডাটা পরিষ্কার করে (undefined ছাড়া ও সীমার মধ্যে)', () => {
+    const rxTitle = buildDefaultDocumentTitle('prescription', {
+      doctorName: 'ডা. কামরুল হাসান',
+      date: '2026-11-16',
+    });
+    assert.ok(rxTitle.startsWith('প্রেসক্রিপশন — ডা. কামরুল হাসান'));
+
+    const reportTitle = buildDefaultDocumentTitle('report', {
+      reportType: 'রক্ত পরীক্ষা',
+      date: '2026-11-16',
+    });
+    assert.ok(reportTitle.startsWith('রিপোর্ট — রক্ত পরীক্ষা'));
+
+    const clean = buildCleanMedicalDocumentInput({
+      kind: 'prescription',
+      patientId: 'p-1',
+      doctorId: '   ',
+      title: 'T'.repeat(200),
+      date: '২০২৬-১১-১৬',
+      note: 'N'.repeat(1200),
+      reportType: 'রক্ত পরীক্ষা', // stripped for prescriptions
+      pages: [samplePage(1)],
+    });
+
+    assert.strictEqual('doctorId' in clean, false);
+    assert.strictEqual('reportType' in clean, false);
+    assert.strictEqual(clean.date, '2026-11-16');
+    assert.strictEqual(clean.title.length, 130);
+    assert.strictEqual(clean.note?.length, 1000);
+  });
+
+  it('তারিখ অনুযায়ী নতুন আগে সাজায়, ফিল্টার করে ও ৩০ পাতার PDF সীমা যাচাই করে', () => {
+    const docs: MedicalDocument[] = [
+      makeDoc('rx-old', 2, { date: '2026-10-01', doctorId: 'doc-1', patientId: 'pat-1' }),
+      makeDoc('rx-new', 3, { date: '2026-11-16', doctorId: 'doc-1', patientId: 'pat-2' }),
+      makeDoc('rx-unlinked', 1, { date: '2026-11-10', doctorId: undefined, patientId: 'pat-1' }),
+      makeDoc('rep-1', 2, { kind: 'report', reportType: 'ECG', doctorId: undefined, date: '2026-11-14', patientId: 'pat-1', title: 'ইসিজি রিপোর্ট' }),
+    ];
+
+    const doc1Prescriptions = filterAndSortMedicalDocuments(docs, {
+      kind: 'prescription',
+      doctorId: 'doc-1',
+    });
+    assert.deepStrictEqual(doc1Prescriptions.map((d) => d.id), ['rx-new', 'rx-old']);
+
+    const unlinkedPrescriptions = filterAndSortMedicalDocuments(docs, {
+      kind: 'prescription',
+      unlinkedOnly: true,
+    });
+    assert.deepStrictEqual(unlinkedPrescriptions.map((d) => d.id), ['rx-unlinked']);
+
+    const ecgReports = filterAndSortMedicalDocuments(docs, {
+      kind: 'report',
+      reportType: 'ECG',
+    });
+    assert.deepStrictEqual(ecgReports.map((d) => d.id), ['rep-1']);
+
+    // Print validation: <= 30 allowed, 31 blocked
+    assert.strictEqual(validatePrintSelectionPageCount([]).allowed, false);
+    assert.strictEqual(
+      validatePrintSelectionPageCount([makeDoc('big', MAX_PRINT_PAGES)]).allowed,
+      true
+    );
+    assert.strictEqual(
+      validatePrintSelectionPageCount([makeDoc('too-big', MAX_PRINT_PAGES + 1)]).allowed,
+      false
+    );
+
+    const bundle = buildDocumentPrintBundle({
+      kind: 'prescription',
+      docs: doc1Prescriptions,
+      patients: [
+        {
+          id: 'pat-1',
+          name: 'রহিম',
+          relation: 'বাবা',
+          age: 62,
+          gender: 'পুরুষ',
+          bloodGroup: 'O+',
+          chronicConditions: [],
+          allergies: [],
+          emergencyContact: '',
+        },
+        {
+          id: 'pat-2',
+          name: 'আমিনা',
+          relation: 'মা',
+          age: 55,
+          gender: 'মহিলা',
+          bloodGroup: 'A+',
+          chronicConditions: [],
+          allergies: [],
+          emergencyContact: '',
+        },
+      ],
+      doctors: [
+        {
+          id: 'doc-1',
+          name: 'ডা. তানভীর',
+          specialty: 'হৃদরোগ',
+          isEmergency: true,
+          createdAt: '2026-11-01T00:00:00Z',
+          updatedAt: '2026-11-01T00:00:00Z',
+        },
+      ],
+    });
+    assert.strictEqual(bundle.headingTitle, 'স্বাস্থ্যবন্ধু — প্রেসক্রিপশন সংগ্রহ');
+    assert.strictEqual(bundle.rows.length, 2);
+    assert.strictEqual(bundle.pages.length, 5);
+    assert.strictEqual(bundle.pages[0].docId, 'rx-new');
+    assert.strictEqual(bundle.pages[0].pageNumberInDoc, 1);
+    assert.strictEqual(bundle.pages[0].totalPagesInDoc, 3);
+  });
+
+  it('অফলাইন ও কোটা সীমা পূর্ণ হলে নথি ও ছবি নিরাপদ সিঙ্ক কিউ-তে সংরক্ষণ করে', () => {
+    const map = new Map<string, string>();
+    const memStore = {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+      removeItem: (k: string) => {
+        map.delete(k);
+      },
+    };
+    const uid = 'vault-user-1';
+
+    enqueueDocUpsert(
+      uid,
+      'mdoc-1',
+      [
+        { fileId: 'mfile-1', docId: 'mdoc-1' },
+        { fileId: 'mfile-2', docId: 'mdoc-1' },
+      ],
+      [],
+      memStore
+    );
+
+    let q = loadDocSyncQueue(uid, memStore);
+    assert.strictEqual(countPendingDocSyncOps(q), 3); // 1 meta + 2 files
+    assert.strictEqual(getPendingDocIdSet(q).has('mdoc-1'), true);
+
+    markFileUploadedInQueue(uid, 'mfile-1', memStore);
+    markFileUploadedInQueue(uid, 'mfile-2', memStore);
+    markDocUpsertSyncedInQueue(uid, 'mdoc-1', memStore);
+    q = loadDocSyncQueue(uid, memStore);
+    assert.strictEqual(countPendingDocSyncOps(q), 0);
+
+    // Enqueue upsert offline then delete before cloud upload -> deletes local upload task without queuing orphan cloud file delete
+    enqueueDocUpsert(
+      uid,
+      'mdoc-2',
+      [{ fileId: 'mfile-unsynced', docId: 'mdoc-2' }],
+      [],
+      memStore
+    );
+    enqueueDocDelete(uid, 'mdoc-2', ['mfile-unsynced', 'mfile-already-cloud'], memStore);
+    q = loadDocSyncQueue(uid, memStore);
+    assert.deepStrictEqual(q.uploadFiles, []);
+    assert.deepStrictEqual(q.deleteFileIds, ['mfile-already-cloud']);
+    assert.deepStrictEqual(q.deleteDocIds, ['mdoc-2']);
+
+    markFileDeletedInQueue(uid, 'mfile-already-cloud', memStore);
+    markDocDeleteSyncedInQueue(uid, 'mdoc-2', memStore);
+    clearDocSyncQueue(uid, memStore);
+    assert.strictEqual(countPendingDocSyncOps(loadDocSyncQueue(uid, memStore)), 0);
+  });
+});
+
+describe('ধাপ ২৮: টার্গেটেড ডার্টি সিঙ্ক, এডমিন অফলাইন/কোটা প্রকাশ সারি ও Firestore রাইট/রিড কাউন্টার', () => {
+  it('১০০০ লগ ও ১০ ওষুধে পরিবর্তিত না হলে ০ লেখা এবং শুধু পরিবর্তিত রেকর্ডগুলোই সিঙ্ক পরিকল্পনায় ধরে', () => {
+    const map = new Map<string, string>();
+    const memStore = {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+      removeItem: (k: string) => {
+        map.delete(k);
+      },
+    };
+    const uid = 'sync-user-1';
+    const lastSyncMs = 1_760_000_000_000;
+    setLastSuccessfulSyncMs(uid, lastSyncMs, memStore);
+    assert.strictEqual(getLastSuccessfulSyncMs(uid, memStore), lastSyncMs);
+
+    const medicines10 = Array.from({ length: 10 }, (_, i) => ({
+      id: `med-${i + 1}`,
+      updatedAtMs: lastSyncMs - 10_000,
+    }));
+    const logs1000 = Array.from({ length: 1000 }, (_, i) => ({
+      id: `log-${i + 1}`,
+      updatedAtMs: lastSyncMs - 5_000,
+    }));
+
+    // 0 dirty -> 0 writes!
+    const cleanPlan = collectDirtySyncPlan(
+      createEmptyOutbox(),
+      {
+        medicines: medicines10,
+        patients: [],
+        doseLogs: logs1000,
+        healthRecords: [],
+        appointments: [],
+      },
+      null,
+      lastSyncMs
+    );
+    assert.strictEqual(cleanPlan.totalWrites, 0);
+    assert.deepStrictEqual(cleanPlan.breakdownLabels, []);
+
+    // 2 modified doseLogs + 1 outbox medicine -> strictly 3 writes!
+    logs1000[5].updatedAtMs = lastSyncMs + 1000;
+    logs1000[42].updatedAtMs = lastSyncMs + 2000;
+    markOutboxUpsert(uid, 'medicines', 'med-3', memStore);
+
+    const dirtyPlan = collectDirtySyncPlan(
+      {
+        ...createEmptyOutbox(),
+        upserts: {
+          ...createEmptyOutbox().upserts,
+          medicines: ['med-3'],
+        },
+      },
+      {
+        medicines: medicines10,
+        patients: [],
+        doseLogs: logs1000,
+        healthRecords: [],
+        appointments: [],
+      },
+      null,
+      lastSyncMs
+    );
+    assert.strictEqual(dirtyPlan.totalWrites, 3);
+    assert.strictEqual(dirtyPlan.collectionCounts.medicines, 1);
+    assert.strictEqual(dirtyPlan.collectionCounts.doseLogs, 2);
+    assert.deepStrictEqual(dirtyPlan.outboxToFlush.upserts.medicines, ['med-3']);
+    assert.deepStrictEqual(dirtyPlan.outboxToFlush.upserts.doseLogs, ['log-6', 'log-43']);
+  });
+
+  it('এডমিন অপেক্ষমাণ প্রকাশ সারি ডিডুপ করে, এক সংস্করণে যুক্ত করে, সাধারণ ব্যবহারকারীর কাছে লুকায় ও ১৪:১০ BDT রিসেটে স্বয়ংক্রিয় চেষ্টা চালায়', () => {
+    const makeGlobal = (id: string, brand: string): GlobalMedicine => ({
+      id,
+      brandName: brand,
+      genericName: 'Paracetamol',
+      strength: '500 mg',
+      dosageForm: 'ট্যাবলেট',
+      manufacturer: 'Beximco',
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'DGDA Gazette',
+      duplicateKey: `${id}|paracetamol|500 mg`,
+      status: 'published',
+      verifiedByAdmin: true,
+      importedAt: '2026-11-17T00:00:00.000Z',
+    });
+
+    const cloudCatalog = [makeGlobal('gmed_1', 'Napa')];
+    const q1 = dedupeAndMergeQueueMedicines([], [makeGlobal('gmed_2', 'Ace'), makeGlobal('gmed_3', 'Sergel')]);
+    const q2 = dedupeAndMergeQueueMedicines(q1, [makeGlobal('gmed_2', 'Ace Plus')]);
+    assert.strictEqual(q2.length, 2);
+    assert.strictEqual(q2.find((m) => m.id === 'gmed_2')?.brandName, 'Ace Plus');
+
+    // Admin sees queued items; regular users see ONLY cloudCatalog
+    assert.strictEqual(mergePendingQueueForAdminDisplay(cloudCatalog, q2, true).length, 3);
+    assert.strictEqual(mergePendingQueueForAdminDisplay(cloudCatalog, q2, false).length, 1);
+
+    // Combined single-version merge puts all queued items into one list
+    const singleVersionList = combineCatalogWithPendingQueueForSingleVersionPublish(cloudCatalog, q2);
+    assert.strictEqual(singleVersionList.length, 3);
+
+    const removed = removeIdsFromPublishQueue(q2, ['gmed_2']);
+    assert.deepStrictEqual(removed.map((m) => m.id), ['gmed_3']);
+
+    // Post-reset retry check: 14:15 Asia/Dhaka = 08:15 UTC
+    const postResetUtc = new Date(Date.UTC(2026, 10, 17, 8, 15, 0));
+    const preResetUtc = new Date(Date.UTC(2026, 10, 17, 7, 55, 0)); // 13:55 Asia/Dhaka
+
+    const attemptAfterReset = shouldAttemptAdminQueueAutoPublish({
+      hasPending: true,
+      isAdmin: true,
+      isOnline: true,
+      isFlushing: false,
+      isQuotaPausedNow: true,
+      now: postResetUtc,
+      lastAttemptMs: preResetUtc.getTime(),
+      postResetRetriedDhakaDayKey: null,
+    });
+    assert.strictEqual(attemptAfterReset.shouldAttempt, true);
+    assert.strictEqual(attemptAfterReset.reason, 'post_reset_210pm');
+
+    // Before 14:10 BDT while quota is paused, do NOT burn retry writes
+    const attemptBeforeReset = shouldAttemptAdminQueueAutoPublish({
+      hasPending: true,
+      isAdmin: true,
+      isOnline: true,
+      isFlushing: false,
+      isQuotaPausedNow: true,
+      now: preResetUtc,
+      lastAttemptMs: preResetUtc.getTime() - 10_000,
+      postResetRetriedDhakaDayKey: null,
+    });
+    assert.strictEqual(attemptBeforeReset.shouldAttempt, false);
+  });
+
+  it('দৈনিক Firestore write ও read কালেকশন অনুযায়ী সঠিকভাবে হিসাব করে', () => {
+    const map = new Map<string, string>();
+    const memStore = {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+      removeItem: (k: string) => {
+        map.delete(k);
+      },
+    };
+    const now = new Date('2026-11-17T06:00:00.000Z');
+    resetFirestoreUsageForTests(memStore);
+
+    recordFirestoreWrite('doseLogs', 2, memStore, now);
+    recordFirestoreWrite('medicines', 1, memStore, now);
+    recordFirestoreRead('library_meta', 1, memStore, now);
+    recordFirestoreRead('doctors', 5, memStore, now);
+
+    const snapshot = getTodayFirestoreUsage(memStore, now);
+    assert.strictEqual(snapshot.dateKey, '2026-11-17');
+    assert.strictEqual(snapshot.totalWrites, 3);
+    assert.strictEqual(snapshot.totalReads, 6);
+    assert.strictEqual(snapshot.writesByCollection['doseLogs'], 2);
+    assert.strictEqual(snapshot.writesByCollection['medicines'], 1);
+    assert.strictEqual(snapshot.readsByCollection['doctors'], 5);
   });
 });
 

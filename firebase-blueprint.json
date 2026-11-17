@@ -159,6 +159,38 @@
       },
       "required": ["id", "name", "isEmergency", "createdAt", "updatedAt"]
     },
+    "MedicalDocument": {
+      "title": "MedicalDocument",
+      "description": "Private prescription or lab report metadata with lightweight thumbnails (max 10 pages)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "kind": { "type": "string", "enum": ["prescription", "report"] },
+        "patientId": { "type": "string", "maxLength": 128 },
+        "doctorId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 130 },
+        "date": { "type": "string", "maxLength": 32 },
+        "note": { "type": "string", "maxLength": 1000 },
+        "reportType": { "type": "string", "maxLength": 64 },
+        "pages": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "kind", "patientId", "title", "date", "pages", "createdAt", "updatedAt"]
+    },
+    "MedicalDocumentFile": {
+      "title": "MedicalDocumentFile",
+      "description": "Single compressed JPEG page belonging to a MedicalDocument (strictly owner-only, immutable)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "docId": { "type": "string", "maxLength": 128 },
+        "data": { "type": "string", "maxLength": 950000 },
+        "bytes": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "docId", "data", "bytes", "createdAt"]
+    },
     "GlobalMedicine": {
       "title": "GlobalMedicine",
       "description": "Global pharmaceutical compendium medicine entry with compliance metadata",
@@ -254,6 +286,7 @@
         "allowSuggestions": { "type": "boolean" },
         "expiresAtMs": { "type": "number" },
         "createdAt": { "type": "string", "maxLength": 64 },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
         "linkedAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 },
         "todaySummary": { "type": "object" },
@@ -378,6 +411,14 @@
     "/users/{userId}/doctors/{doctorId}": {
       "schema": "DoctorProfile",
       "description": "Strictly private saved doctors directory for this user"
+    },
+    "/users/{userId}/documents/{docId}": {
+      "schema": "MedicalDocument",
+      "description": "Strictly private prescription and medical report metadata for this user"
+    },
+    "/users/{userId}/documentFiles/{fileId}": {
+      "schema": "MedicalDocumentFile",
+      "description": "Strictly private compressed full-page images for prescriptions and reports"
     },
     "/global_medicines/{medicineId}": {
       "schema": "GlobalMedicine",

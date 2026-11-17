@@ -91,6 +91,7 @@ export interface Medicine {
   packageDescription?: string; // Optional pack/strip description from catalog
   catalogMedicineId?: string; // Optional linked library medicine id
   pricePerUnit?: number; // Optional user-specified price per single unit
+  updatedAtMs?: number;
 }
 
 export interface DoseLog {
@@ -106,6 +107,7 @@ export interface DoseLog {
   status: 'taken' | 'skipped' | 'missed';
   loggedAt?: string; // ISO string
   notes?: string;
+  updatedAtMs?: number;
 }
 
 export interface PatientProfile {
@@ -121,6 +123,7 @@ export interface PatientProfile {
   avatarUrl?: string;
   isArchived?: boolean;
   archivedAt?: string;
+  updatedAtMs?: number;
 }
 
 export interface HealthRecord {
@@ -135,6 +138,7 @@ export interface HealthRecord {
   weight?: number; // kg
   notes?: string;
   createdAt: string;
+  updatedAtMs?: number;
 }
 
 export interface DoctorAppointment {
@@ -148,6 +152,7 @@ export interface DoctorAppointment {
   notes?: string;
   status: 'upcoming' | 'completed' | 'cancelled';
   createdAt: string;
+  updatedAtMs?: number;
 }
 
 export type WeekStartDay = 'saturday' | 'sunday' | 'monday';
@@ -214,6 +219,7 @@ export interface CaregiverLinkDoc {
   allowFullView: boolean;
   allowSuggestions?: boolean;
   createdAt: string;
+  serverCreatedAt?: unknown;
   expiresAt?: string;
   expiresAtMs: number;
   linkedAt?: string;
@@ -316,6 +322,48 @@ export interface DoctorProfile {
   isEmergency: boolean;
   createdAt: unknown;
   updatedAt: unknown;
+}
+
+export type MedicalDocumentKind = 'prescription' | 'report';
+
+export type MedicalReportType =
+  | 'রক্ত পরীক্ষা'
+  | 'এক্স-রে'
+  | 'ECG'
+  | 'আলট্রাসাউন্ড'
+  | 'প্রস্রাব পরীক্ষা'
+  | 'সিটি/MRI'
+  | 'অন্যান্য';
+
+export interface MedicalDocumentPageMeta {
+  fileId: string;
+  thumb: string; // ≤ 10 KB JPEG data URL (max 240px)
+  width: number;
+  height: number;
+  rotation: 0 | 90 | 180 | 270;
+}
+
+export interface MedicalDocument {
+  id: string;
+  kind: MedicalDocumentKind;
+  patientId: string;
+  doctorId?: string;
+  title: string;
+  date: string; // YYYY-MM-DD
+  note?: string;
+  reportType?: string;
+  pages: MedicalDocumentPageMeta[]; // max 10 pages
+  createdAt: unknown;
+  updatedAt: unknown;
+  pendingCloudUpload?: boolean; // client-only indicator, stripped before Firestore write
+}
+
+export interface MedicalDocumentFile {
+  id: string;
+  docId: string;
+  data: string; // base64 JPEG data URL (<= 900,000 chars)
+  bytes: number;
+  createdAt: unknown;
 }
 
 export type SharedReportExpiryHours = 24 | 168 | 720;

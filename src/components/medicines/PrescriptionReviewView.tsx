@@ -41,8 +41,16 @@ import {
 } from '../../utils/prescriptionImport';
 import { doctorExistsByName } from '../../utils/doctorsManager';
 
+export interface InitialPrescriptionScanImage {
+  imageDataUrl: string;
+  mimeType: string;
+  patientId?: string;
+  doctorName?: string;
+}
+
 interface PrescriptionReviewViewProps {
   onBackToManual: () => void;
+  initialScanImage?: InitialPrescriptionScanImage | null;
 }
 
 const MEDICINE_TYPES: MedicineType[] = [
@@ -70,6 +78,7 @@ const MEAL_OPTIONS: Array<{ value: MealTiming; label: string }> = [
 
 export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
   onBackToManual,
+  initialScanImage,
 }) => {
   const {
     patients,
@@ -186,6 +195,9 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
       if (suggestedPatient) {
         setSelectedPatientId(suggestedPatient.id);
         setMatchedPatientHint(suggestedPatient.name);
+      } else if (initialScanImage?.patientId) {
+        setSelectedPatientId(initialScanImage.patientId);
+        setMatchedPatientHint(null);
       } else if (activePatientId) {
         setSelectedPatientId(activePatientId);
         setMatchedPatientHint(null);
@@ -201,6 +213,18 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
       setIsAnalyzing(false);
     }
   };
+
+  const triggeredInitialScanRef = useRef(false);
+  useEffect(() => {
+    if (initialScanImage && !triggeredInitialScanRef.current) {
+      triggeredInitialScanRef.current = true;
+      if (initialScanImage.patientId) {
+        setSelectedPatientId(initialScanImage.patientId);
+      }
+      setImagePreview(initialScanImage.imageDataUrl);
+      void startAnalysis(initialScanImage.imageDataUrl, initialScanImage.mimeType || 'image/jpeg');
+    }
+  }, [initialScanImage]);
 
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

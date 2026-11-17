@@ -57,6 +57,12 @@ import {
 import { SyncStatusCard } from './SyncStatusCard';
 import { CaregiverSettingsSection } from '../caregiver/CaregiverSettingsSection';
 import { MySharedLinksSection } from '../reports/MySharedLinksSection';
+import { MAX_USER_DOCUMENT_PAGES } from '../../utils/medicalDocuments';
+import {
+  getTodayFirestoreUsage,
+  subscribeFirestoreUsage,
+  FirestoreDailyUsage,
+} from '../../utils/firestoreUsageTracker';
 
 export const Settings: React.FC = () => {
   const {
@@ -79,8 +85,22 @@ export const Settings: React.FC = () => {
     syncLocalToCloud,
     isSyncing,
     isCloudConnected,
+    isAdmin,
     setCurrentPage,
+    totalUsedDocumentPages,
   } = useMedicine();
+
+  const [todayUsage, setTodayUsage] = useState<FirestoreDailyUsage>(() =>
+    getTodayFirestoreUsage()
+  );
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    setTodayUsage(getTodayFirestoreUsage());
+    return subscribeFirestoreUsage(() => {
+      setTodayUsage(getTodayFirestoreUsage());
+    });
+  }, [isAdmin]);
 
   const {
     hasBengaliVoice,
@@ -1208,6 +1228,65 @@ export const Settings: React.FC = () => {
         {/* Live Sync Status Card */}
         <SyncStatusCard />
 
+        {/* Admin-only Local Daily Firestore Read/Write Telemetry */}
+        {isAdmin && (() => {
+          const allCols = Array.from(
+            new Set([
+              ...Object.keys(todayUsage.writesByCollection),
+              ...Object.keys(todayUsage.readsByCollection),
+            ])
+          ).sort((a, b) => {
+            const totalB =
+              (todayUsage.writesByCollection[b] || 0) + (todayUsage.readsByCollection[b] || 0);
+            const totalA =
+              (todayUsage.writesByCollection[a] || 0) + (todayUsage.readsByCollection[a] || 0);
+            return totalB - totalA;
+          });
+
+          return (
+            <div className="p-4 rounded-xl bg-surface-2 border border-border space-y-2.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <strong className="font-bold text-text">
+                  আজ আমার ফোন থেকে আনুমানিক Firestore write: {toBengaliNumber(todayUsage.totalWrites)}
+                </strong>
+                <span className="text-text-muted font-semibold">
+                  read: {toBengaliNumber(todayUsage.totalReads)} ({todayUsage.dateKey})
+                </span>
+              </div>
+              {allCols.length > 0 ? (
+                <div className="space-y-1">
+                  <span className="text-[11px] font-semibold text-text-muted block">
+                    কোন কালেকশন কত:
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {allCols.map((colName) => {
+                      const w = todayUsage.writesByCollection[colName] || 0;
+                      const r = todayUsage.readsByCollection[colName] || 0;
+                      return (
+                        <div
+                          key={colName}
+                          className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface border border-border text-[11px]"
+                        >
+                          <span className="font-mono font-semibold text-text truncate">
+                            {colName}
+                          </span>
+                          <span className="text-text-muted shrink-0 ml-2">
+                            write {toBengaliNumber(w)} · read {toBengaliNumber(r)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-text-muted">
+                  আজ এখনো এই ফোন থেকে কোনো ক্লাউড রিড/রাইট রেকর্ড হয়নি।
+                </p>
+              )}
+            </div>
+          );
+        })()}
+
         {currentUser && (
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
             <button
@@ -1226,6 +1305,42 @@ export const Settings: React.FC = () => {
         <h2 className="text-base font-bold text-text pb-3 border-b border-border">
           ডেটা ব্যাকআপ ও নিয়ন্ত্রণ
         </h2>
+
+        {/* Prescription & Report Photo Quota Usage */}
+        <div className="p-4 rounded-xl bg-surface-2 border border-border space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+            <strong className="font-bold text-text">
+              প্রেসক্রিপশন ও রিপোর্ট ছবির জায়গা
+            </strong>
+            <span className="font-bold text-primary">
+              ব্যবহৃত জায়গা: {toBengaliNumber(totalUsedDocumentPages)}/{toBengaliNumber(MAX_USER_DOCUMENT_PAGES)} পাতা
+            </span>
+          </div>
+          <div className="h-2.5 bg-surface rounded-full overflow-hidden border border-border">
+            <div
+              className={`h-full transition-all ${
+                totalUsedDocumentPages >= MAX_USER_DOCUMENT_PAGES
+                  ? 'bg-danger'
+                  : totalUsedDocumentPages >= 95
+                  ? 'bg-warning'
+                  : 'bg-primary'
+              }`}
+              style={{
+                width: `${Math.min(100, Math.round((totalUsedDocumentPages / MAX_USER_DOCUMENT_PAGES) * 100))}%`,
+              }}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2 text-xs text-text-muted">
+            <span>সব ছবি শুধু আপনার ব্যক্তিগত অ্যাকাউন্টে সংরক্ষিত থাকে</span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('doctors')}
+              className="text-primary font-bold hover:underline cursor-pointer shrink-0"
+            >
+              প্রেসক্রিপশন/রিপোর্ট দেখুন →
+            </button>
+          </div>
+        </div>
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs">
           <div>

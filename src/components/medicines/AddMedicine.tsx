@@ -4,7 +4,7 @@ import { MedicineType, MealTiming, TimeSlot, DoseSchedule } from '../../types';
 import { commonMedicinePresets } from '../../data/mockData';
 import { toBengaliNumber, formatBengaliTime } from '../../utils/bengaliUtils';
 import { PrescriptionScannerModal } from './PrescriptionScannerModal';
-import { PrescriptionReviewView } from './PrescriptionReviewView';
+import { PrescriptionReviewView, InitialPrescriptionScanImage } from './PrescriptionReviewView';
 import { MedicineInfoModal } from '../ai/MedicineInfoModal';
 import { PrescriptionScanResult, checkDrugInteractions, DrugInteractionResponse } from '../../services/aiService';
 import { doctorExistsByName } from '../../utils/doctorsManager';
@@ -86,6 +86,7 @@ export const AddMedicine: React.FC = () => {
   const [formError, setFormError] = useState('');
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [showPrescriptionFlow, setShowPrescriptionFlow] = useState(false);
+  const [initialScanImage, setInitialScanImage] = useState<InitialPrescriptionScanImage | null>(null);
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [aiSuccessBanner, setAiSuccessBanner] = useState<string | null>(null);
   const [isSavingQuickDoctor, setIsSavingQuickDoctor] = useState(false);
@@ -164,6 +165,15 @@ export const AddMedicine: React.FC = () => {
         const parsed = JSON.parse(saved);
         localStorage.removeItem('shasthobondhu_pending_ai_med');
         handleApplyScanResult(parsed);
+      }
+      const rxScanRaw = localStorage.getItem('shasthobondhu_pending_rx_scan');
+      if (rxScanRaw) {
+        const parsedRx = JSON.parse(rxScanRaw) as InitialPrescriptionScanImage;
+        localStorage.removeItem('shasthobondhu_pending_rx_scan');
+        if (parsedRx?.imageDataUrl) {
+          setInitialScanImage(parsedRx);
+          setShowPrescriptionFlow(true);
+        }
       }
     } catch {
       // ignore parsing error
@@ -324,7 +334,11 @@ export const AddMedicine: React.FC = () => {
   if (showPrescriptionFlow) {
     return (
       <PrescriptionReviewView
-        onBackToManual={() => setShowPrescriptionFlow(false)}
+        initialScanImage={initialScanImage}
+        onBackToManual={() => {
+          setShowPrescriptionFlow(false);
+          setInitialScanImage(null);
+        }}
       />
     );
   }
