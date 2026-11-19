@@ -6,20 +6,15 @@ import {
   CloudOff,
   Clock,
   ShieldCheck,
-  ExternalLink,
 } from 'lucide-react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
-import firebaseConfig from '../../../firebase-applet-config.json';
-
-const FIRESTORE_CONSOLE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
 
 export const SyncStatusCard: React.FC = () => {
   const {
     currentUser,
     isSyncing,
     syncStatus,
-    isQuotaExceeded,
     pendingSyncCount,
     lastSyncedAt,
     triggerManualSync,
@@ -29,7 +24,7 @@ export const SyncStatusCard: React.FC = () => {
   if (!currentUser) {
     return (
       <div className="p-5 bg-surface-2 rounded-2xl border border-border space-y-3 text-xs">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-surface border border-border text-text-muted">
               <CloudOff className="w-4 h-4" />
@@ -39,7 +34,7 @@ export const SyncStatusCard: React.FC = () => {
                 সিঙ্ক অবস্থা: অতিথি মোড (অফলাইন)
               </h3>
               <p className="text-[11px] text-text-muted">
-                ক্লাউড ব্যাকআপ ও রিয়েল-টাইম সিঙ্ক সুবিধা পেতে লগইন করুন
+                ক্লাউড ব্যাকআপ ও সিঙ্ক সুবিধা পেতে লগইন করুন
               </p>
             </div>
           </div>
@@ -47,7 +42,7 @@ export const SyncStatusCard: React.FC = () => {
           <button
             type="button"
             onClick={openAuthModal}
-            className="px-3.5 py-1.5 text-xs font-semibold text-on-primary bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer"
+            className="px-3.5 py-1.5 text-xs font-semibold text-on-primary bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
           >
             লগইন করুন
           </button>
@@ -56,13 +51,12 @@ export const SyncStatusCard: React.FC = () => {
     );
   }
 
-  const isSynced = syncStatus === 'synced' && !isQuotaExceeded;
   const isSyncInProgress = syncStatus === 'syncing' || isSyncing;
-  const isOffline = syncStatus === 'offline' || isQuotaExceeded;
+  const isSynced = syncStatus === 'synced' && !isSyncInProgress;
+  const isOffline = syncStatus === 'offline' && !isSyncInProgress;
 
   return (
     <div className="p-5 bg-surface rounded-2xl border border-border shadow-xs space-y-4 text-xs">
-      
       {/* Top row */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
         <div className="flex items-center gap-2.5">
@@ -93,19 +87,15 @@ export const SyncStatusCard: React.FC = () => {
               <h3 className="text-sm font-bold text-text">
                 সিঙ্ক অবস্থা:
               </h3>
-              {isSynced ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-success-soft text-success-text border border-success/30">
-                  <span className="w-1.5 h-1.5 rounded-full bg-success" />
-                  ✓ সিঙ্ক হয়েছে
-                </span>
-              ) : isSyncInProgress ? (
+              {isSyncInProgress ? (
                 <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-primary-soft text-primary border border-primary/25">
                   <RefreshCw className="w-3 h-3 animate-spin text-primary" />
-                  ⟳ চলছে
+                  হচ্ছে
                 </span>
-              ) : isQuotaExceeded ? (
-                <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-warning-soft text-warning-text border border-warning/30">
-                  আজকের ক্লাউড সীমা শেষ
+              ) : isSynced ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-success-soft text-success-text border border-success/30">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success" />
+                  সিঙ্ক হয়েছে
                 </span>
               ) : isOffline ? (
                 <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-warning-soft text-warning-text border border-warning/30">
@@ -113,44 +103,30 @@ export const SyncStatusCard: React.FC = () => {
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger-text border border-danger/30">
-                  ✕ ব্যর্থ
+                  ব্যর্থ
                 </span>
               )}
             </div>
 
             <p className="text-[11px] text-text-muted mt-0.5">
-              {isQuotaExceeded
-                ? pendingSyncCount > 0
-                  ? `ক্লাউড লেখা সাময়িকভাবে বিরতিতে; ফোনে ${toBengaliNumber(pendingSyncCount)}টি পরিবর্তন নিরাপদে জমা আছে`
-                  : 'আজকের ক্লাউড লেখার সীমা পূর্ণ; পরিবর্তন ফোনে সংরক্ষিত হচ্ছে (ক্লাউড ডেটা পড়া চালু আছে)'
-                : pendingSyncCount > 0
+              {pendingSyncCount > 0
                 ? `ফোনে ${toBengaliNumber(pendingSyncCount)}টি পরিবর্তন ক্লাউডে সিঙ্কের অপেক্ষায় আছে`
-                : 'ক্লাউডের সাথে স্বয়ংক্রিয় অফলাইন সংরক্ষণ ও সমন্বয়'}
+                : 'ফোন ও ক্লাউডের মধ্যে স্বয়ংক্রিয় অফলাইন সংরক্ষণ সক্রিয়'}
             </p>
           </div>
         </div>
 
-        {/* Sync Action */}
+        {/* Sync / Retry Action */}
         <div className="flex items-center gap-2 self-start sm:self-center">
           <button
             type="button"
-            disabled={isSyncInProgress || isQuotaExceeded}
+            disabled={isSyncInProgress}
             onClick={triggerManualSync}
-            title={
-              isQuotaExceeded
-                ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
-                : 'পরিবর্তিত ডেটা ক্লাউডে সিঙ্ক করুন'
-            }
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-on-primary bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            title="পরিবর্তিত ডেটা ক্লাউডে সিঙ্ক করুন"
+            className="flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] text-xs font-bold text-on-primary bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isSyncInProgress ? 'animate-spin' : ''}`} />
-            <span>
-              {isSyncInProgress
-                ? 'সিঙ্ক হচ্ছে...'
-                : isQuotaExceeded
-                ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
-                : 'এখনই সিঙ্ক করুন'}
-            </span>
+            <span>{isSyncInProgress ? 'হচ্ছে...' : 'আবার চেষ্টা'}</span>
           </button>
         </div>
       </div>
@@ -175,45 +151,13 @@ export const SyncStatusCard: React.FC = () => {
         </div>
       </div>
 
-      {/* Security / Quota note */}
-      {isQuotaExceeded ? (
-        <div className="p-3.5 bg-warning-soft border border-warning/30 rounded-xl text-[11px] text-warning-text space-y-2">
-          <div className="flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 text-warning shrink-0 mt-0.5" />
-            <span>
-              Google Firestore-এর আজকের ফ্রি দৈনিক লেখার সীমা পূর্ণ হয়েছে। আপনার সব নতুন ওষুধ ও ডোজের হিসাব ফোনেই নিরাপদে থাকছে—প্যাসিফিক মধ্যরাতে (বাংলাদেশ সময় দুপুর ২:০০টা) সীমা রিসেট হলে শুধু পরিবর্তিত তথ্যটুকু সিঙ্ক হবে।
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 pl-6">
-            <a
-              href={FIRESTORE_CONSOLE_UPGRADE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 font-bold text-primary hover:underline"
-            >
-              <span>Firebase কনসোলে সীমা দেখুন</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-            <a
-              href="https://firebase.google.com/pricing#cloud-firestore"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 font-semibold text-text-muted hover:text-text hover:underline"
-            >
-              <span>কোটা নীতিমালা</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </div>
-        </div>
-      ) : (
-        <div className="p-3 bg-primary-soft border border-primary/20 rounded-xl text-[11px] text-text flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
-          <span>
-            অফলাইনে থাকা অবস্থায় যোগ করা ওষুধ ও ডোজ লগ ইন্টারনেট সংযুক্ত হলে স্বয়ংক্রিয়ভাবে ক্লাউডে সিঙ্ক হবে।
-          </span>
-        </div>
-      )}
-
+      {/* Offline resilience note */}
+      <div className="p-3 bg-primary-soft border border-primary/20 rounded-xl text-[11px] text-text flex items-center gap-2">
+        <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
+        <span>
+          অফলাইনে থাকা অবস্থায় যোগ করা বা পরিবর্তিত ডেটা ইন্টারনেট সংযুক্ত হলে স্বয়ংক্রিয়ভাবে ক্লাউডে সিঙ্ক হবে।
+        </span>
+      </div>
     </div>
   );
 };

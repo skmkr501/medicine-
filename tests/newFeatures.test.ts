@@ -1,6 +1,31 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { HealthRecord, DoctorAppointment, ReminderSettings, DoctorProfile } from '../src/types';
+import { HealthRecord, DoctorAppointment, ReminderSettings, DoctorProfile, PhonebookEntry } from '../src/types';
+import {
+  patientToRow,
+  patientFromRow,
+  medicineToRow,
+  medicineFromRow,
+  doseLogToRow,
+  doseLogFromRow,
+  healthRecordToRow,
+  healthRecordFromRow,
+  appointmentToRow,
+  appointmentFromRow,
+  doctorToRow,
+  doctorFromRow,
+  phonebookToRow,
+  phonebookFromRow,
+  settingsToRow,
+  settingsFromRow,
+} from '../src/supabase/mappers';
+import {
+  chunkArray,
+  retryWithBackoff,
+  upsertRowsInBatches,
+  SUPABASE_UPSERT_BATCH_SIZE,
+} from '../src/supabase/userDataService';
+import { parseAndMergeLocalBackup } from '../src/utils/backupMerge';
 import { t } from '../src/utils/translations';
 import {
   initialPatients,
@@ -3780,11 +3805,12 @@ describe('Suite 24: Weekly Pillbox (সাপ্তাহিক পিলবক�
   });
 });
 
-describe('Suite 25: Firestore দৈনিক Read হ্রাস (৪৫ দিন উইন্ডো, TTL ক্যাশ ও অন-ডিমান্ড লোড)', () => {
-  it('৪৫ দিনের কাটঅফ তারিখ সঠিকভাবে হিসাব করে এবং রিয়েল-টাইম উইন্ডোর সাথে পুরনো লগ অক্ষত রাখে', () => {
+describe('Suite 25: ডোজ-লগ ৯০ দিন উইন্ডো, TTL ক্যাশ ও অন-ডিমান্ড লোড', () => {
+  it('৯০ দিনের কাটঅফ তারিখ সঠিকভাবে হিসাব করে এবং সাম্প্রতিক উইন্ডোর সাথে পুরনো লগ অক্ষত রাখে', () => {
     const refDate = new Date(2026, 10, 16); // 2026-11-16
+    assert.strictEqual(DOSE_LOG_REALTIME_DAYS, 90);
     const cutoff = getDoseLogsCutoffDate(DOSE_LOG_REALTIME_DAYS, refDate);
-    assert.strictEqual(cutoff, '2026-10-02');
+    assert.strictEqual(cutoff, '2026-08-18');
 
     const yesterday = getAppointmentsRecentCutoffDate(1, refDate);
     assert.strictEqual(yesterday, '2026-11-15');
@@ -3794,7 +3820,7 @@ describe('Suite 25: Firestore দৈনিক Read হ্রাস (৪৫ দ�
         id: 'log-old-1',
         medicineId: 'm1',
         medicineName: 'Napa',
-        scheduledDate: '2026-09-15',
+        scheduledDate: '2026-08-01',
         scheduledTime: '08:00 AM',
         timeSlot: 'সকাল',
         dosage: '১টি',
@@ -3825,20 +3851,20 @@ describe('Suite 25: Firestore দৈনিক Read হ্রাস (৪৫ দ�
       },
     ];
 
-    // Bounded snapshot preserves < cutoff cached logs and replaces >= cutoff window authoritatively
+    // Bounded window preserves < cutoff cached logs and replaces >= cutoff window authoritatively
     const merged = mergeDoseLogsWithWindow(existingLogs, recentFromSnapshot, cutoff);
     assert.deepStrictEqual(
       merged.map((l) => l.id),
       ['log-recent-live', 'log-old-1']
     );
 
-    // Lazy older load preserves live 45-day logs and refreshes < cutoff logs
+    // Lazy older load preserves live 90-day logs and refreshes < cutoff logs
     const fetchedOlder: DoseLog[] = [
       {
         id: 'log-old-2',
         medicineId: 'm1',
         medicineName: 'Napa',
-        scheduledDate: '2026-08-20',
+        scheduledDate: '2026-07-20',
         scheduledTime: '09:00 PM',
         timeSlot: 'রাত',
         dosage: '১টি',
@@ -4787,8 +4813,310 @@ describe('ধাপ ৩১: AI মডেল কনফিগারেশন, ফ�
   });
 });
 
+describe('ধাপ ৩২: Supabase ৮টি মূল টেবিলের Mapper, ২০০ সারির ব্যাচ Upsert, Retry Backoff এবং JSON ব্যাকআপ মার্জ', () => {
+  it('৮টি টেবিলের toRow user_id বাদ রাখে, সঠিক snake_case কলাম তৈরি করে এবং fromRow নিখুঁত round-trip দেয়', () => {
+    const patient: PatientProfile = {
+      id: 'pat-1',
+      name: 'রহিম উদ্দিন',
+      relation: 'বাবা',
+      age: 62,
+      gender: 'পুরুষ',
+      bloodGroup: 'B+',
+      chronicConditions: ['ডায়াবেটিস'],
+      allergies: ['পেনিসিলিন'],
+      emergencyContact: '01700000000',
+      isArchived: false,
+      updatedAtMs: 1700000000001,
+    };
+    const pRow = patientToRow(patient);
+    assert.strictEqual('user_id' in pRow, false);
+    assert.strictEqual(pRow.blood_group, 'B+');
+    assert.deepStrictEqual(patientFromRow(pRow).chronicConditions, ['ডায়াবেটিস']);
+
+    const medicine: Medicine = {
+      id: 'med-1',
+      brandName: 'Napa Extend',
+      genericName: 'Paracetamol',
+      type: 'ট্যাবলেট',
+      strength: '665mg',
+      mealTiming: 'খাওয়ার পরে',
+      schedules: [{ id: 'sch-1', timeSlot: 'সকাল', time: '08:00', dosage: '১টি' }],
+      stock: 15,
+      minStockAlert: 5,
+      unit: 'ট্যাবলেট',
+      startDate: '2026-11-01',
+      durationDays: 30,
+      isChronic: true,
+      assignedPatientId: 'pat-1',
+      status: 'active',
+      colorTag: 'blue',
+      stockAdjustments: [
+        {
+          id: 'adj-1',
+          previousStock: 10,
+          newStock: 15,
+          reason: 'রিফিল',
+          timestamp: '2026-11-02T08:00:00.000Z',
+        },
+      ],
+      updatedAtMs: 1700000000002,
+    };
+    const mRow = medicineToRow(medicine);
+    assert.strictEqual('user_id' in mRow, false);
+    assert.strictEqual(mRow.brand_name, 'Napa Extend');
+    assert.strictEqual(Array.isArray(mRow.schedules), true);
+    assert.strictEqual(Array.isArray(mRow.stock_adjustments), true);
+    assert.strictEqual(medicineFromRow(mRow).assignedPatientId, 'pat-1');
+    assert.strictEqual(medicineFromRow(mRow).stockAdjustments?.length, 1);
+
+    const log: DoseLog = {
+      id: 'log-1',
+      medicineId: 'med-1',
+      medicineName: 'Napa Extend',
+      genericName: 'Paracetamol',
+      patientId: 'pat-1',
+      scheduledDate: '2026-11-10',
+      scheduledTime: '08:00',
+      timeSlot: 'সকাল',
+      dosage: '১টি',
+      status: 'taken',
+      loggedAt: '2026-11-10T02:05:00.000Z',
+      updatedAtMs: 1700000000003,
+    };
+    const lRow = doseLogToRow(log);
+    assert.strictEqual('user_id' in lRow, false);
+    assert.strictEqual(lRow.scheduled_date, '2026-11-10');
+    assert.strictEqual(doseLogFromRow(lRow).medicineId, 'med-1');
+
+    const hr: HealthRecord = {
+      id: 'hr-1',
+      patientId: 'pat-1',
+      recordDate: '2026-11-10',
+      recordTime: '09:00 AM',
+      systolic: 120,
+      diastolic: 80,
+      bloodSugar: 6.4,
+      sugarType: 'খালি পেটে',
+      weight: 68,
+      notes: 'ভালো আছে',
+      createdAt: '2026-11-10T09:00:00.000Z',
+      updatedAtMs: 1700000000004,
+    };
+    const hrRow = healthRecordToRow(hr);
+    assert.strictEqual('user_id' in hrRow, false);
+    assert.strictEqual(hrRow.record_date, '2026-11-10');
+    assert.strictEqual(hrRow.sugar_type, 'খালি পেটে');
+    assert.strictEqual(healthRecordFromRow(hrRow).systolic, 120);
+    assert.strictEqual(healthRecordFromRow(hrRow).bloodSugar, 6.4);
+
+    const apt: DoctorAppointment = {
+      id: 'apt-1',
+      patientId: 'pat-1',
+      doctorName: 'ডা. তাসনিম',
+      appointmentDate: '2026-11-25',
+      appointmentTime: '06:00 PM',
+      location: 'ঢাকা',
+      status: 'upcoming',
+      createdAt: '2026-11-10T09:00:00.000Z',
+      updatedAtMs: 1700000000005,
+    };
+    const aRow = appointmentToRow(apt);
+    assert.strictEqual('user_id' in aRow, false);
+    assert.strictEqual(aRow.appointment_date, '2026-11-25');
+    assert.strictEqual(appointmentFromRow(aRow).doctorName, 'ডা. তাসনিম');
+
+    const doc: DoctorProfile = {
+      id: 'doc-1',
+      name: 'ডা. রহমান',
+      specialty: 'মেডিসিন',
+      phone: '01811111111',
+      isEmergency: true,
+      createdAt: '2026-11-01T00:00:00.000Z',
+      updatedAt: '2026-11-05T00:00:00.000Z',
+    };
+    const dRow = doctorToRow(doc);
+    assert.strictEqual('user_id' in dRow, false);
+    assert.strictEqual(dRow.is_emergency, true);
+    assert.strictEqual(doctorFromRow(dRow).specialty, 'মেডিসিন');
+
+    const phone: PhonebookEntry = {
+      id: 'ph-1',
+      name: 'অ্যাম্বুলেন্স',
+      phone: '999',
+      category: 'emergency',
+      isEmergency: true,
+      updatedAtMs: 1700000000006,
+    };
+    const phRow = phonebookToRow(phone);
+    assert.strictEqual('user_id' in phRow, false);
+    assert.strictEqual(phonebookFromRow(phRow).isEmergency, true);
+
+    const sRow = settingsToRow(initialSettings);
+    assert.strictEqual('user_id' in sRow, false);
+    assert.strictEqual(sRow.id, 'preferences');
+    assert.strictEqual(settingsFromRow(sRow).soundEnabled, initialSettings.soundEnabled);
+  });
+
+  it('upsertRowsInBatches সর্বোচ্চ ২০০ সারির ব্যাচে (user_id,id onConflict) পাঠায়', async () => {
+    assert.strictEqual(SUPABASE_UPSERT_BATCH_SIZE, 200);
+    const rows = Array.from({ length: 450 }, (_, idx) => ({ id: `row-${idx}`, val: idx }));
+    const chunks = chunkArray(rows, SUPABASE_UPSERT_BATCH_SIZE);
+    assert.deepStrictEqual(
+      chunks.map((c) => c.length),
+      [200, 200, 50]
+    );
+
+    const recordedCalls: Array<{ table: string; count: number; onConflict?: string }> = [];
+    const mockClient = {
+      from: (table: string) => ({
+        upsert: async (batch: object[], options?: { onConflict?: string }) => {
+          recordedCalls.push({ table, count: batch.length, onConflict: options?.onConflict });
+          return { error: null };
+        },
+      }),
+    };
+
+    const written = await upsertRowsInBatches('medicines', rows, { client: mockClient });
+    assert.strictEqual(written, 450);
+    assert.strictEqual(recordedCalls.length, 3);
+    assert.deepStrictEqual(
+      recordedCalls.map((c) => c.count),
+      [200, 200, 50]
+    );
+    assert.strictEqual(recordedCalls[0].onConflict, 'user_id,id');
+  });
+
+  it('retryWithBackoff অস্থায়ী ত্রুটিতে সর্বোচ্চ ৩ বার backoff সহ পুনঃচেষ্টা করে এবং RLS/403-এ সাথে সাথে থামে', async () => {
+    const sleepDelays: number[] = [];
+    let transientAttempts = 0;
+    const result = await retryWithBackoff(
+      async () => {
+        transientAttempts += 1;
+        if (transientAttempts < 4) {
+          throw new Error('Failed to fetch');
+        }
+        return 'ok';
+      },
+      {
+        maxRetries: 3,
+        baseDelayMs: 100,
+        sleepFn: async (ms) => {
+          sleepDelays.push(ms);
+        },
+      }
+    );
+    assert.strictEqual(result, 'ok');
+    assert.strictEqual(transientAttempts, 4);
+    assert.deepStrictEqual(sleepDelays, [100, 200, 400]);
+
+    let rlsAttempts = 0;
+    await assert.rejects(async () => {
+      await retryWithBackoff(
+        async () => {
+          rlsAttempts += 1;
+          throw { code: '42501', status: 403, message: 'row-level security policy violated' };
+        },
+        {
+          maxRetries: 3,
+          baseDelayMs: 100,
+          sleepFn: async () => {},
+        }
+      );
+    });
+    assert.strictEqual(rlsAttempts, 1);
+  });
+
+  it('parseAndMergeLocalBackup id অনুযায়ী মার্জ করে এবং একই ফাইল দুবার আনলে ডুপ্লিকেট তৈরি হয় না', () => {
+    const samplePatient: PatientProfile = {
+      id: 'pat-backup-1',
+      name: 'রহিম',
+      relation: 'নিজে',
+      age: 40,
+      gender: 'পুরুষ',
+      bloodGroup: 'O+',
+      chronicConditions: [],
+      allergies: [],
+      emergencyContact: '01700000000',
+    };
+    const baseMed: Medicine = {
+      id: 'med-keep-1',
+      brandName: 'Old Name',
+      genericName: 'Paracetamol',
+      type: 'ট্যাবলেট',
+      strength: '500mg',
+      mealTiming: 'খাওয়ার পরে',
+      schedules: [{ id: 'sch-2', timeSlot: 'সকাল', time: '08:00', dosage: '১টি' }],
+      stock: 10,
+      minStockAlert: 5,
+      unit: 'ট্যাবলেট',
+      startDate: '2026-11-01',
+      isChronic: false,
+      status: 'active',
+      colorTag: 'blue',
+    };
+    const existingMed: Medicine = { ...baseMed, id: 'med-keep-1', brandName: 'Old Name' };
+    const incomingMedUpdated: Medicine = { ...baseMed, id: 'med-keep-1', brandName: 'Updated Name' };
+    const incomingMedNew: Medicine = { ...baseMed, id: 'med-new-2', brandName: 'New Med' };
+
+    const rawBackup = JSON.stringify({
+      patients: [samplePatient],
+      medicines: [incomingMedUpdated, incomingMedNew],
+      doctors: [
+        {
+          id: 'doc-9',
+          name: 'ডা. করিম',
+          specialty: 'হৃদরোগ',
+          phone: '01711111111',
+          isEmergency: false,
+          createdAt: '2026-11-01T00:00:00.000Z',
+          updatedAt: '2026-11-01T00:00:00.000Z',
+        },
+      ],
+      settings: { soundEnabled: false },
+    });
+
+    const firstMerge = parseAndMergeLocalBackup(rawBackup, {
+      patients: [],
+      medicines: [existingMed],
+      doseLogs: [],
+      healthRecords: [],
+      appointments: [],
+      doctors: [],
+      settings: initialSettings,
+    });
+
+    assert.strictEqual(firstMerge.medicines.length, 2);
+    assert.strictEqual(
+      firstMerge.medicines.find((m) => m.id === 'med-keep-1')?.brandName,
+      'Updated Name'
+    );
+    assert.strictEqual(firstMerge.patients.length, 1);
+    assert.strictEqual(firstMerge.doctors.length, 1);
+    assert.strictEqual(firstMerge.settings.soundEnabled, false);
+    assert.strictEqual(firstMerge.addedCount, 3); // 1 patient + 1 new med + 1 doctor
+    assert.strictEqual(firstMerge.updatedCount, 1); // med-keep-1 updated
+
+    // Second import of identical backup keeps exact counts (no duplicates)
+    const secondMerge = parseAndMergeLocalBackup(rawBackup, {
+      patients: firstMerge.patients,
+      medicines: firstMerge.medicines,
+      doseLogs: firstMerge.doseLogs,
+      healthRecords: firstMerge.healthRecords,
+      appointments: firstMerge.appointments,
+      doctors: firstMerge.doctors,
+      settings: firstMerge.settings,
+    });
+    assert.strictEqual(secondMerge.medicines.length, 2);
+    assert.strictEqual(secondMerge.patients.length, 1);
+    assert.strictEqual(secondMerge.doctors.length, 1);
+    assert.strictEqual(secondMerge.addedCount, 0);
+    assert.strictEqual(secondMerge.updatedCount, 4);
+  });
+});
+
 console.log('\n================================================================');
 console.log('  🎉 ALL NEW FEATURE TESTS PASSED SUCCESSFULLY!');
 console.log('================================================================\n');
+
 
 

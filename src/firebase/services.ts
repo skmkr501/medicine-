@@ -25,8 +25,45 @@ import { db, executeGuardedWrite, stripUndefined } from './config';
 import {
   getCachedSupabaseUser,
   getCachedSupabaseAdmin,
-  extractUserDisplayName,
 } from '../supabase/client';
+import {
+  saveMedicineToSupabase,
+  saveMedicinesBatchToSupabase,
+  deleteMedicineFromSupabase,
+  savePatientToSupabase,
+  savePatientsBatchToSupabase,
+  deletePatientFromSupabase,
+  saveDoseLogToSupabase,
+  saveDoseLogsBatchToSupabase,
+  saveSettingsToSupabase,
+  saveHealthRecordToSupabase,
+  saveHealthRecordsBatchToSupabase,
+  deleteHealthRecordFromSupabase,
+  saveAppointmentToSupabase,
+  saveAppointmentsBatchToSupabase,
+  deleteAppointmentFromSupabase,
+  fetchUserDoctorsFromSupabase,
+  createDoctorInSupabase,
+  updateDoctorInSupabase,
+  saveDoctorsBatchToSupabase,
+  deleteDoctorFromSupabase,
+  fetchPhonebookFromSupabase,
+  savePhonebookEntryToSupabase,
+  savePhonebookBatchToSupabase,
+  deletePhonebookEntryFromSupabase,
+  migrateLocalDataToSupabase,
+  flushOutboxToSupabase,
+  checkUserHasCloudDataSupabase,
+  fetchUserCollectionFromSupabase,
+  fetchUserSettingsFromSupabase,
+  fetchRecentDoseLogsFromSupabase,
+  fetchOlderDoseLogsFromSupabase,
+  fetchUpcomingAppointmentsFromSupabase,
+  fetchPastAppointmentsFromSupabase,
+  fetchRecentHealthRecordsFromSupabase,
+  clearCoreUserTablesFromSupabase,
+  cleanupDemoRecordsFromSupabase,
+} from '../supabase/userDataService';
 import {
   handleFirestoreError,
   isQuotaExceededError,
@@ -35,7 +72,6 @@ import {
   OperationType,
   QuotaExceededWriteError,
 } from './errors';
-import { isDemoRecordId, hasDemoPrefix, UserDataCollection } from '../utils/demoCleanup';
 import {
   LibraryMetaDoc,
   LibraryChunkDoc,
@@ -60,6 +96,7 @@ import {
   SharedReportDoc,
   EmergencyCardDoc,
   DoctorProfile,
+  PhonebookEntry,
   MedicalDocument,
   MedicalDocumentFile,
 } from '../types';
@@ -72,7 +109,7 @@ import {
   BuiltEmergencyCardPayload,
   isValidEmergencyTokenFormat,
 } from '../utils/emergencyQr';
-import { buildCleanDoctorInput, DoctorProfileInput } from '../utils/doctorsManager';
+import { DoctorProfileInput } from '../utils/doctorsManager';
 import { buildCleanMedicalDocumentInput, DocumentFormInput } from '../utils/medicalDocuments';
 import { isValidInviteCode, normalizeInviteCodeInput } from '../utils/caregiverAlerts';
 import { CloudSyncOutbox } from '../utils/cloudSyncOutbox';
@@ -94,221 +131,82 @@ export function assertAdminAuth(): void {
   }
 }
 
-// Cloud Firestore CRUD for Medicines
+// Supabase Postgres CRUD for Medicines
 export async function saveMedicineToCloud(userId: string, medicine: Medicine): Promise<void> {
-  const path = `users/${userId}/medicines/${medicine.id}`;
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'medicines', medicine.id), stripUndefined(medicine)),
-      { collection: 'medicines', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  return saveMedicineToSupabase(userId, medicine);
+}
+
+export async function saveMedicinesBatchToCloud(userId: string, medicines: Medicine[]): Promise<number> {
+  return saveMedicinesBatchToSupabase(userId, medicines);
 }
 
 export async function deleteMedicineFromCloud(userId: string, medicineId: string): Promise<void> {
-  const path = `users/${userId}/medicines/${medicineId}`;
-  try {
-    await executeGuardedWrite(
-      () => deleteDoc(doc(db, 'users', userId, 'medicines', medicineId)),
-      { collection: 'medicines', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  return deleteMedicineFromSupabase(userId, medicineId);
 }
 
-// Cloud Firestore CRUD for Patients
+// Supabase Postgres CRUD for Patients
 export async function savePatientToCloud(userId: string, patient: PatientProfile): Promise<void> {
-  const path = `users/${userId}/patients/${patient.id}`;
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'patients', patient.id), stripUndefined(patient)),
-      { collection: 'patients', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  return savePatientToSupabase(userId, patient);
+}
+
+export async function savePatientsBatchToCloud(userId: string, patients: PatientProfile[]): Promise<number> {
+  return savePatientsBatchToSupabase(userId, patients);
 }
 
 export async function deletePatientFromCloud(userId: string, patientId: string): Promise<void> {
-  const path = `users/${userId}/patients/${patientId}`;
-  try {
-    await executeGuardedWrite(
-      () => deleteDoc(doc(db, 'users', userId, 'patients', patientId)),
-      { collection: 'patients', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  return deletePatientFromSupabase(userId, patientId);
 }
 
-// Cloud Firestore CRUD for Dose Logs
+// Supabase Postgres CRUD for Dose Logs
 export async function saveDoseLogToCloud(userId: string, doseLog: DoseLog): Promise<void> {
-  const path = `users/${userId}/doseLogs/${doseLog.id}`;
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'doseLogs', doseLog.id), stripUndefined(doseLog)),
-      { collection: 'doseLogs', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  return saveDoseLogToSupabase(userId, doseLog);
 }
 
-// Cloud Firestore CRUD for Settings
+export async function saveDoseLogsBatchToCloud(userId: string, doseLogs: DoseLog[]): Promise<number> {
+  return saveDoseLogsBatchToSupabase(userId, doseLogs);
+}
+
+// Supabase Postgres CRUD for Settings
 export async function saveSettingsToCloud(userId: string, settings: ReminderSettings): Promise<void> {
-  const path = `users/${userId}/settings/preferences`;
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'settings', 'preferences'), stripUndefined(settings), { merge: true }),
-      { collection: 'settings', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  return saveSettingsToSupabase(userId, settings);
 }
 
-// Cloud Firestore CRUD for Health Records (ধাপ ১)
+// Supabase Postgres CRUD for Health Records (ধাপ ১)
 export async function saveHealthRecordToCloud(userId: string, record: HealthRecord): Promise<void> {
-  const path = `users/${userId}/healthRecords/${record.id}`;
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'healthRecords', record.id), stripUndefined(record)),
-      { collection: 'healthRecords', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  return saveHealthRecordToSupabase(userId, record);
+}
+
+export async function saveHealthRecordsBatchToCloud(userId: string, records: HealthRecord[]): Promise<number> {
+  return saveHealthRecordsBatchToSupabase(userId, records);
 }
 
 export async function deleteHealthRecordFromCloud(userId: string, recordId: string): Promise<void> {
-  const path = `users/${userId}/healthRecords/${recordId}`;
-  try {
-    await executeGuardedWrite(
-      () => deleteDoc(doc(db, 'users', userId, 'healthRecords', recordId)),
-      { collection: 'healthRecords', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  return deleteHealthRecordFromSupabase(userId, recordId);
 }
 
-// Cloud Firestore CRUD for Doctor Appointments (ধাপ ২)
+// Supabase Postgres CRUD for Doctor Appointments (ধাপ ২)
 export async function saveAppointmentToCloud(userId: string, appointment: DoctorAppointment): Promise<void> {
-  const path = `users/${userId}/appointments/${appointment.id}`;
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'appointments', appointment.id), stripUndefined(appointment)),
-      { collection: 'appointments', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
-  }
+  return saveAppointmentToSupabase(userId, appointment);
+}
+
+export async function saveAppointmentsBatchToCloud(userId: string, appointments: DoctorAppointment[]): Promise<number> {
+  return saveAppointmentsBatchToSupabase(userId, appointments);
 }
 
 export async function deleteAppointmentFromCloud(userId: string, appointmentId: string): Promise<void> {
-  const path = `users/${userId}/appointments/${appointmentId}`;
-  try {
-    await executeGuardedWrite(
-      () => deleteDoc(doc(db, 'users', userId, 'appointments', appointmentId)),
-      { collection: 'appointments', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  return deleteAppointmentFromSupabase(userId, appointmentId);
 }
 
-// Cloud Firestore CRUD for My Doctors ("আমার ডাক্তার" — ZERO onSnapshot listener)
+// Supabase Postgres CRUD for My Doctors ("আমার ডাক্তার")
 export async function fetchUserDoctorsFromCloud(userId: string): Promise<DoctorProfile[]> {
-  if (!userId) return [];
-  const colRef = collection(db, 'users', userId, 'doctors');
-  let snap;
-  try {
-    snap = await getDocsFromServer(colRef);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDocs(colRef);
-  }
-  recordFirestoreRead('doctors', Math.max(1, snap.size));
-  const items: DoctorProfile[] = [];
-  snap.forEach((docSnap) => {
-    const raw = docSnap.data() as DoctorProfile;
-    items.push({
-      ...raw,
-      id: raw.id || docSnap.id,
-    });
-  });
-  return items;
+  return fetchUserDoctorsFromSupabase(userId);
 }
 
 export async function createDoctorInCloud(
   userId: string,
   doctor: DoctorProfileInput & { id: string }
 ): Promise<void> {
-  const path = `users/${userId}/doctors/${doctor.id}`;
-  const clean = buildCleanDoctorInput(doctor);
-  const payload = stripUndefined({
-    id: doctor.id,
-    ...clean,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'doctors', doctor.id), payload),
-      { collection: 'doctors', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.CREATE, path);
-  }
+  return createDoctorInSupabase(userId, doctor);
 }
 
 export async function updateDoctorInCloud(
@@ -316,75 +214,32 @@ export async function updateDoctorInCloud(
   doctorId: string,
   fullOrPartial: DoctorProfileInput & { id?: string }
 ): Promise<void> {
-  const path = `users/${userId}/doctors/${doctorId}`;
-  const docRef = doc(db, 'users', userId, 'doctors', doctorId);
-  const clean = buildCleanDoctorInput(fullOrPartial);
+  return updateDoctorInSupabase(userId, doctorId, fullOrPartial);
+}
 
-  // Never touch createdAt; remove cleared optional fields using deleteField()
-  const patch: Record<string, any> = {
-    id: doctorId,
-    name: clean.name,
-    isEmergency: Boolean(clean.isEmergency),
-    updatedAt: serverTimestamp(),
-  };
-
-  const optionalKeys = [
-    'specialty',
-    'phone',
-    'whatsapp',
-    'hospital',
-    'address',
-    'visitingHours',
-    'forConditions',
-    'patientIds',
-    'lastVisitDate',
-    'nextVisitDate',
-    'notes',
-  ] as const;
-
-  for (const key of optionalKeys) {
-    const val = clean[key];
-    if (val === undefined) {
-      patch[key] = deleteField();
-    } else {
-      patch[key] = val;
-    }
-  }
-
-  try {
-    await executeGuardedWrite(
-      () => updateDoc(docRef, stripUndefined(patch)),
-      { collection: 'doctors', count: 1 }
-    );
-  } catch (error: any) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    const code = String(error?.code || error?.message || '').toLowerCase();
-    if (code.includes('not-found')) {
-      // Fallback create if doc wasn't created in cloud yet (e.g., created while offline)
-      await createDoctorInCloud(userId, { ...fullOrPartial, id: doctorId });
-      return;
-    }
-    handleFirestoreError(error, OperationType.UPDATE, path);
-  }
+export async function saveDoctorsBatchToCloud(userId: string, doctors: DoctorProfile[]): Promise<number> {
+  return saveDoctorsBatchToSupabase(userId, doctors);
 }
 
 export async function deleteDoctorFromCloud(userId: string, doctorId: string): Promise<void> {
-  const path = `users/${userId}/doctors/${doctorId}`;
-  try {
-    await executeGuardedWrite(
-      () => deleteDoc(doc(db, 'users', userId, 'doctors', doctorId)),
-      { collection: 'doctors', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  return deleteDoctorFromSupabase(userId, doctorId);
+}
+
+// Supabase Postgres CRUD for Phonebook
+export async function fetchPhonebookFromCloud(userId: string): Promise<PhonebookEntry[]> {
+  return fetchPhonebookFromSupabase(userId);
+}
+
+export async function savePhonebookEntryToCloud(userId: string, entry: PhonebookEntry): Promise<void> {
+  return savePhonebookEntryToSupabase(userId, entry);
+}
+
+export async function savePhonebookBatchToCloud(userId: string, entries: PhonebookEntry[]): Promise<number> {
+  return savePhonebookBatchToSupabase(userId, entries);
+}
+
+export async function deletePhonebookEntryFromCloud(userId: string, entryId: string): Promise<void> {
+  return deletePhonebookEntryFromSupabase(userId, entryId);
 }
 
 // ============================================================================
@@ -574,7 +429,7 @@ export async function deleteDocumentMetaFromCloud(
   }
 }
 
-// Safe Migration of Local Data into Cloud (without overwriting or losing anything)
+// Safe Migration of Local Data into Supabase Postgres (batched <= 200 rows)
 export async function migrateLocalDataToCloud(
   userId: string,
   medicines: Medicine[],
@@ -582,107 +437,25 @@ export async function migrateLocalDataToCloud(
   doseLogs: DoseLog[],
   settings: ReminderSettings,
   healthRecords?: HealthRecord[],
-  appointments?: DoctorAppointment[]
+  appointments?: DoctorAppointment[],
+  doctors?: DoctorProfile[],
+  phonebook?: PhonebookEntry[]
 ): Promise<{ medicinesCount: number; logsCount: number; patientsCount: number }> {
-  try {
-    const writes: Array<{ col: string; ref: ReturnType<typeof doc>; data: Record<string, any> }> = [];
-
-    writes.push({
-      col: 'users',
-      ref: doc(db, 'users', userId),
-      data: stripUndefined({
-        uid: userId,
-        email: getCachedSupabaseUser()?.email || '',
-        displayName: extractUserDisplayName(getCachedSupabaseUser()),
-        updatedAt: new Date().toISOString(),
-      }),
-    });
-
-    patients.forEach((patient) => {
-      writes.push({
-        col: 'patients',
-        ref: doc(db, 'users', userId, 'patients', patient.id),
-        data: stripUndefined(patient),
-      });
-    });
-
-    medicines.forEach((med) => {
-      writes.push({
-        col: 'medicines',
-        ref: doc(db, 'users', userId, 'medicines', med.id),
-        data: stripUndefined(med),
-      });
-    });
-
-    doseLogs.forEach((log) => {
-      writes.push({
-        col: 'doseLogs',
-        ref: doc(db, 'users', userId, 'doseLogs', log.id),
-        data: stripUndefined(log),
-      });
-    });
-
-    writes.push({
-      col: 'settings',
-      ref: doc(db, 'users', userId, 'settings', 'preferences'),
-      data: stripUndefined(settings),
-    });
-
-    if (healthRecords && healthRecords.length > 0) {
-      healthRecords.forEach((hr) => {
-        writes.push({
-          col: 'healthRecords',
-          ref: doc(db, 'users', userId, 'healthRecords', hr.id),
-          data: stripUndefined(hr),
-        });
-      });
-    }
-
-    if (appointments && appointments.length > 0) {
-      appointments.forEach((apt) => {
-        writes.push({
-          col: 'appointments',
-          ref: doc(db, 'users', userId, 'appointments', apt.id),
-          data: stripUndefined(apt),
-        });
-      });
-    }
-
-    // Commit in chunks of 400 to stay safely below Firestore's 500-op writeBatch limit
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < writes.length; i += CHUNK_SIZE) {
-      const batch = writeBatch(db);
-      const chunk = writes.slice(i, i + CHUNK_SIZE);
-      chunk.forEach(({ ref, data }) => {
-        batch.set(ref, data, { merge: true });
-      });
-      await executeGuardedWrite(() => batch.commit());
-      const countsByCol: Record<string, number> = {};
-      for (const item of chunk) {
-        countsByCol[item.col] = (countsByCol[item.col] || 0) + 1;
-      }
-      for (const [col, count] of Object.entries(countsByCol)) {
-        recordFirestoreWrite(col, count);
-      }
-    }
-
-    return {
-      medicinesCount: medicines.length,
-      logsCount: doseLogs.length,
-      patientsCount: patients.length,
-    };
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, `users/${userId}/[batch_migration]`);
-    return { medicinesCount: 0, logsCount: 0, patientsCount: 0 };
-  }
+  return migrateLocalDataToSupabase(
+    userId,
+    medicines,
+    patients,
+    doseLogs,
+    settings,
+    healthRecords,
+    appointments,
+    doctors,
+    phonebook
+  );
 }
 
 /**
- * Flushes ONLY locally queued offline/quota-paused/modified changes to Firestore (0 writes if empty).
+ * Flushes locally queued changes to Supabase Postgres (batched <= 200 rows per table).
  */
 export async function flushOutboxToCloud(
   userId: string,
@@ -695,365 +468,98 @@ export async function flushOutboxToCloud(
     healthRecords: HealthRecord[];
     appointments: DoctorAppointment[];
     doctors?: DoctorProfile[];
+    phonebook?: PhonebookEntry[];
   }
 ): Promise<{ syncedOpsCount: number }> {
-  try {
-    const ops: Array<
-      | { col: string; kind: 'set'; ref: ReturnType<typeof doc>; data: any; merge?: boolean }
-      | { col: string; kind: 'delete'; ref: ReturnType<typeof doc> }
-    > = [];
-
-    const medMap = new Map(snapshot.medicines.map((m) => [m.id, m]));
-    for (const id of outbox.upserts.medicines) {
-      const item = medMap.get(id);
-      if (item) {
-        ops.push({ col: 'medicines', kind: 'set', ref: doc(db, 'users', userId, 'medicines', id), data: stripUndefined(item) });
-      }
-    }
-    for (const id of outbox.deletes.medicines) {
-      ops.push({ col: 'medicines', kind: 'delete', ref: doc(db, 'users', userId, 'medicines', id) });
-    }
-
-    const patientMap = new Map(snapshot.patients.map((p) => [p.id, p]));
-    for (const id of outbox.upserts.patients) {
-      const item = patientMap.get(id);
-      if (item) {
-        ops.push({ col: 'patients', kind: 'set', ref: doc(db, 'users', userId, 'patients', id), data: stripUndefined(item) });
-      }
-    }
-    for (const id of outbox.deletes.patients) {
-      ops.push({ col: 'patients', kind: 'delete', ref: doc(db, 'users', userId, 'patients', id) });
-    }
-
-    const logMap = new Map(snapshot.doseLogs.map((l) => [l.id, l]));
-    for (const id of outbox.upserts.doseLogs) {
-      const item = logMap.get(id);
-      if (item) {
-        ops.push({ col: 'doseLogs', kind: 'set', ref: doc(db, 'users', userId, 'doseLogs', id), data: stripUndefined(item) });
-      }
-    }
-    for (const id of outbox.deletes.doseLogs) {
-      ops.push({ col: 'doseLogs', kind: 'delete', ref: doc(db, 'users', userId, 'doseLogs', id) });
-    }
-
-    const hrMap = new Map(snapshot.healthRecords.map((h) => [h.id, h]));
-    for (const id of outbox.upserts.healthRecords) {
-      const item = hrMap.get(id);
-      if (item) {
-        ops.push({ col: 'healthRecords', kind: 'set', ref: doc(db, 'users', userId, 'healthRecords', id), data: stripUndefined(item) });
-      }
-    }
-    for (const id of outbox.deletes.healthRecords) {
-      ops.push({ col: 'healthRecords', kind: 'delete', ref: doc(db, 'users', userId, 'healthRecords', id) });
-    }
-
-    const aptMap = new Map(snapshot.appointments.map((a) => [a.id, a]));
-    for (const id of outbox.upserts.appointments) {
-      const item = aptMap.get(id);
-      if (item) {
-        ops.push({ col: 'appointments', kind: 'set', ref: doc(db, 'users', userId, 'appointments', id), data: stripUndefined(item) });
-      }
-    }
-    for (const id of outbox.deletes.appointments) {
-      ops.push({ col: 'appointments', kind: 'delete', ref: doc(db, 'users', userId, 'appointments', id) });
-    }
-
-    if (outbox.settingsDirty) {
-      ops.push({
-        col: 'settings',
-        kind: 'set',
-        ref: doc(db, 'users', userId, 'settings', 'preferences'),
-        data: stripUndefined(snapshot.settings),
-        merge: true,
-      });
-    }
-
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
-      const batch = writeBatch(db);
-      const chunk = ops.slice(i, i + CHUNK_SIZE);
-      chunk.forEach((op) => {
-        if (op.kind === 'delete') {
-          batch.delete(op.ref);
-        } else if (op.merge) {
-          batch.set(op.ref, op.data, { merge: true });
-        } else {
-          batch.set(op.ref, op.data);
-        }
-      });
-      await executeGuardedWrite(() => batch.commit());
-      const countsByCol: Record<string, number> = {};
-      for (const op of chunk) {
-        countsByCol[op.col] = (countsByCol[op.col] || 0) + 1;
-      }
-      for (const [col, count] of Object.entries(countsByCol)) {
-        recordFirestoreWrite(col, count);
-      }
-    }
-
-    let doctorOps = 0;
-    const doctorMap = new Map((snapshot.doctors || []).map((d) => [d.id, d]));
-    for (const id of outbox.upserts.doctors) {
-      const docItem = doctorMap.get(id);
-      if (docItem) {
-        await updateDoctorInCloud(userId, id, docItem);
-        doctorOps += 1;
-      }
-    }
-    for (const id of outbox.deletes.doctors) {
-      await deleteDoctorFromCloud(userId, id);
-      doctorOps += 1;
-    }
-
-    return { syncedOpsCount: ops.length + doctorOps };
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, `users/${userId}/[outbox_sync]`);
-    return { syncedOpsCount: 0 };
-  }
+  return flushOutboxToSupabase(userId, outbox, snapshot);
 }
 
 /**
- * Lightweight 1-doc write probe used ONLY on manual retry after a prior quota pause when outbox is empty.
- */
-export async function probeCloudWriteAvailability(userId: string): Promise<void> {
-  try {
-    await executeGuardedWrite(
-      () =>
-        setDoc(
-          doc(db, 'users', userId),
-          { lastSyncCheckAt: new Date().toISOString() },
-          { merge: true }
-        ),
-      { collection: 'users', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, `users/${userId}`);
-  }
-}
-
-/**
- * Checks if a user already has data stored in Cloud Firestore (minimizing reads with limit(1) on history collections)
+ * Checks if a user already has core data stored in Supabase Postgres
  */
 export async function checkUserHasCloudData(
   userId: string
 ): Promise<{ hasData: boolean; medicinesCount: number; patientsCount: number }> {
-  const fetchCollection = async (sub: string, maxDocs?: number) => {
-    const colRef = collection(db, 'users', userId, sub);
-    const targetQuery = maxDocs ? query(colRef, limit(maxDocs)) : colRef;
-    let snap;
-    try {
-      snap = await getDocsFromServer(targetQuery);
-    } catch {
-      snap = await getDocs(targetQuery);
-    }
-    recordFirestoreRead(sub, Math.max(1, snap.size));
-    return snap;
-  };
-
-  try {
-    const [medsSnap, patientsSnap, logsSnap, healthSnap, aptsSnap] = await Promise.all([
-      fetchCollection('medicines'),
-      fetchCollection('patients'),
-      fetchCollection('doseLogs', 1),
-      fetchCollection('healthRecords', 1),
-      fetchCollection('appointments', 1),
-    ]);
-    const medicinesCount = medsSnap.size;
-    const patientsCount = patientsSnap.size;
-    const hasOtherData = logsSnap.size > 0 || healthSnap.size > 0 || aptsSnap.size > 0;
-    return {
-      hasData: medicinesCount > 0 || patientsCount > 0 || hasOtherData,
-      medicinesCount,
-      patientsCount,
-    };
-  } catch (error) {
-    console.warn('checkUserHasCloudData error:', error);
-    return { hasData: false, medicinesCount: 0, patientsCount: 0 };
-  }
+  return checkUserHasCloudDataSupabase(userId);
 }
 
 /**
- * One-time getDocs helper for small user subcollections (medicines, patients, full healthRecords)
+ * One-time read helper for user tables in Supabase Postgres
  */
 export async function fetchUserCollectionFromCloud<T>(
   userId: string,
-  subcollection: 'medicines' | 'patients' | 'healthRecords' | 'appointments'
+  subcollection: 'medicines' | 'patients' | 'healthRecords' | 'appointments' | 'phonebook'
 ): Promise<T[]> {
-  if (!userId) return [];
-  const colRef = collection(db, 'users', userId, subcollection);
-  let snap;
-  try {
-    snap = await getDocsFromServer(colRef);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDocs(colRef);
-  }
-  recordFirestoreRead(subcollection, Math.max(1, snap.size));
-  const items: T[] = [];
-  snap.forEach((docSnap) => {
-    items.push(docSnap.data() as T);
-  });
-  return items;
+  return fetchUserCollectionFromSupabase<T>(userId, subcollection);
 }
 
 /**
- * Single-doc read for user reminder settings (1 read instead of subcollection listener)
+ * Single-row read for user reminder settings from Supabase Postgres
  */
 export async function fetchUserSettingsFromCloud(
   userId: string
 ): Promise<ReminderSettings | null> {
-  if (!userId) return null;
-  const settingsRef = doc(db, 'users', userId, 'settings', 'preferences');
-  let snap;
-  try {
-    snap = await getDocFromServer(settingsRef);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDoc(settingsRef);
-  }
-  recordFirestoreRead('settings', 1);
-  return snap.exists() ? (snap.data() as ReminderSettings) : null;
+  return fetchUserSettingsFromSupabase(userId);
 }
 
 /**
- * On-demand read of doseLogs older than the 45-day real-time window
+ * Loads recent doseLogs within the active 90-day window from Supabase Postgres
+ */
+export async function fetchRecentDoseLogsFromCloud(
+  userId: string,
+  cutoffDateIso: string
+): Promise<DoseLog[]> {
+  return fetchRecentDoseLogsFromSupabase(userId, cutoffDateIso);
+}
+
+/**
+ * On-demand read of doseLogs older than the 90-day window ("আরও দেখুন")
  */
 export async function fetchOlderDoseLogsFromCloud(
   userId: string,
   cutoffDateIso: string
 ): Promise<DoseLog[]> {
-  if (!userId) return [];
-  const q = query(
-    collection(db, 'users', userId, 'doseLogs'),
-    where('scheduledDate', '<', cutoffDateIso)
-  );
-  let snap;
-  try {
-    snap = await getDocsFromServer(q);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDocs(q);
-  }
-  recordFirestoreRead('doseLogs', Math.max(1, snap.size));
-  const logs: DoseLog[] = [];
-  snap.forEach((docSnap) => {
-    logs.push(docSnap.data() as DoseLog);
-  });
-  return logs;
+  return fetchOlderDoseLogsFromSupabase(userId, cutoffDateIso);
 }
 
 /**
- * Boot-time read of upcoming/recent appointments only (single-field range query)
+ * Boot-time read of upcoming/recent appointments from Supabase Postgres
  */
 export async function fetchUpcomingAppointmentsFromCloud(
   userId: string,
   minDateIso: string
 ): Promise<DoctorAppointment[]> {
-  if (!userId) return [];
-  const q = query(
-    collection(db, 'users', userId, 'appointments'),
-    where('appointmentDate', '>=', minDateIso)
-  );
-  let snap;
-  try {
-    snap = await getDocsFromServer(q);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDocs(q);
-  }
-  recordFirestoreRead('appointments', Math.max(1, snap.size));
-  const items: DoctorAppointment[] = [];
-  snap.forEach((docSnap) => {
-    items.push(docSnap.data() as DoctorAppointment);
-  });
-  return items;
+  return fetchUpcomingAppointmentsFromSupabase(userId, minDateIso);
 }
 
 /**
- * On-demand read of past appointments when user visits Appointments or Share Report
+ * On-demand read of past appointments from Supabase Postgres
  */
 export async function fetchPastAppointmentsFromCloud(
   userId: string,
   beforeDateIso: string
 ): Promise<DoctorAppointment[]> {
-  if (!userId) return [];
-  const q = query(
-    collection(db, 'users', userId, 'appointments'),
-    where('appointmentDate', '<', beforeDateIso)
-  );
-  let snap;
-  try {
-    snap = await getDocsFromServer(q);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDocs(q);
-  }
-  recordFirestoreRead('appointments', Math.max(1, snap.size));
-  const items: DoctorAppointment[] = [];
-  snap.forEach((docSnap) => {
-    items.push(docSnap.data() as DoctorAppointment);
-  });
-  return items;
+  return fetchPastAppointmentsFromSupabase(userId, beforeDateIso);
 }
 
 /**
- * Lazy-loaded recent health records (ordered by recordDate desc, capped at maxCount)
+ * Lazy-loaded recent health records (ordered by record_date desc, capped at maxCount)
  */
 export async function fetchRecentHealthRecordsFromCloud(
   userId: string,
   maxCount: number = 60
 ): Promise<{ records: HealthRecord[]; hasMore: boolean }> {
-  if (!userId) return { records: [], hasMore: false };
-  const q = query(
-    collection(db, 'users', userId, 'healthRecords'),
-    orderBy('recordDate', 'desc'),
-    limit(maxCount + 1)
-  );
-  let snap;
-  try {
-    snap = await getDocsFromServer(q);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDocs(q);
-  }
-  recordFirestoreRead('healthRecords', Math.max(1, snap.size));
-  const docs: HealthRecord[] = [];
-  snap.forEach((docSnap) => {
-    docs.push(docSnap.data() as HealthRecord);
-  });
-  const hasMore = docs.length > maxCount;
-  return {
-    records: hasMore ? docs.slice(0, maxCount) : docs,
-    hasMore,
-  };
+  return fetchRecentHealthRecordsFromSupabase(userId, maxCount);
 }
 
 /**
- * Safely clears only the user's own UID subcollections in Cloud Firestore
+ * Safely clears user's 8 core tables in Supabase Postgres + remaining Firestore documents vault (until Part 2b)
  */
 export async function clearUserCloudData(userId: string): Promise<void> {
+  await clearCoreUserTablesFromSupabase(userId);
+
+  // Documents vault stays in Firestore until Part 2b
   try {
-    // Delete documentFiles by ID first (documentFiles disallows list in security rules)
     const docsSnap = await getDocs(collection(db, 'users', userId, 'documents'));
     recordFirestoreRead('documents', Math.max(1, docsSnap.size));
     if (!docsSnap.empty) {
@@ -1082,147 +588,22 @@ export async function clearUserCloudData(userId: string): Promise<void> {
         await executeGuardedWrite(() => batch.commit(), { collection: 'documents', count: chunk.length });
       }
     }
-
-    const subcollections = [
-      'patients',
-      'medicines',
-      'doseLogs',
-      'healthRecords',
-      'appointments',
-      'doctors',
-      'settings',
-    ];
-    for (const sub of subcollections) {
-      const snap = await getDocs(collection(db, 'users', userId, sub));
-      recordFirestoreRead(sub, Math.max(1, snap.size));
-      if (!snap.empty) {
-        const docs = snap.docs;
-        const CHUNK_SIZE = 400;
-        for (let i = 0; i < docs.length; i += CHUNK_SIZE) {
-          const chunk = docs.slice(i, i + CHUNK_SIZE);
-          const batch = writeBatch(db);
-          chunk.forEach((d) => batch.delete(d.ref));
-          await executeGuardedWrite(() => batch.commit(), { collection: sub, count: chunk.length });
-        }
-      }
-    }
   } catch (error) {
     if (isQuotaExceededError(error)) {
       markWriteQuotaExceeded();
       throw error;
     }
-    handleFirestoreError(error, OperationType.DELETE, `users/${userId}`);
+    handleFirestoreError(error, OperationType.DELETE, `users/${userId}/documents`);
   }
 }
 
 /**
- * One-time cleanup of legacy demo/fictional records from a user's own Firestore subcollections ONLY.
- * Strictly ignores global_medicines and preserves all user-created records.
+ * One-time cleanup of legacy demo/fictional records from Supabase Postgres user tables.
  */
 export async function cleanupDemoRecordsFromCloud(
   userId: string
 ): Promise<{ removedCount: number; completed: boolean }> {
-  if (!userId || isWriteQuotaPaused()) return { removedCount: 0, completed: false };
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    return { removedCount: 0, completed: false };
-  }
-
-  const subcollections: UserDataCollection[] = [
-    'patients',
-    'medicines',
-    'doseLogs',
-    'healthRecords',
-    'appointments',
-  ];
-
-  try {
-    const ops: Array<
-      | { col: string; kind: 'delete'; ref: ReturnType<typeof doc> }
-      | { col: string; kind: 'update'; ref: ReturnType<typeof doc>; data: Record<string, any> }
-    > = [];
-
-    for (const sub of subcollections) {
-      const colRef = collection(db, 'users', userId, sub);
-      const snap = await getDocsFromServer(colRef);
-      recordFirestoreRead(sub, Math.max(1, snap.size));
-      snap.forEach((docSnap) => {
-        if (isDemoRecordId(docSnap.id, sub)) {
-          ops.push({ col: sub, kind: 'delete', ref: docSnap.ref });
-        } else if (sub === 'medicines') {
-          const data = docSnap.data() as Medicine;
-          if (Array.isArray(data.schedules) && data.schedules.some((s) => hasDemoPrefix(s?.id))) {
-            ops.push({
-              col: sub,
-              kind: 'update',
-              ref: docSnap.ref,
-              data: {
-                schedules: data.schedules.filter((s) => !hasDemoPrefix(s?.id)),
-              },
-            });
-          }
-        }
-      });
-    }
-
-    // Clear default mock emergency contact if untouched from legacy mockData
-    try {
-      const settingsRef = doc(db, 'users', userId, 'settings', 'preferences');
-      const settingsSnap = await getDocFromServer(settingsRef);
-      recordFirestoreRead('settings', 1);
-      if (settingsSnap.exists()) {
-        const sData = settingsSnap.data() as Partial<ReminderSettings>;
-        if (
-          sData.emergencyContactName === 'তানভীর করিম (ছেলে)' &&
-          sData.emergencyContactPhone === '+8801711223344'
-        ) {
-          ops.push({
-            col: 'settings',
-            kind: 'update',
-            ref: settingsRef,
-            data: {
-              emergencyContactName: '',
-              emergencyContactPhone: '',
-            },
-          });
-        }
-      }
-    } catch (settingsErr) {
-      // Non-fatal if settings doc does not exist yet
-      console.warn('cleanupDemoRecordsFromCloud settings check notice:', settingsErr);
-    }
-
-    const removedCount = ops.filter((o) => o.kind === 'delete').length;
-    if (ops.length > 0) {
-      const CHUNK_SIZE = 400;
-      for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
-        const chunk = ops.slice(i, i + CHUNK_SIZE);
-        const batch = writeBatch(db);
-        chunk.forEach((op) => {
-          if (op.kind === 'delete') {
-            batch.delete(op.ref);
-          } else {
-            batch.set(op.ref, op.data, { merge: true });
-          }
-        });
-        await executeGuardedWrite(() => batch.commit());
-        const countsByCol: Record<string, number> = {};
-        for (const op of chunk) {
-          countsByCol[op.col] = (countsByCol[op.col] || 0) + 1;
-        }
-        for (const [col, count] of Object.entries(countsByCol)) {
-          recordFirestoreWrite(col, count);
-        }
-      }
-    }
-
-    return { removedCount, completed: true };
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-    }
-    console.warn('cleanupDemoRecordsFromCloud deferred due to network/server error:', error);
-    return { removedCount: 0, completed: false };
-  }
+  return cleanupDemoRecordsFromSupabase(userId);
 }
 
 // Versioned Chunked Global Medicine Catalog Services (library_meta + library_chunks)

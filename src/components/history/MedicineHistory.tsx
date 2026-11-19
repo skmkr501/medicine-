@@ -25,6 +25,8 @@ export const MedicineHistory: React.FC = () => {
     markDose,
     showToast,
     setCurrentPage,
+    currentUser,
+    olderDoseLogsLoaded,
     loadOlderDoseLogs,
     isLoadingOlderDoseLogs,
   } = useMedicine();
@@ -34,7 +36,7 @@ export const MedicineHistory: React.FC = () => {
   const [showDoctorReport, setShowDoctorReport] = useState(false);
   const [showManualLogModal, setShowManualLogModal] = useState(false);
 
-  // Lazy-load doseLogs older than 45 days only when user selects "সবগুলো"
+  // Lazy-load doseLogs older than 90 days only when user selects "সবগুলো" or clicks "আরও দেখুন"
   useEffect(() => {
     if (dateFilter === 'all') {
       loadOlderDoseLogs();
@@ -294,10 +296,10 @@ export const MedicineHistory: React.FC = () => {
 
       </div>
 
-      {isLoadingOlderDoseLogs && dateFilter === 'all' && (
+      {isLoadingOlderDoseLogs && (
         <div className="bg-surface border border-border rounded-xl px-4 py-3 flex items-center gap-2.5 text-xs font-medium text-text-muted">
           <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
-          <span>৪৫ দিনের আগের পুরনো ইতিহাস লোড হচ্ছে…</span>
+          <span>৯০ দিনের আগের পুরনো ইতিহাস লোড হচ্ছে…</span>
         </div>
       )}
 
@@ -405,6 +407,21 @@ export const MedicineHistory: React.FC = () => {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {currentUser && !olderDoseLogsLoaded && !isLoadingOlderDoseLogs && (
+        <div className="flex justify-center pt-1">
+          <button
+            type="button"
+            onClick={() => {
+              setDateFilter('all');
+              void loadOlderDoseLogs();
+            }}
+            className="px-4 py-2 min-h-[40px] text-xs font-semibold text-primary bg-primary-soft border border-primary/25 rounded-xl hover:opacity-90 transition-colors cursor-pointer"
+          >
+            আরও দেখুন (৯০ দিনের আগের ইতিহাস)
+          </button>
         </div>
       )}
 

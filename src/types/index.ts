@@ -324,6 +324,19 @@ export interface DoctorProfile {
   updatedAt: unknown;
 }
 
+export interface PhonebookEntry {
+  id: string;
+  name: string;
+  phone: string;
+  relation?: string;
+  category?: string;
+  notes?: string;
+  isEmergency?: boolean;
+  patientId?: string;
+  createdAt?: string;
+  updatedAtMs?: number;
+}
+
 export type MedicalDocumentKind = 'prescription' | 'report';
 
 export type MedicalReportType =

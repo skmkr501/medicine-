@@ -4,7 +4,8 @@ export type OutboxCollectionKey =
   | 'doseLogs'
   | 'healthRecords'
   | 'appointments'
-  | 'doctors';
+  | 'doctors'
+  | 'phonebook';
 
 export interface CloudSyncOutbox {
   upserts: Record<OutboxCollectionKey, string[]>;
@@ -29,6 +30,7 @@ export function createEmptyOutbox(): CloudSyncOutbox {
       healthRecords: [],
       appointments: [],
       doctors: [],
+      phonebook: [],
     },
     deletes: {
       medicines: [],
@@ -37,6 +39,7 @@ export function createEmptyOutbox(): CloudSyncOutbox {
       healthRecords: [],
       appointments: [],
       doctors: [],
+      phonebook: [],
     },
     settingsDirty: false,
   };
@@ -89,6 +92,7 @@ export function loadCloudSyncOutbox(
       'healthRecords',
       'appointments',
       'doctors',
+      'phonebook',
     ];
     for (const col of cols) {
       empty.upserts[col] = normalizeIds(parsed?.upserts?.[col]);
@@ -144,9 +148,10 @@ export function countPendingOutboxChanges(outbox: CloudSyncOutbox): number {
     'healthRecords',
     'appointments',
     'doctors',
+    'phonebook',
   ];
   for (const col of cols) {
-    count += outbox.upserts[col].length + outbox.deletes[col].length;
+    count += (outbox.upserts[col]?.length || 0) + (outbox.deletes[col]?.length || 0);
   }
   return count;
 }

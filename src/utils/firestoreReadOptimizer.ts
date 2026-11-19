@@ -1,7 +1,8 @@
 import { DoctorAppointment, DoseLog } from '../types';
 import { addLocalDays, toLocalIsoDate } from './shoppingListCalculator';
 
-export const DOSE_LOG_REALTIME_DAYS = 45;
+export const DOSE_LOG_REALTIME_DAYS = 90;
+export const DOSE_LOG_INITIAL_DAYS = 90;
 export const OLDER_LOGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 export const COLLECTION_SYNC_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours (medicines, patients, settings)
 export const RECORDS_SYNC_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours (upcoming appointments, health records)

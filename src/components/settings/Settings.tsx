@@ -14,6 +14,8 @@ import {
   Bell,
   Volume2,
   Download,
+  Upload,
+  Loader2,
   RotateCcw,
   ShieldAlert,
   Heart,
@@ -76,19 +78,22 @@ export const Settings: React.FC = () => {
     updateSettings,
     resetAllData,
     openResetConfirmationModal,
-    medicines,
-    doseLogs,
     showToast,
     currentUser,
     openAuthModal,
     signOutUser,
     syncLocalToCloud,
+    downloadLocalBackup,
+    importLocalBackup,
     isSyncing,
     isCloudConnected,
     isAdmin,
     setCurrentPage,
     totalUsedDocumentPages,
   } = useMedicine();
+
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isImportingBackup, setIsImportingBackup] = useState(false);
 
   const [todayUsage, setTodayUsage] = useState<FirestoreDailyUsage>(() =>
     getTodayFirestoreUsage()
@@ -232,23 +237,19 @@ export const Settings: React.FC = () => {
     }
   };
 
-  const handleExportData = () => {
-    const data = {
-      patients,
-      medicines,
-      doseLogs,
-      settings,
-      exportDate: new Date().toISOString(),
-      appName: 'স্বাস্থ্যবন্ধু (Shasthobondhu)',
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `shasthobondhu-backup-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('সকল ওষুধ ও হিস্ট্রি ডাটা সফলভাবে ডাউনলোড হয়েছে', 'success');
+  const handleImportBackupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsImportingBackup(true);
+    try {
+      const rawText = await file.text();
+      await importLocalBackup(rawText);
+    } catch {
+      showToast('ব্যাকআপ ফাইলটি পড়া যায়নি। অনুগ্রহ করে সঠিক JSON ফাইল নির্বাচন করুন।', 'alert');
+    } finally {
+      setIsImportingBackup(false);
+      e.target.value = '';
+    }
   };
 
   return (
@@ -1345,21 +1346,44 @@ export const Settings: React.FC = () => {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs">
           <div>
             <strong className="block text-sm font-semibold text-text mb-0.5">
-              ব্যাকআপ ডাউনলোড
+              ব্যাকআপ ফাইল ডাউনলোড ও পুনরুদ্ধার
             </strong>
             <span className="text-text-muted">
-              আপনার সমস্ত ওষুধের তালিকা, পরিবারের সদস্য ও সেবন ইতিহাস একটি ফাইলে ডাউনলোড করুন
+              আপনার সমস্ত ওষুধ, প্রোফাইল, সেবন ইতিহাস, স্বাস্থ্য রেকর্ড, অ্যাপয়েন্টমেন্ট ও ডাক্তার তালিকা JSON ফাইলে সংরক্ষণ বা ডুপ্লিকেট ছাড়াই ফিরিয়ে আনুন
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={handleExportData}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-primary bg-primary-soft border border-primary/25 rounded-lg hover:opacity-90 cursor-pointer shrink-0"
-          >
-            <Download className="w-4 h-4" />
-            <span>ব্যাকআপ ডাউনলোড</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={downloadLocalBackup}
+              className="flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] text-xs font-semibold text-primary bg-primary-soft border border-primary/25 rounded-lg hover:opacity-90 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>ব্যাকআপ ফাইল ডাউনলোড করুন</span>
+            </button>
+
+            <input
+              ref={backupFileInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={handleImportBackupFile}
+              className="hidden"
+            />
+            <button
+              type="button"
+              disabled={isImportingBackup}
+              onClick={() => backupFileInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] text-xs font-semibold text-text bg-surface-2 border border-border rounded-lg hover:bg-border/50 cursor-pointer disabled:opacity-50"
+            >
+              {isImportingBackup ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4" />
+              )}
+              <span>{isImportingBackup ? 'আমদানি হচ্ছে...' : 'ব্যাকআপ ফাইল থেকে ডেটা আনুন'}</span>
+            </button>
+          </div>
         </div>
 
         <div className="pt-4 border-t border-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs">
