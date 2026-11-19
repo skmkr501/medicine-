@@ -55,9 +55,11 @@ export function chunkItems<T>(items: T[], size: number): T[][] {
 // ============================================================================
 
 const searchSessionCache = new Map<string, GlobalMedicine[]>();
+const filterOptionsSessionCache = new Map<string, LibraryFilterOptionsResult>();
 
 export function clearLibrarySearchSessionCache(): void {
   searchSessionCache.clear();
+  filterOptionsSessionCache.clear();
 }
 
 function getSearchCacheKey(query: string, includeUnpublished: boolean): string {
@@ -297,53 +299,52 @@ export interface LibraryFilterOptionsResult {
   sources: GlobalMedicine['source'][];
 }
 
+function normalizeFilterOptionList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const unique = new Set<string>();
+  for (const item of raw) {
+    if (typeof item === 'string') {
+      const trimmed = item.trim();
+      if (trimmed) unique.add(trimmed);
+    }
+  }
+  return Array.from(unique).sort((a, b) => a.localeCompare(b, 'bn'));
+}
+
 export async function fetchLibraryFilterOptions(options: {
   includeUnpublished?: boolean;
   includeGenerics?: boolean;
 } = {}): Promise<LibraryFilterOptionsResult> {
-  const selectCols = options.includeGenerics
-    ? 'dosage_form, manufacturer, source, generic_name'
-    : 'dosage_form, manufacturer, source';
+  const pIncludeUnpublished = !!options.includeUnpublished;
+  const pIncludeGenerics = !!options.includeGenerics;
+  const cacheKey = `${pIncludeUnpublished ? 'all' : 'pub'}:${pIncludeGenerics ? 'gen' : 'nogen'}`;
 
-  let query = supabase.from('library_medicines').select(selectCols).limit(5000);
-  if (!options.includeUnpublished) {
-    query = query.eq('status', 'published').eq('verified_by_admin', true);
+  const cached = filterOptionsSessionCache.get(cacheKey);
+  if (cached) {
+    return cached;
   }
 
-  const { data, error } = await query;
+  const { data, error } = await supabase.rpc('library_filter_options', {
+    p_include_unpublished: pIncludeUnpublished,
+    p_include_generics: pIncludeGenerics,
+  });
+
   if (error) {
     console.warn('fetchLibraryFilterOptions error:', error);
     return { forms: [], manufacturers: [], generics: [], sources: [] };
   }
 
-  const forms = new Set<string>();
-  const manufacturers = new Set<string>();
-  const generics = new Set<string>();
-  const sources = new Set<GlobalMedicine['source']>();
+  const payload = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
 
-  if (Array.isArray(data)) {
-    for (const row of data as unknown as Array<Record<string, unknown>>) {
-      if (typeof row.dosage_form === 'string' && row.dosage_form.trim()) {
-        forms.add(row.dosage_form.trim());
-      }
-      if (typeof row.manufacturer === 'string' && row.manufacturer.trim()) {
-        manufacturers.add(row.manufacturer.trim());
-      }
-      if (options.includeGenerics && typeof row.generic_name === 'string' && row.generic_name.trim()) {
-        generics.add(row.generic_name.trim());
-      }
-      if (typeof row.source === 'string' && row.source.trim()) {
-        sources.add(row.source.trim() as GlobalMedicine['source']);
-      }
-    }
-  }
-
-  return {
-    forms: Array.from(forms).sort((a, b) => a.localeCompare(b)),
-    manufacturers: Array.from(manufacturers).sort((a, b) => a.localeCompare(b)),
-    generics: Array.from(generics).sort((a, b) => a.localeCompare(b)),
-    sources: Array.from(sources).sort(),
+  const result: LibraryFilterOptionsResult = {
+    forms: normalizeFilterOptionList(payload?.forms),
+    manufacturers: normalizeFilterOptionList(payload?.manufacturers),
+    generics: pIncludeGenerics ? normalizeFilterOptionList(payload?.generics) : [],
+    sources: normalizeFilterOptionList(payload?.sources) as GlobalMedicine['source'][],
   };
+
+  filterOptionsSessionCache.set(cacheKey, result);
+  return result;
 }
 
 export async function fetchPublishedLibraryCounts(): Promise<{
