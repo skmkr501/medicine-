@@ -6,7 +6,12 @@ import { toBengaliNumber, formatBengaliTime } from '../../utils/bengaliUtils';
 import { PrescriptionScannerModal } from './PrescriptionScannerModal';
 import { PrescriptionReviewView, InitialPrescriptionScanImage } from './PrescriptionReviewView';
 import { MedicineInfoModal } from '../ai/MedicineInfoModal';
-import { PrescriptionScanResult, checkDrugInteractions, DrugInteractionResponse } from '../../services/aiService';
+import {
+  PrescriptionScanResult,
+  checkDrugInteractions,
+  DrugInteractionResponse,
+  getAiErrorDisplay,
+} from '../../services/aiService';
 import { doctorExistsByName } from '../../utils/doctorsManager';
 import {
   Pill,
@@ -53,6 +58,7 @@ export const AddMedicine: React.FC = () => {
     doctors,
     loadDoctors,
     addDoctor,
+    isAdmin,
   } = useMedicine();
 
   // Wizard Step (1 to 4)
@@ -96,13 +102,16 @@ export const AddMedicine: React.FC = () => {
   const [isCheckingInteractions, setIsCheckingInteractions] = useState(false);
   const [interactionResult, setInteractionResult] = useState<DrugInteractionResponse | null>(null);
   const [interactionError, setInteractionError] = useState<string | null>(null);
+  const [interactionErrorCode, setInteractionErrorCode] = useState<string | null>(null);
 
   const handleCheckDrugInteractions = async () => {
     if (!brandName.trim()) {
       setInteractionError('দয়া করে প্রথমে ওষুধের নাম লিখুন।');
+      setInteractionErrorCode(null);
       return;
     }
     setInteractionError(null);
+    setInteractionErrorCode(null);
     setIsCheckingInteractions(true);
 
     try {
@@ -120,11 +129,12 @@ export const AddMedicine: React.FC = () => {
       );
       setInteractionResult(res);
     } catch (err: unknown) {
-      setInteractionError(
-        err instanceof Error
-          ? err.message
-          : 'যাচাই করতে ব্যর্থ হয়েছে। ইন্টারনেট সংযোগ পরীক্ষা করুন।'
+      const display = getAiErrorDisplay(
+        err,
+        'যাচাই করতে ব্যর্থ হয়েছে। ইন্টারনেট সংযোগ পরীক্ষা করুন।'
       );
+      setInteractionError(display.message);
+      setInteractionErrorCode(display.code ?? null);
     } finally {
       setIsCheckingInteractions(false);
     }
@@ -1033,9 +1043,16 @@ export const AddMedicine: React.FC = () => {
                   </div>
 
                   {interactionError && (
-                    <div className="p-3.5 bg-warning-soft border border-warning/30 rounded-xl text-sm text-warning-text flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 shrink-0" />
-                      <span>{interactionError}</span>
+                    <div className="p-3.5 bg-warning-soft border border-warning/30 rounded-xl text-sm text-warning-text flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div>
+                        <span>{interactionError}</span>
+                        {isAdmin && interactionErrorCode && (
+                          <p className="mt-1 text-xs font-mono text-text-muted">
+                            কোড: {interactionErrorCode}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   )}
 

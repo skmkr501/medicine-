@@ -18,7 +18,11 @@ import {
   X,
 } from 'lucide-react';
 import { useMedicine } from '../../context/MedicineContext';
-import { analyzePrescriptionPhoto, PrescriptionAiResponse } from '../../services/aiService';
+import {
+  analyzePrescriptionPhoto,
+  getAiErrorDisplay,
+  PrescriptionAiResponse,
+} from '../../services/aiService';
 import { MealTiming, MedicineType, TimeSlot } from '../../types';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import {
@@ -94,6 +98,7 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
     doctors,
     loadDoctors,
     addDoctor,
+    isAdmin,
   } = useMedicine();
 
   useEffect(() => {
@@ -106,6 +111,7 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [analyzeErrorCode, setAnalyzeErrorCode] = useState<string | null>(null);
   const [unreadableState, setUnreadableState] = useState(false);
 
   const [aiResponse, setAiResponse] = useState<PrescriptionAiResponse | null>(null);
@@ -152,6 +158,7 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
     setAiResponse(null);
     setReviewItems([]);
     setAnalyzeError(null);
+    setAnalyzeErrorCode(null);
     setUnreadableState(false);
     setMatchedPatientHint(null);
     setValidationError(null);
@@ -167,12 +174,14 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
   const startAnalysis = async (dataUrl: string, mimeType: string) => {
     if (!currentUser) {
       setAnalyzeError('প্রেসক্রিপশনের ছবি পড়তে অনুগ্রহ করে আগে আপনার অ্যাকাউন্টে লগইন করুন।');
+      setAnalyzeErrorCode('unauthenticated');
       openAuthModal();
       return;
     }
 
     setIsAnalyzing(true);
     setAnalyzeError(null);
+    setAnalyzeErrorCode(null);
     setUnreadableState(false);
     setAiResponse(null);
     setReviewItems([]);
@@ -205,10 +214,13 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
         setSelectedPatientId(activePatients[0].id);
         setMatchedPatientHint(null);
       }
-    } catch (err: any) {
-      setAnalyzeError(
-        err?.message || 'ছবিটি পড়া যায়নি। ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন।'
+    } catch (err: unknown) {
+      const display = getAiErrorDisplay(
+        err,
+        'ছবিটি পড়া যায়নি। ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন।'
       );
+      setAnalyzeError(display.message);
+      setAnalyzeErrorCode(display.code ?? null);
     } finally {
       setIsAnalyzing(false);
     }
@@ -519,6 +531,9 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
               <div className="text-sm space-y-1">
                 <p className="font-bold text-danger-text">ছবি পড়া সম্ভব হয়নি</p>
                 <p>{analyzeError}</p>
+                {isAdmin && analyzeErrorCode && (
+                  <p className="text-xs font-mono text-text-muted">কোড: {analyzeErrorCode}</p>
+                )}
               </div>
             </div>
           )}

@@ -1,13 +1,4 @@
-import {
-  GoogleAuthProvider,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
-  updateProfile,
-  signOut,
-  User,
-} from 'firebase/auth';
+
 import {
   collection,
   collectionGroup,
@@ -30,7 +21,12 @@ import {
   serverTimestamp,
   deleteField,
 } from 'firebase/firestore';
-import { auth, db, executeGuardedWrite, stripUndefined } from './config';
+import { db, executeGuardedWrite, stripUndefined } from './config';
+import {
+  getCachedSupabaseUser,
+  getCachedSupabaseAdmin,
+  extractUserDisplayName,
+} from '../supabase/client';
 import {
   handleFirestoreError,
   isQuotaExceededError,
@@ -82,120 +78,19 @@ import { isValidInviteCode, normalizeInviteCodeInput } from '../utils/caregiverA
 import { CloudSyncOutbox } from '../utils/cloudSyncOutbox';
 import { recordFirestoreRead, recordFirestoreWrite } from '../utils/firestoreUsageTracker';
 
-export const ADMIN_EMAIL = 'sarashatikmkr501@gmail.com';
-
-export function isUserAdmin(email?: string | null): boolean {
-  if (!email) return false;
-  return email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
-}
-
 /**
- * Asserts that the currently authenticated user is the designated admin.
+ * Asserts that the currently authenticated user is a verified admin (via Supabase is_admin RPC).
  * Throws a clear Bengali error if unauthenticated or unauthorized.
- * Does not expose the admin's personal email to unauthorized callers.
  */
 export function assertAdminAuth(): void {
-  const currentUser = auth.currentUser;
+  const currentUser = getCachedSupabaseUser();
   if (!currentUser) {
     throw new Error('অননুমোদিত অ্যাক্সেস! ক্রিয়াকলাপের জন্য অনুগ্রহ করে প্রথমে অ্যাডমিন হিসেবে সাইন-ইন করুন।');
   }
-  if (!isUserAdmin(currentUser.email)) {
+  if (!getCachedSupabaseAdmin()) {
     throw new Error(
       'নিরাপত্তা বিধিনিষেধ: আপনার বর্তমান অ্যাকাউন্টে অ্যাডমিন কার্যক্রম পরিচালনার অনুমতি নেই।'
     );
-  }
-}
-
-export async function loginWithGoogle(): Promise<User> {
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  try {
-    const cred = await signInWithPopup(auth, provider);
-    // Ensure user record exists in firestore
-    await recordUserProfile(cred.user);
-    return cred.user;
-  } catch (error) {
-    console.error('Google Sign-in Error:', error);
-    throw error;
-  }
-}
-
-export async function registerWithEmail(
-  email: string,
-  pass: string,
-  displayName: string
-): Promise<User> {
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, email, pass);
-    if (displayName) {
-      await updateProfile(cred.user, { displayName });
-    }
-    await recordUserProfile(cred.user);
-    return cred.user;
-  } catch (error) {
-    console.error('Email Registration Error:', error);
-    throw error;
-  }
-}
-
-export async function loginWithEmail(email: string, pass: string): Promise<User> {
-  try {
-    const cred = await signInWithEmailAndPassword(auth, email, pass);
-    await recordUserProfile(cred.user);
-    return cred.user;
-  } catch (error) {
-    console.error('Email Login Error:', error);
-    throw error;
-  }
-}
-
-export async function logOut(): Promise<void> {
-  try {
-    await signOut(auth);
-  } catch (error) {
-    console.error('Logout Error:', error);
-    throw error;
-  }
-}
-
-/**
- * Sends a password reset email in Bengali via Firebase Auth.
- */
-export async function resetPassword(email: string): Promise<void> {
-  try {
-    auth.languageCode = 'bn';
-    await sendPasswordResetEmail(auth, email.trim());
-  } catch (error) {
-    console.error('Password Reset Error:', error);
-    throw error;
-  }
-}
-
-async function recordUserProfile(user: User): Promise<void> {
-  if (isWriteQuotaPaused()) return;
-  const path = `users/${user.uid}`;
-  try {
-    await executeGuardedWrite(
-      () =>
-        setDoc(
-          doc(db, 'users', user.uid),
-          {
-            uid: user.uid,
-            email: user.email || '',
-            displayName: user.displayName || user.email?.split('@')[0] || 'ব্যবহারকারী',
-            photoURL: user.photoURL || '',
-            lastLoginAt: new Date().toISOString(),
-          },
-          { merge: true }
-        ),
-      { collection: 'users', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      return;
-    }
-    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
@@ -697,8 +592,8 @@ export async function migrateLocalDataToCloud(
       ref: doc(db, 'users', userId),
       data: stripUndefined({
         uid: userId,
-        email: auth.currentUser?.email || '',
-        displayName: auth.currentUser?.displayName || 'ব্যবহারকারী',
+        email: getCachedSupabaseUser()?.email || '',
+        displayName: extractUserDisplayName(getCachedSupabaseUser()),
         updatedAt: new Date().toISOString(),
       }),
     });
@@ -1595,7 +1490,7 @@ export async function migrateLegacyGlobalMedicinesToChunks(
     type: 'import',
     title: 'পুরনো লাইব্রেরি নতুন চাঙ্কড ফরম্যাটে মাইগ্রেশন',
     description: `পুরনো global_medicines থেকে ${legacyMeds.length}টি ওষুধ পড়া হয়েছে এবং ${publishRes.chunkCount}টি চাঙ্কে মোট ${publishRes.totalCount}টি ওষুধ সংরক্ষিত হয়েছে (সংস্করণ ${publishRes.newVersion})।`,
-    adminEmail: auth.currentUser?.email || ADMIN_EMAIL,
+    adminEmail: getCachedSupabaseUser()?.email || '',
   }).catch((e) => console.warn('Activity log error:', e));
 
   return {
@@ -1674,7 +1569,7 @@ export async function recordAdminActivity(
       ...activity,
       id: activityId,
       timestamp: activity.timestamp || new Date().toISOString(),
-      adminEmail: activity.adminEmail || auth.currentUser?.email || ADMIN_EMAIL,
+      adminEmail: activity.adminEmail || getCachedSupabaseUser()?.email || '',
     };
     await executeGuardedWrite(
       () => setDoc(doc(db, 'admin_activities', activityId), act),
@@ -1730,7 +1625,7 @@ export async function testFirebaseDetailedStatus(): Promise<{
       latencyMs,
       databaseId,
       projectId,
-      userEmail: auth.currentUser?.email || 'N/A',
+      userEmail: getCachedSupabaseUser()?.email || 'N/A',
       online,
     };
   } catch (error: any) {
@@ -1744,7 +1639,7 @@ export async function testFirebaseDetailedStatus(): Promise<{
       latencyMs,
       databaseId,
       projectId,
-      userEmail: auth.currentUser?.email || 'N/A',
+      userEmail: getCachedSupabaseUser()?.email || 'N/A',
       online,
     };
   }
@@ -2130,7 +2025,8 @@ export type SharedReportFetchResult =
 export async function createSharedReportInCloud(
   snapshot: BuiltSharedReportSnapshot
 ): Promise<SharedReportDoc> {
-  if (!auth.currentUser || auth.currentUser.uid !== snapshot.ownerUid) {
+  const sbUser = getCachedSupabaseUser();
+  if (!sbUser || sbUser.id !== snapshot.ownerUid) {
     throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
   }
 
@@ -2351,7 +2247,8 @@ export type EmergencyCardFetchResult =
 export async function createEmergencyCardInCloud(
   payload: BuiltEmergencyCardPayload
 ): Promise<EmergencyCardDoc> {
-  if (!auth.currentUser || auth.currentUser.uid !== payload.ownerUid) {
+  const sbUser = getCachedSupabaseUser();
+  if (!sbUser || sbUser.id !== payload.ownerUid) {
     throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
   }
   if (!isValidEmergencyTokenFormat(payload.token)) {
@@ -2392,7 +2289,8 @@ export async function updateEmergencyCardInCloud(
   token: string,
   payload: BuiltEmergencyCardPayload
 ): Promise<EmergencyCardDoc> {
-  if (!auth.currentUser || auth.currentUser.uid !== payload.ownerUid) {
+  const sbUser = getCachedSupabaseUser();
+  if (!sbUser || sbUser.id !== payload.ownerUid) {
     throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
   }
   if (!isValidEmergencyTokenFormat(token)) {
@@ -2441,7 +2339,8 @@ export async function rotateEmergencyCardInCloud(
   oldToken: string | null,
   newPayload: BuiltEmergencyCardPayload
 ): Promise<EmergencyCardDoc> {
-  if (!auth.currentUser || auth.currentUser.uid !== newPayload.ownerUid) {
+  const sbUser = getCachedSupabaseUser();
+  if (!sbUser || sbUser.id !== newPayload.ownerUid) {
     throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
   }
   if (!isValidEmergencyTokenFormat(newPayload.token)) {
@@ -2658,7 +2557,8 @@ export async function fetchEmergencyCardByTokenFromCloud(
 export async function createCaregiverSuggestionInCloud(
   suggestion: CaregiverSuggestionDoc
 ): Promise<CaregiverSuggestionDoc> {
-  if (!auth.currentUser || auth.currentUser.uid !== suggestion.caregiverUid) {
+  const sbUser = getCachedSupabaseUser();
+  if (!sbUser || sbUser.id !== suggestion.caregiverUid) {
     throw new Error('লগইন আবশ্যক: অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।');
   }
 

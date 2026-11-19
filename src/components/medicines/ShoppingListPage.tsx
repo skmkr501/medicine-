@@ -3,16 +3,16 @@ import { useMedicine } from '../../context/MedicineContext';
 import { Medicine } from '../../types';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import {
-  DurationPresetKey,
-  addLocalDays,
+  QuickRangePresetKey,
   calculateMedicineShoppingList,
   calculateShoppingCostSummary,
   formatQuantityBn,
   formatTakaBn,
-  getTargetDateForPreset,
+  getDateRangeForQuickPreset,
+  loadSavedShoppingDateRange,
   normalizeDigitsInput,
   normalizeLocalDate,
-  toLocalIsoDate,
+  saveShoppingDateRange,
 } from '../../utils/shoppingListCalculator';
 import { buildShoppingListWhatsAppUrl } from '../../utils/shoppingListPdf';
 import {
@@ -53,6 +53,8 @@ export const ShoppingListPage: React.FC = () => {
     [patients]
   );
 
+  const today = useMemo(() => normalizeLocalDate(new Date()), []);
+
   const [selectedPatientId, setSelectedPatientId] = useState<string | 'all'>(() => {
     if (activePatientId && activePatients.some((p) => p.id === activePatientId)) {
       return activePatientId;
@@ -60,10 +62,16 @@ export const ShoppingListPage: React.FC = () => {
     return 'all';
   });
 
-  const [preset, setPreset] = useState<DurationPresetKey>('15d');
-  const [customDateIso, setCustomDateIso] = useState<string>(() =>
-    toLocalIsoDate(getTargetDateForPreset('15d'))
-  );
+  const [dateRangeState, setDateRangeState] = useState(() => {
+    const initialPatient =
+      activePatientId && patients.some((p) => !p.isArchived && p.id === activePatientId)
+        ? activePatientId
+        : 'all';
+    return loadSavedShoppingDateRange(initialPatient, normalizeLocalDate(new Date()));
+  });
+
+  const { startDateIso, targetDateIso, preset } = dateRangeState;
+
   const [includeBuffer, setIncludeBuffer] = useState<boolean>(true);
   const [doctorName, setDoctorName] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
@@ -72,19 +80,6 @@ export const ShoppingListPage: React.FC = () => {
   const [priceInput, setPriceInput] = useState<string>('');
   const [priceError, setPriceError] = useState<string>('');
 
-  const today = useMemo(() => normalizeLocalDate(new Date()), []);
-  const minCustomDateIso = useMemo(
-    () => toLocalIsoDate(addLocalDays(today, 1)),
-    [today]
-  );
-
-  const effectiveTargetDateIso = useMemo(() => {
-    if (preset === 'custom') {
-      return customDateIso;
-    }
-    return toLocalIsoDate(getTargetDateForPreset(preset, today));
-  }, [preset, customDateIso, today]);
-
   const result = useMemo(
     () =>
       calculateMedicineShoppingList({
@@ -92,7 +87,8 @@ export const ShoppingListPage: React.FC = () => {
         patients: activePatients,
         globalMedicines,
         selectedPatientId,
-        targetDate: effectiveTargetDateIso,
+        startDate: startDateIso,
+        targetDate: targetDateIso,
         includeBuffer,
         referenceDate: today,
       }),
@@ -101,7 +97,8 @@ export const ShoppingListPage: React.FC = () => {
       activePatients,
       globalMedicines,
       selectedPatientId,
-      effectiveTargetDateIso,
+      startDateIso,
+      targetDateIso,
       includeBuffer,
       today,
     ]
@@ -170,20 +167,44 @@ export const ShoppingListPage: React.FC = () => {
     setPriceError('');
   };
 
-  const handleSelectPreset = (nextPreset: Exclude<DurationPresetKey, 'custom'>) => {
-    setPreset(nextPreset);
-    setCustomDateIso(toLocalIsoDate(getTargetDateForPreset(nextPreset, today)));
+  const handleSelectPatient = (nextPatientId: string | 'all') => {
+    setSelectedPatientId(nextPatientId);
+    setDateRangeState(loadSavedShoppingDateRange(nextPatientId, today));
+  };
+
+  const updateAndPersistRange = (nextRange: {
+    startDateIso: string;
+    targetDateIso: string;
+    preset: QuickRangePresetKey;
+  }) => {
+    setDateRangeState(nextRange);
+    saveShoppingDateRange(selectedPatientId, nextRange);
+  };
+
+  const handleSelectPreset = (
+    nextPreset: Exclude<QuickRangePresetKey, 'custom'>
+  ) => {
+    const range = getDateRangeForQuickPreset(nextPreset, today);
+    updateAndPersistRange({
+      startDateIso: range.startDateIso,
+      targetDateIso: range.targetDateIso,
+      preset: nextPreset,
+    });
   };
 
   const handlePrintPdf = () => {
+    if (!result.isValidDateRange) return;
     window.print();
   };
 
-  const presetButtons: { key: Exclude<DurationPresetKey, 'custom'>; label: string }[] = [
-    { key: '7d', label: '৭ দিন' },
-    { key: '15d', label: '১৫ দিন' },
-    { key: '30d', label: '৩০ দিন' },
-    { key: '3m', label: '৩ মাস' },
+  const presetButtons: {
+    key: Exclude<QuickRangePresetKey, 'custom'>;
+    label: string;
+  }[] = [
+    { key: '7d', label: 'আজ থেকে ৭ দিন' },
+    { key: '15d', label: 'আজ থেকে ১৫ দিন' },
+    { key: '30d', label: 'আজ থেকে ৩০ দিন' },
+    { key: 'this_month', label: 'এই মাস' },
   ];
 
   // Unified ordered rows for A4 print table: Active To-Buy -> As-needed -> Sufficient
@@ -273,7 +294,7 @@ export const ShoppingListPage: React.FC = () => {
 
           <div className="flex items-center gap-2 text-sm font-semibold text-primary bg-primary-soft border border-primary/25 px-3.5 py-2 rounded-xl">
             <Calendar className="w-4 h-4 shrink-0" />
-            <span>আজ: {result.startDateBn}</span>
+            <span>আজ: {result.referenceDateBn}</span>
           </div>
         </div>
 
@@ -311,7 +332,7 @@ export const ShoppingListPage: React.FC = () => {
               <div className="flex flex-wrap gap-2.5">
                 <button
                   type="button"
-                  onClick={() => setSelectedPatientId('all')}
+                  onClick={() => handleSelectPatient('all')}
                   aria-pressed={selectedPatientId === 'all'}
                   className={`min-h-[48px] px-4 py-2.5 rounded-xl border-2 text-base font-bold flex items-center gap-2 transition-colors cursor-pointer ${
                     selectedPatientId === 'all'
@@ -329,7 +350,7 @@ export const ShoppingListPage: React.FC = () => {
                     <button
                       key={patient.id}
                       type="button"
-                      onClick={() => setSelectedPatientId(patient.id)}
+                      onClick={() => handleSelectPatient(patient.id)}
                       aria-pressed={isSelected}
                       className={`min-h-[48px] px-4 py-2.5 rounded-xl border-2 text-base font-bold flex items-center gap-2 transition-colors cursor-pointer ${
                         isSelected
@@ -348,14 +369,15 @@ export const ShoppingListPage: React.FC = () => {
             )}
           </div>
 
-          {/* 2. Target Date / Duration Selector */}
-          <div className="space-y-3 pt-4 border-t border-border">
+          {/* 2. Target Date Range & Quick Presets */}
+          <div className="space-y-4 pt-4 border-t border-border">
             <label className="flex items-center gap-2 text-lg font-bold text-text">
               <Calendar className="w-5 h-5 text-primary" />
-              <span>কত দিনের ওষুধ লাগবে?</span>
+              <span>কত দিনের ওষুধ লাগবে? (তারিখের পরিসর)</span>
             </label>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            {/* Quick preset buttons */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {presetButtons.map((btn) => {
                 const isSelected = preset === btn.key;
                 return (
@@ -364,7 +386,7 @@ export const ShoppingListPage: React.FC = () => {
                     type="button"
                     onClick={() => handleSelectPreset(btn.key)}
                     aria-pressed={isSelected}
-                    className={`min-h-[52px] px-3 py-2.5 rounded-xl border-2 text-base font-bold transition-colors cursor-pointer ${
+                    className={`min-h-[48px] px-3 py-2.5 rounded-xl border-2 text-sm sm:text-base font-bold transition-colors cursor-pointer ${
                       isSelected
                         ? 'border-primary bg-primary text-on-primary shadow-xs'
                         : 'border-border bg-surface-2 text-text hover:border-primary/60'
@@ -374,59 +396,125 @@ export const ShoppingListPage: React.FC = () => {
                   </button>
                 );
               })}
-
-              <button
-                type="button"
-                onClick={() => setPreset('custom')}
-                aria-pressed={preset === 'custom'}
-                className={`min-h-[52px] col-span-2 sm:col-span-1 px-3 py-2.5 rounded-xl border-2 text-base font-bold transition-colors cursor-pointer ${
-                  preset === 'custom'
-                    ? 'border-primary bg-primary text-on-primary shadow-xs'
-                    : 'border-border bg-surface-2 text-text hover:border-primary/60'
-                }`}
-              >
-                নিজে তারিখ বাছুন
-              </button>
             </div>
 
-            {preset === 'custom' && (
-              <div className="p-4 rounded-xl bg-primary-soft/70 border border-primary/25 space-y-2">
+            {/* Separate Start Date & End Date fields side-by-side (stacked on mobile) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="shopping-start-date"
+                    className="block text-base font-bold text-text"
+                  >
+                    শুরুর তারিখ <span className="text-sm font-normal text-text-muted">(ঐচ্ছিক)</span>
+                  </label>
+                  {startDateIso ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateAndPersistRange({
+                          startDateIso: '',
+                          targetDateIso,
+                          preset: 'custom',
+                        })
+                      }
+                      className="text-xs font-bold text-primary hover:underline cursor-pointer"
+                    >
+                      খালি করুন
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const todayIso = getDateRangeForQuickPreset('7d', today).startDateIso;
+                        updateAndPersistRange({
+                          startDateIso: todayIso,
+                          targetDateIso,
+                          preset: 'custom',
+                        });
+                      }}
+                      className="text-xs font-bold text-primary hover:underline cursor-pointer"
+                    >
+                      আজকের তারিখ দিন
+                    </button>
+                  )}
+                </div>
+                <input
+                  id="shopping-start-date"
+                  type="date"
+                  value={startDateIso}
+                  onChange={(e) => {
+                    updateAndPersistRange({
+                      startDateIso: e.target.value,
+                      targetDateIso,
+                      preset: 'custom',
+                    });
+                  }}
+                  className={`min-h-[48px] w-full px-4 py-2 text-base font-semibold bg-surface-2 border-2 rounded-xl text-text focus:outline-hidden focus:ring-2 focus:ring-primary ${
+                    !result.isValidDateRange && startDateIso
+                      ? 'border-danger'
+                      : 'border-border'
+                  }`}
+                />
+                <p className="text-xs text-text-muted">
+                  {startDateIso
+                    ? 'শুরুর তারিখ থেকে শেষ তারিখ (দুই তারিখসহ) হিসাব হবে'
+                    : 'খালি থাকলে আজ থেকে শেষ তারিখ পর্যন্ত হিসাব হবে'}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
                 <label
-                  htmlFor="shopping-custom-date"
+                  htmlFor="shopping-target-date"
                   className="block text-base font-bold text-text"
                 >
-                  কত তারিখ পর্যন্ত ওষুধ লাগবে?
+                  শেষ তারিখ
                 </label>
                 <input
-                  id="shopping-custom-date"
+                  id="shopping-target-date"
                   type="date"
-                  min={minCustomDateIso}
-                  value={customDateIso}
+                  value={targetDateIso}
                   onChange={(e) => {
-                    if (e.target.value) setCustomDateIso(e.target.value);
+                    if (!e.target.value) return;
+                    updateAndPersistRange({
+                      startDateIso,
+                      targetDateIso: e.target.value,
+                      preset: 'custom',
+                    });
                   }}
-                  className="min-h-[48px] w-full sm:w-72 px-4 py-2 text-lg font-semibold bg-surface border-2 border-primary rounded-xl text-text"
+                  className={`min-h-[48px] w-full px-4 py-2 text-base font-semibold bg-surface-2 border-2 rounded-xl text-text focus:outline-hidden focus:ring-2 focus:ring-primary ${
+                    !result.isValidDateRange ? 'border-danger' : 'border-border'
+                  }`}
                 />
-                {!result.isValidDateRange && (
-                  <p className="text-sm font-bold text-danger-text">
-                    দয়া করে আজকের পরের একটি তারিখ বেছে নিন (ন্যূনতম ১ দিন)।
-                  </p>
-                )}
+                <p className="text-xs text-text-muted">
+                  এই তারিখ পর্যন্ত প্রয়োজনীয় ওষুধ হিসাব করা হবে
+                </p>
+              </div>
+            </div>
+
+            {!result.isValidDateRange && result.dateErrorBn && (
+              <div
+                role="alert"
+                className="p-3.5 rounded-xl bg-danger-soft border border-danger/30 text-danger-text flex items-center gap-2 text-base font-bold"
+              >
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                <span>{result.dateErrorBn}</span>
               </div>
             )}
 
-            <div className="p-3.5 rounded-xl bg-surface-2 border border-border flex flex-wrap items-center justify-between gap-2 text-base">
-              <span className="text-text-muted">
-                হিসাবের শেষ তারিখ:{' '}
-                <strong className="text-text">{result.targetDateBn}</strong>
-              </span>
-              <span className="font-bold text-primary tabular-nums">
-                {toBengaliNumber(result.daysCount)} দিন
-                {result.bufferDays > 0
-                  ? ` + ${toBengaliNumber(result.bufferDays)} দিন বাফার = মোট ${toBengaliNumber(result.effectiveDays)} দিন`
-                  : ''}
-              </span>
-            </div>
+            {result.isValidDateRange && (
+              <div className="p-3.5 rounded-xl bg-surface-2 border border-border flex flex-wrap items-center justify-between gap-2 text-base">
+                <span className="font-semibold text-text">
+                  {result.periodSummaryBn}
+                </span>
+                {result.bufferDays > 0 && (
+                  <span className="font-bold text-primary tabular-nums text-sm sm:text-base">
+                    + {toBengaliNumber(result.bufferDays)} দিন বাফার = মোট{' '}
+                    {toBengaliNumber(result.effectiveDays)} দিন
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 3. Buffer Toggle */}
@@ -498,8 +586,18 @@ export const ShoppingListPage: React.FC = () => {
           </div>
         </section>
 
-        {/* No Active Medicines State */}
-        {result.totalActiveMedicinesConsidered === 0 ? (
+        {/* Invalid Date Range Guard */}
+        {!result.isValidDateRange && result.hasExplicitStartDate ? (
+          <section className="bg-danger-soft border border-danger/30 rounded-2xl p-6 text-center space-y-2">
+            <AlertTriangle className="w-10 h-10 text-danger-text mx-auto" />
+            <h2 className="text-xl font-bold text-danger-text">
+              {result.dateErrorBn || 'শুরুর তারিখ শেষ তারিখের আগে হতে হবে'}
+            </h2>
+            <p className="text-base text-danger-text/90">
+              সঠিক তালিকা হিসাব করতে শুরুর তারিখটি শেষ তারিখের সমান বা আগে দিন।
+            </p>
+          </section>
+        ) : result.totalActiveMedicinesConsidered === 0 ? (
           <section className="bg-surface border border-border rounded-2xl p-8 sm:p-10 text-center space-y-4">
             <div className="w-16 h-16 rounded-2xl bg-primary-soft text-primary flex items-center justify-center mx-auto">
               <Pill className="w-8 h-8" />
@@ -523,6 +621,20 @@ export const ShoppingListPage: React.FC = () => {
           <>
             {/* Top Summary & Action Buttons */}
             <section className="bg-surface border-2 border-primary/30 rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
+              {result.periodSummaryBn && (
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-primary-soft border border-primary/25 text-sm sm:text-base font-bold text-primary">
+                  <span className="inline-flex items-center gap-2">
+                    <Calendar className="w-4 h-4 shrink-0" />
+                    <span>{result.periodSummaryBn}</span>
+                  </span>
+                  {result.bufferDays > 0 && (
+                    <span className="text-xs sm:text-sm font-semibold">
+                      (+ {toBengaliNumber(result.bufferDays)} দিন বাফার)
+                    </span>
+                  )}
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-text">
@@ -834,8 +946,11 @@ export const ShoppingListPage: React.FC = () => {
                         {/* Card Footer Actions: Exclude toggle + Stock Refill */}
                         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                           <span className="text-sm text-text-muted tabular-nums">
-                            মোট প্রয়োজন ({toBengaliNumber(result.effectiveDays)} দিনে):{' '}
-                            {formatQuantityBn(item.requiredUnits)} {item.unit}
+                            মোট প্রয়োজন (
+                            {item.activeDaysInPeriod !== result.effectiveDays
+                              ? `কোর্সের ${toBengaliNumber(item.activeDaysInPeriod)} দিনে`
+                              : `${toBengaliNumber(result.effectiveDays)} দিনে`}
+                            ): {formatQuantityBn(item.requiredUnits)} {item.unit}
                           </span>
                           <div className="flex flex-wrap items-center gap-2">
                             <button
@@ -1033,15 +1148,13 @@ export const ShoppingListPage: React.FC = () => {
             </div>
           )}
           <div>
-            <strong>তালিকা তৈরির তারিখ:</strong> {result.startDateBn}
+            <strong>তালিকা তৈরির তারিখ:</strong> {result.referenceDateBn}
           </div>
           <div className="col-span-2">
-            <strong>কত তারিখ পর্যন্ত:</strong> {result.targetDateBn} (
-            {toBengaliNumber(result.daysCount)} দিনের জন্য
+            <strong>{result.periodSummaryBn || `সময়কাল: ${result.startDateShortBn} থেকে ${result.targetDateShortBn} (${toBengaliNumber(result.daysCount)} দিন)`}</strong>
             {result.bufferDays > 0
               ? ` + অতিরিক্ত ${toBengaliNumber(result.bufferDays)} দিনের বাফার`
               : ''}
-            )
           </div>
         </div>
 

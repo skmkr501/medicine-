@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { AuthProvider } from './context/AuthContext';
 import { MedicineProvider, useMedicine } from './context/MedicineContext';
 import { Navbar } from './components/layout/Navbar';
 import { MobileNav } from './components/layout/MobileNav';
@@ -134,7 +135,7 @@ const AppContent: React.FC = () => {
       {/* Toast Feedback */}
       <Toast />
 
-      {/* Firebase User Authentication Modal */}
+      {/* Supabase User Authentication Modal */}
       <AuthModal isOpen={isAuthModalOpen} onClose={closeAuthModal} onSuccess={() => {}} />
 
       {/* Profile Management Modal (Create, Edit, Delete Unlimited Profiles) */}
@@ -218,8 +219,10 @@ export default function App() {
   }
 
   return (
-    <MedicineProvider>
-      <AppContent />
-    </MedicineProvider>
+    <AuthProvider>
+      <MedicineProvider>
+        <AppContent />
+      </MedicineProvider>
+    </AuthProvider>
   );
 }

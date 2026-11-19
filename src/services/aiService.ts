@@ -3,39 +3,89 @@
  * Strictly proxies requests to server-side Express endpoints (/api/ai/*).
  * Never exposes any API keys to the browser.
  */
-import { auth } from '../firebase/config';
+import { supabase } from '../supabase/client';
 
 const LOGIN_REQUIRED_ERROR = 'লগইন করে আবার চেষ্টা করুন';
 
-async function getAuthorizedHeaders(forceRefresh = false): Promise<Record<string, string>> {
-  const user = auth.currentUser;
-  if (!user) {
-    throw new Error(LOGIN_REQUIRED_ERROR);
-  }
-  try {
-    const idToken = await user.getIdToken(forceRefresh);
-    if (!idToken) {
-      throw new Error(LOGIN_REQUIRED_ERROR);
-    }
-    return {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${idToken}`,
-    };
-  } catch {
-    throw new Error(LOGIN_REQUIRED_ERROR);
+export type AiErrorCode =
+  | 'model_not_found'
+  | 'invalid_key'
+  | 'quota'
+  | 'overloaded'
+  | 'timeout'
+  | 'bad_response'
+  | 'unauthenticated'
+  | 'rate_limited';
+
+export class AiServiceError extends Error {
+  readonly code?: AiErrorCode | string;
+  readonly status?: number;
+
+  constructor(message: string, code?: AiErrorCode | string, status?: number) {
+    super(message);
+    this.name = 'AiServiceError';
+    this.code = code;
+    this.status = status;
   }
 }
 
-async function fetchWithFirebaseAuth(
+export function getAiErrorDisplay(
+  err: unknown,
+  fallbackMessage: string
+): { message: string; code?: string } {
+  if (err instanceof AiServiceError) {
+    return {
+      message: err.message || fallbackMessage,
+      code: err.code,
+    };
+  }
+  if (err && typeof err === 'object') {
+    const anyErr = err as { message?: unknown; code?: unknown };
+    return {
+      message:
+        typeof anyErr.message === 'string' && anyErr.message.trim()
+          ? anyErr.message
+          : fallbackMessage,
+      code: typeof anyErr.code === 'string' && anyErr.code.trim() ? anyErr.code : undefined,
+    };
+  }
+  return { message: fallbackMessage };
+}
+
+async function getAuthorizedHeaders(forceRefresh = false): Promise<Record<string, string>> {
+  try {
+    const { data, error } = forceRefresh
+      ? await supabase.auth.refreshSession()
+      : await supabase.auth.getSession();
+
+    const accessToken = !error ? data.session?.access_token : null;
+    if (!accessToken) {
+      throw new AiServiceError(LOGIN_REQUIRED_ERROR, 'unauthenticated', 401);
+    }
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    };
+  } catch (err) {
+    if (err instanceof AiServiceError) throw err;
+    throw new AiServiceError(LOGIN_REQUIRED_ERROR, 'unauthenticated', 401);
+  }
+}
+
+async function fetchWithAuth(
   url: string,
   initFactory: (headers: Record<string, string>) => RequestInit
 ): Promise<Response> {
   const headers = await getAuthorizedHeaders(false);
   let res = await fetch(url, initFactory(headers));
 
-  if (res.status === 401 && auth.currentUser) {
-    const freshHeaders = await getAuthorizedHeaders(true);
-    res = await fetch(url, initFactory(freshHeaders));
+  if (res.status === 401) {
+    try {
+      const freshHeaders = await getAuthorizedHeaders(true);
+      res = await fetch(url, initFactory(freshHeaders));
+    } catch {
+      // Return original 401 response if refresh fails so caller handles unauthenticated state cleanly
+    }
   }
 
   return res;
@@ -85,12 +135,32 @@ export interface DrugInteractionResponse {
 export interface AiHealthResponse {
   keyPresent: boolean;
   model: string;
+  fallbackModel?: string | null;
+  activeModelUsed?: string | null;
+  modelInAvailableList?: boolean;
+  fallbackInAvailableList?: boolean;
+  availableModels?: string[];
+  endpointModels?: Record<string, string>;
   ok: boolean;
   errorStatus: number | null;
+  errorCode?: AiErrorCode | string | null;
   errorMessage: string;
+  reasonBn?: string;
+  hintBn?: string;
+  checkedAt?: string;
+  cached?: boolean;
 }
 
 const FALLBACK_NETWORK_OR_HTML_ERROR = 'ছবিটি বড় বা সংযোগ দুর্বল, আবার চেষ্টা করুন।';
+
+function inferErrorCodeFromStatus(status: number): AiErrorCode {
+  if (status === 401 || status === 403) return 'unauthenticated';
+  if (status === 404) return 'model_not_found';
+  if (status === 429) return 'rate_limited';
+  if (status === 504) return 'timeout';
+  if (status === 503) return 'overloaded';
+  return 'bad_response';
+}
 
 /**
  * Validates and safely parses AI responses.
@@ -99,25 +169,33 @@ const FALLBACK_NETWORK_OR_HTML_ERROR = 'ছবিটি বড় বা সং�
  */
 async function parseAiResponse<T>(res: Response, defaultError: string): Promise<T> {
   if (res.status === 413) {
-    throw new Error(FALLBACK_NETWORK_OR_HTML_ERROR);
+    throw new AiServiceError(FALLBACK_NETWORK_OR_HTML_ERROR, 'bad_response', 413);
   }
 
   const contentType = res.headers.get('content-type') || '';
   const isJson = contentType.includes('application/json');
 
   if (!isJson) {
-    throw new Error(FALLBACK_NETWORK_OR_HTML_ERROR);
+    throw new AiServiceError(
+      FALLBACK_NETWORK_OR_HTML_ERROR,
+      inferErrorCodeFromStatus(res.status),
+      res.status
+    );
   }
 
   let data: any;
   try {
     data = await res.json();
   } catch (_e) {
-    throw new Error(FALLBACK_NETWORK_OR_HTML_ERROR);
+    throw new AiServiceError(FALLBACK_NETWORK_OR_HTML_ERROR, 'bad_response', res.status);
   }
 
   if (!res.ok) {
-    throw new Error(data?.error || defaultError);
+    const resolvedCode =
+      typeof data?.code === 'string' && data.code.trim()
+        ? data.code.trim()
+        : inferErrorCodeFromStatus(res.status);
+    throw new AiServiceError(data?.error || defaultError, resolvedCode, res.status);
   }
 
   return data as T;
@@ -200,7 +278,7 @@ export async function compressImageForUpload(
 
 export const fetchMedicineInfo = async (medicineName: string): Promise<MedicineInfoResponse> => {
   try {
-    const res = await fetchWithFirebaseAuth('/api/ai/medicine-info', (headers) => ({
+    const res = await fetchWithAuth('/api/ai/medicine-info', (headers) => ({
       method: 'POST',
       headers,
       body: JSON.stringify({ medicineName }),
@@ -211,8 +289,9 @@ export const fetchMedicineInfo = async (medicineName: string): Promise<MedicineI
       'ওষুধের তথ্য পেতে সমস্যা হয়েছে।'
     );
   } catch (err: any) {
+    if (err instanceof AiServiceError) throw err;
     if (err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError')) {
-      throw new Error(FALLBACK_NETWORK_OR_HTML_ERROR);
+      throw new AiServiceError(FALLBACK_NETWORK_OR_HTML_ERROR, 'overloaded');
     }
     throw err;
   }
@@ -242,7 +321,7 @@ export const scanPrescriptionImage = async (
   }, timeoutMs);
 
   try {
-    const res = await fetchWithFirebaseAuth('/api/ai/scan-prescription', (headers) => ({
+    const res = await fetchWithAuth('/api/ai/scan-prescription', (headers) => ({
       method: 'POST',
       headers,
       body: JSON.stringify({ imageBase64: uploadBase64, mimeType: uploadMimeType }),
@@ -254,11 +333,16 @@ export const scanPrescriptionImage = async (
       'প্রেসক্রিপশন স্ক্যান করতে সমস্যা হয়েছে।'
     );
   } catch (err: any) {
+    if (err instanceof AiServiceError) throw err;
     if (err?.name === 'AbortError') {
-      throw new Error('সার্ভার সাড়া দিতে ৯০ সেকেন্ডের বেশি সময় নিয়েছে। আবার চেষ্টা করুন।');
+      throw new AiServiceError(
+        'সার্ভার সাড়া দিতে ৯০ সেকেন্ডের বেশি সময় নিয়েছে। আবার চেষ্টা করুন।',
+        'timeout',
+        504
+      );
     }
     if (err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError')) {
-      throw new Error(FALLBACK_NETWORK_OR_HTML_ERROR);
+      throw new AiServiceError(FALLBACK_NETWORK_OR_HTML_ERROR, 'overloaded');
     }
     throw err;
   } finally {
@@ -324,7 +408,7 @@ export const analyzePrescriptionPhoto = async (
   }, timeoutMs);
 
   try {
-    const res = await fetchWithFirebaseAuth('/api/ai/prescription', (headers) => ({
+    const res = await fetchWithAuth('/api/ai/prescription', (headers) => ({
       method: 'POST',
       headers,
       body: JSON.stringify({ imageBase64: uploadBase64, mimeType: uploadMimeType }),
@@ -336,11 +420,16 @@ export const analyzePrescriptionPhoto = async (
       'প্রেসক্রিপশন পড়তে সমস্যা হয়েছে। আবার চেষ্টা করুন।'
     );
   } catch (err: any) {
+    if (err instanceof AiServiceError) throw err;
     if (err?.name === 'AbortError') {
-      throw new Error('ছবি পড়তে বেশি সময় লাগছে। সংযোগ দেখে আবার চেষ্টা করুন।');
+      throw new AiServiceError(
+        'ছবি পড়তে বেশি সময় লাগছে। সংযোগ দেখে আবার চেষ্টা করুন।',
+        'timeout',
+        504
+      );
     }
     if (err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError')) {
-      throw new Error(FALLBACK_NETWORK_OR_HTML_ERROR);
+      throw new AiServiceError(FALLBACK_NETWORK_OR_HTML_ERROR, 'overloaded');
     }
     throw err;
   } finally {
@@ -354,7 +443,7 @@ export const checkDrugInteractions = async (
   patientContext?: string
 ): Promise<DrugInteractionResponse> => {
   try {
-    const res = await fetchWithFirebaseAuth('/api/ai/drug-interaction', (headers) => ({
+    const res = await fetchWithAuth('/api/ai/drug-interaction', (headers) => ({
       method: 'POST',
       headers,
       body: JSON.stringify({ newMedicine, currentMedicines, patientContext }),
@@ -365,37 +454,67 @@ export const checkDrugInteractions = async (
       'পারস্পরিক ক্রিয়া যাচাই করতে সমস্যা হয়েছে।'
     );
   } catch (err: any) {
+    if (err instanceof AiServiceError) throw err;
     if (err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError')) {
-      throw new Error(FALLBACK_NETWORK_OR_HTML_ERROR);
+      throw new AiServiceError(FALLBACK_NETWORK_OR_HTML_ERROR, 'overloaded');
     }
     throw err;
   }
 };
 
-export const checkAiHealth = async (): Promise<AiHealthResponse> => {
+export const checkAiHealth = async (forceRefresh: boolean = false): Promise<AiHealthResponse> => {
+  const endpoint = forceRefresh ? '/api/ai/health?refresh=1' : '/api/ai/health';
   try {
-    const res = await fetchWithFirebaseAuth('/api/ai/health', (headers) => ({
+    const res = await fetchWithAuth(endpoint, (headers) => ({
       method: 'GET',
       headers,
     }));
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
+      const code =
+        typeof data?.code === 'string' && data.code.trim()
+          ? (data.code.trim() as AiErrorCode)
+          : inferErrorCodeFromStatus(res.status);
       return {
         keyPresent: false,
-        model: 'gemini-3.8-flash',
+        model: data?.model || 'gemini-3.8-flash',
+        fallbackModel: data?.fallbackModel ?? null,
+        activeModelUsed: null,
+        availableModels: Array.isArray(data?.availableModels) ? data.availableModels : [],
+        endpointModels: data?.endpointModels,
         ok: false,
         errorStatus: res.status,
+        errorCode: code,
         errorMessage: data?.error || data?.errorMessage || 'Health check request failed',
+        reasonBn:
+          res.status === 429
+            ? 'অনুরোধের সীমা অতিক্রম করেছে'
+            : res.status === 401 || res.status === 403
+            ? 'অ্যাডমিন অনুমোদন ব্যর্থ'
+            : 'স্বাস্থ্য পরীক্ষা ব্যর্থ হয়েছে',
+        hintBn:
+          res.status === 429
+            ? 'কিছুক্ষণ অপেক্ষা করে আবার পরীক্ষা করুন।'
+            : 'অ্যাডমিন অ্যাকাউন্ট দিয়ে পুনরায় লগইন করে চেষ্টা করুন।',
       };
     }
     return res.json();
   } catch (err: any) {
+    const isAuthErr = err instanceof AiServiceError && err.code === 'unauthenticated';
     return {
       keyPresent: false,
       model: 'gemini-3.8-flash',
+      fallbackModel: null,
+      activeModelUsed: null,
+      availableModels: [],
       ok: false,
-      errorStatus: 401,
+      errorStatus: isAuthErr ? 401 : 503,
+      errorCode: isAuthErr ? 'unauthenticated' : 'overloaded',
       errorMessage: err?.message || LOGIN_REQUIRED_ERROR,
+      reasonBn: isAuthErr ? 'লগইন অনুমোদন নেই' : 'নেটওয়ার্ক সমস্যা',
+      hintBn: isAuthErr
+        ? 'অ্যাডমিন অ্যাকাউন্টে লগইন করে আবার চেষ্টা করুন।'
+        : 'সার্ভারের সাথে সংযোগ পাওয়া যাচ্ছে না; ইন্টারনেট ও সার্ভার চালু আছে কিনা দেখুন।',
     };
   }
 };

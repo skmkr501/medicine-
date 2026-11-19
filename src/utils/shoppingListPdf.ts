@@ -46,14 +46,24 @@ export function buildShoppingListShareText(
   if (doctorName?.trim()) {
     lines.push(`ডাক্তারের নাম: ${doctorName.trim()}`);
   }
-  lines.push(`তালিকা তৈরির তারিখ: ${result.startDateBn}`);
-  lines.push(
-    `কত তারিখ পর্যন্ত: ${result.targetDateBn} (${toBengaliNumber(result.daysCount)} দিনের জন্য${
-      result.bufferDays > 0
-        ? ` + ${toBengaliNumber(result.bufferDays)} দিনের বাফার`
-        : ''
-    })`
-  );
+  lines.push(`তালিকা তৈরির তারিখ: ${result.referenceDateBn}`);
+  if (result.periodSummaryBn) {
+    lines.push(
+      `${result.periodSummaryBn}${
+        result.bufferDays > 0
+          ? ` + ${toBengaliNumber(result.bufferDays)} দিনের বাফার`
+          : ''
+      }`
+    );
+  } else {
+    lines.push(
+      `কত তারিখ পর্যন্ত: ${result.targetDateBn} (${toBengaliNumber(result.daysCount)} দিনের জন্য${
+        result.bufferDays > 0
+          ? ` + ${toBengaliNumber(result.bufferDays)} দিনের বাফার`
+          : ''
+      })`
+    );
+  }
 
   lines.push('');
   lines.push(

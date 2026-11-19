@@ -9,6 +9,7 @@ import {
 } from '../../firebase/services';
 import { AdminActivity, AdminOverviewStats } from '../../types';
 import { getFriendlyErrorMessage } from '../../firebase/errors';
+import { checkAiHealth, AiHealthResponse } from '../../services/aiService';
 import { AdminImportView } from './AdminImportView';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import {
@@ -41,6 +42,9 @@ import {
   Wifi,
   Plus,
   SlidersHorizontal,
+  Cpu,
+  KeyRound,
+  XCircle,
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -88,6 +92,21 @@ export const AdminDashboard: React.FC = () => {
 
   // Modals & User Details
   const [showUsersModal, setShowUsersModal] = useState<boolean>(false);
+
+  // Admin AI Health Diagnostic State
+  const [aiHealth, setAiHealth] = useState<AiHealthResponse | null>(null);
+  const [checkingAiHealth, setCheckingAiHealth] = useState<boolean>(false);
+
+  const handleCheckAiHealth = async () => {
+    if (checkingAiHealth) return;
+    setCheckingAiHealth(true);
+    try {
+      const res = await checkAiHealth(true);
+      setAiHealth(res);
+    } finally {
+      setCheckingAiHealth(false);
+    }
+  };
 
   // Load Real Data from Firebase
   const loadDashboardData = async (isManualRefresh = false) => {
@@ -287,7 +306,7 @@ export const AdminDashboard: React.FC = () => {
                 প্রধান স্বাস্থ্য তথ্য প্রশাসন
               </span>
               <span className="text-xs text-indigo-200/80 font-mono hidden sm:inline">
-                {adminEmail}
+                {currentUser?.email || adminEmail || 'অ্যাডমিন'}
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
@@ -511,8 +530,8 @@ export const AdminDashboard: React.FC = () => {
 
           <div className="p-3 rounded-2xl bg-surface-2 border border-border space-y-1">
             <span className="text-[11px] text-text-muted font-medium block">প্রশাসক প্রমাণীকরণ</span>
-            <span className="font-mono text-text font-bold block truncate" title={currentUser?.email || adminEmail}>
-              {currentUser?.email || adminEmail}
+            <span className="font-mono text-text font-bold block truncate" title={currentUser?.email || adminEmail || 'অ্যাডমিন'}>
+              {currentUser?.email || adminEmail || 'অ্যাডমিন'}
             </span>
           </div>
 
@@ -533,6 +552,231 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 3.2 Admin AI Status Diagnostic Card ("AI অবস্থা") */}
+      <section
+        aria-label="AI অবস্থা"
+        className="bg-surface rounded-3xl p-5 border border-border shadow-xs space-y-4"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary-soft text-primary">
+              <Cpu className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-text flex items-center gap-2 flex-wrap">
+                <span>AI অবস্থা</span>
+                {aiHealth &&
+                  (aiHealth.ok ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-success-soft text-success-text border border-success/30">
+                      <CheckCircle2 className="w-3 h-3" />
+                      AI সচল
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-danger-soft text-danger-text border border-danger/30">
+                      <XCircle className="w-3 h-3" />
+                      সমস্যা পাওয়া গেছে
+                    </span>
+                  ))}
+              </h2>
+              <p className="text-[11px] text-text-muted">
+                ওষুধের তথ্য, প্রেসক্রিপশন স্ক্যান ও ড্রাগ-ইন্টারঅ্যাকশন AI সেবার সরাসরি অবস্থা যাচাই
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            disabled={checkingAiHealth}
+            onClick={() => void handleCheckAiHealth()}
+            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-primary hover:bg-primary-hover text-on-primary font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${checkingAiHealth ? 'animate-spin' : ''}`} />
+            <span>{checkingAiHealth ? 'পরীক্ষা হচ্ছে...' : 'পরীক্ষা করুন'}</span>
+          </button>
+        </div>
+
+        {!aiHealth ? (
+          <div className="p-4 rounded-2xl bg-surface-2 border border-border text-xs text-text-muted flex items-center justify-between gap-3">
+            <span>
+              Gemini API চাবি, উপলব্ধ মডেল তালিকা ও প্রকৃত সংযোগ পরীক্ষা করতে{' '}
+              <strong className="text-text">&quot;পরীক্ষা করুন&quot;</strong> বোতামে চাপ দিন।
+            </span>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* Key + Primary + Fallback + Active Model grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              <div className="p-3 rounded-2xl bg-surface-2 border border-border space-y-1">
+                <span className="text-[11px] text-text-muted font-medium flex items-center gap-1">
+                  <KeyRound className="w-3 h-3" />
+                  API চাবি (Key)
+                </span>
+                <span
+                  className={`font-bold flex items-center gap-1.5 ${
+                    aiHealth.keyPresent ? 'text-success-text' : 'text-danger-text'
+                  }`}
+                >
+                  {aiHealth.keyPresent ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>যুক্ত আছে</span>
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>চাবি নেই</span>
+                    </>
+                  )}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-surface-2 border border-border space-y-1">
+                <span className="text-[11px] text-text-muted font-medium block">
+                  প্রাথমিক মডেল (GEMINI_MODEL)
+                </span>
+                <span className="font-mono font-bold text-text block break-all">
+                  {aiHealth.model}
+                </span>
+                <span
+                  className={`text-[10px] font-semibold block ${
+                    aiHealth.modelInAvailableList ? 'text-success-text' : 'text-warning-text'
+                  }`}
+                >
+                  {aiHealth.modelInAvailableList
+                    ? '✓ উপলব্ধ তালিকায় আছে'
+                    : '⚠ উপলব্ধ তালিকায় নেই'}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-surface-2 border border-border space-y-1">
+                <span className="text-[11px] text-text-muted font-medium block">
+                  বিকল্প ফ্ল্যাশ মডেল (Fallback)
+                </span>
+                <span className="font-mono font-bold text-text block break-all">
+                  {aiHealth.fallbackModel || 'পাওয়া যায়নি'}
+                </span>
+                {aiHealth.fallbackModel && (
+                  <span
+                    className={`text-[10px] font-semibold block ${
+                      aiHealth.fallbackInAvailableList ? 'text-success-text' : 'text-warning-text'
+                    }`}
+                  >
+                    {aiHealth.fallbackInAvailableList
+                      ? '✓ তালিকায় যাচাইকৃত'
+                      : 'এনভায়রনমেন্ট থেকে নির্ধারিত'}
+                  </span>
+                )}
+              </div>
+
+              <div className="p-3 rounded-2xl bg-surface-2 border border-border space-y-1">
+                <span className="text-[11px] text-text-muted font-medium block">
+                  সক্রিয় ব্যবহৃত মডেল
+                </span>
+                <span className="font-mono font-bold text-primary block break-all">
+                  {aiHealth.activeModelUsed || 'কোনোটিই নয়'}
+                </span>
+                {aiHealth.checkedAt && (
+                  <span className="text-[10px] text-text-muted block">
+                    সময়:{' '}
+                    {new Date(aiHealth.checkedAt).toLocaleTimeString('bn-BD', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Failure Cause + Fix Hint OR Healthy Message */}
+            {!aiHealth.ok ? (
+              <div className="p-4 rounded-2xl bg-danger-soft border border-danger/35 text-xs space-y-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-danger-text flex items-center gap-1.5">
+                    <XCircle className="w-4 h-4 shrink-0" />
+                    <span>কারণ: {aiHealth.reasonBn || 'AI সংযোগ ব্যর্থ'}</span>
+                  </span>
+                  {aiHealth.errorCode && (
+                    <span className="font-mono text-[11px] px-2 py-0.5 rounded-md bg-surface border border-danger/25 text-text-muted">
+                      কোড: {aiHealth.errorCode}
+                      {aiHealth.errorStatus ? ` (${aiHealth.errorStatus})` : ''}
+                    </span>
+                  )}
+                </div>
+                {aiHealth.errorMessage && (
+                  <p className="text-[11px] font-mono text-text-muted break-words">
+                    {aiHealth.errorMessage}
+                  </p>
+                )}
+                {aiHealth.hintBn && (
+                  <p className="text-xs font-semibold text-text pt-1">
+                    সমাধান: {aiHealth.hintBn}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-success-soft border border-success/30 text-xs text-success-text flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span className="font-semibold">
+                  {aiHealth.hintBn || 'AI সেবা সচল আছে এবং সব এন্ডপয়েন্ট কার্যকর।'}
+                </span>
+              </div>
+            )}
+
+            {/* Per-Endpoint Models */}
+            {aiHealth.endpointModels && Object.keys(aiHealth.endpointModels).length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-surface-2 border border-border space-y-2 text-xs">
+                <span className="text-[11px] font-bold text-text-muted block">
+                  প্রতিটি AI এন্ডপয়েন্টের নির্ধারিত মডেল:
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {Object.entries(aiHealth.endpointModels).map(([ep, modelName]) => (
+                    <div
+                      key={ep}
+                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-surface border border-border font-mono text-[11px]"
+                    >
+                      <span className="text-text-muted truncate">{ep}</span>
+                      <span className="font-bold text-text shrink-0">{modelName}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Available Flash/Pro Models from Key */}
+            {aiHealth.availableModels && aiHealth.availableModels.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-surface-2 border border-border space-y-2 text-xs">
+                <span className="text-[11px] font-bold text-text-muted block">
+                  এই API চাবিতে উপলব্ধ মডেল (flash/pro, প্রথম {toBengaliNumber(aiHealth.availableModels.length)}টি):
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {aiHealth.availableModels.map((m) => {
+                    const isConfigured = m.toLowerCase() === aiHealth.model.toLowerCase();
+                    const isActive =
+                      aiHealth.activeModelUsed &&
+                      m.toLowerCase() === aiHealth.activeModelUsed.toLowerCase();
+                    return (
+                      <span
+                        key={m}
+                        className={`px-2 py-0.5 rounded-lg font-mono text-[11px] border ${
+                          isActive
+                            ? 'bg-success-soft text-success-text border-success/35 font-bold'
+                            : isConfigured
+                            ? 'bg-primary-soft text-primary border-primary/30 font-bold'
+                            : 'bg-surface text-text border-border'
+                        }`}
+                      >
+                        {m}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* 3.5 One-time Legacy Library Migration Card */}
       <div className="bg-warning-soft/70 rounded-3xl p-5 border border-warning/35 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">

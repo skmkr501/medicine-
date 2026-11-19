@@ -22,18 +22,22 @@ import {
   paginateMedicines,
   PublishedBaselineState,
 } from '../src/utils/libraryRealtime';
-import crypto from 'node:crypto';
 import {
   extractBearerToken,
-  verifyFirebaseIdToken,
-  isVerifiedAdmin,
+  verifySupabaseAccessToken,
+  checkSupabaseAdminRpc,
   UserAiRateLimiter,
   formatSafeAiErrorLog,
-  ADMIN_EMAIL,
+  normalizeGeminiModelName,
+  filterAvailableFlashProModels,
+  pickFallbackFlashModel,
+  isModelNotFoundError,
+  classifyAiError,
   MAX_AI_REQUESTS_PER_HOUR,
   MAX_SCAN_REQUESTS_PER_HOUR,
   RATE_LIMIT_WINDOW_MS,
 } from '../server/aiSecurity';
+import { AiServiceError, getAiErrorDisplay } from '../src/services/aiService';
 import {
   findBengaliVoice,
   selectSpeechVoice,
@@ -81,8 +85,12 @@ import {
   calculateShoppingCostSummary,
   findMatchingCatalogMedicine,
   formatTakaBn,
+  getDateRangeForQuickPreset,
   getTargetDateForPreset,
+  loadSavedShoppingDateRange,
   parsePackageSize,
+  saveShoppingDateRange,
+  ShoppingDateRangeStorageLike,
   toLocalIsoDate,
 } from '../src/utils/shoppingListCalculator';
 import {
@@ -899,102 +907,68 @@ describe('ধাপ ১০: রিয়েল-টাইম ওষুধ লা�
 });
 
 describe('ধাপ ১১: AI এন্ডপয়েন্ট নিরাপত্তা, টোকেন যাচাই, রেট লিমিট ও নিরাপদ এরর লগ', () => {
-  it('Bearer টোকেন নিষ্কাশন ও RS256 Firebase ID টোকেন যাচাই সঠিকভাবে কাজ করে', async () => {
+  it('Bearer টোকেন নিষ্কাশন, Supabase অ্যাক্সেস টোকেন ও is_admin RPC যাচাই সঠিকভাবে কাজ করে', async () => {
     assert.strictEqual(extractBearerToken(undefined), null);
     assert.strictEqual(extractBearerToken('Basic abc'), null);
     assert.strictEqual(extractBearerToken('Bearer   '), null);
     assert.strictEqual(extractBearerToken('Bearer my.jwt.token'), 'my.jwt.token');
 
-    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
-      modulusLength: 2048,
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    const verified = await verifySupabaseAccessToken('valid-token', {
+      clientOverride: {
+        auth: {
+          getUser: async (jwt) => {
+            assert.strictEqual(jwt, 'valid-token');
+            return {
+              data: { user: { id: 'sb-user-uuid-123', email: 'doctor@example.com' } },
+              error: null,
+            };
+          },
+        },
+      },
     });
+    assert.strictEqual(verified.id, 'sb-user-uuid-123');
+    assert.strictEqual(verified.email, 'doctor@example.com');
 
-    const projectId = 'sodium-compass-tbvhw';
-    const kid = 'test-key-1';
-    const nowSec = 1_760_000_000;
-
-    const signJwt = (payloadObj: Record<string, any>) => {
-      const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid, typ: 'JWT' })).toString('base64url');
-      const payload = Buffer.from(JSON.stringify(payloadObj)).toString('base64url');
-      const signer = crypto.createSign('RSA-SHA256');
-      signer.update(`${header}.${payload}`);
-      signer.end();
-      const sig = signer.sign(privateKey).toString('base64url');
-      return `${header}.${payload}.${sig}`;
-    };
-
-    const validToken = signJwt({
-      aud: projectId,
-      iss: `https://securetoken.google.com/${projectId}`,
-      sub: 'uid_user_123',
-      email: ADMIN_EMAIL,
-      email_verified: true,
-      auth_time: nowSec - 60,
-      iat: nowSec - 30,
-      exp: nowSec + 3600,
-    });
-
-    const verified = await verifyFirebaseIdToken(validToken, projectId, {
-      certsOverride: { [kid]: publicKey },
-      nowSeconds: nowSec,
-    });
-    assert.strictEqual(verified.uid, 'uid_user_123');
-    assert.strictEqual(isVerifiedAdmin(verified), true);
-
-    assert.strictEqual(
-      isVerifiedAdmin({ uid: 'uid_other', email: 'user@example.com', emailVerified: true }),
-      false
-    );
-    assert.strictEqual(
-      isVerifiedAdmin({ uid: 'uid_unverified', email: ADMIN_EMAIL, emailVerified: false }),
-      false
-    );
-
-    const expiredToken = signJwt({
-      aud: projectId,
-      iss: `https://securetoken.google.com/${projectId}`,
-      sub: 'uid_user_123',
-      auth_time: nowSec - 4000,
-      iat: nowSec - 3700,
-      exp: nowSec - 10,
-    });
     await assert.rejects(
       () =>
-        verifyFirebaseIdToken(expiredToken, projectId, {
-          certsOverride: { [kid]: publicKey },
-          nowSeconds: nowSec,
+        verifySupabaseAccessToken('expired-token', {
+          clientOverride: {
+            auth: {
+              getUser: async () => ({
+                data: { user: null },
+                error: new Error('JWT expired'),
+              }),
+            },
+          },
         }),
-      /expired/i
+      /Invalid or expired/i
     );
 
-    const wrongAudienceToken = signJwt({
-      aud: 'other-project',
-      iss: `https://securetoken.google.com/${projectId}`,
-      sub: 'uid_user_123',
-      auth_time: nowSec - 60,
-      iat: nowSec - 30,
-      exp: nowSec + 3600,
+    await assert.rejects(() => verifySupabaseAccessToken(''), /Missing access token/i);
+
+    const adminTrue = await checkSupabaseAdminRpc('admin-token', {
+      clientOverride: {
+        rpc: async (fnName) => {
+          assert.strictEqual(fnName, 'is_admin');
+          return { data: true, error: null };
+        },
+      },
     });
-    await assert.rejects(
-      () =>
-        verifyFirebaseIdToken(wrongAudienceToken, projectId, {
-          certsOverride: { [kid]: publicKey },
-          nowSeconds: nowSec,
-        }),
-      /audience/i
-    );
+    assert.strictEqual(adminTrue, true);
 
-    const tamperedToken = validToken.slice(0, -4) + 'AAAA';
-    await assert.rejects(
-      () =>
-        verifyFirebaseIdToken(tamperedToken, projectId, {
-          certsOverride: { [kid]: publicKey },
-          nowSeconds: nowSec,
-        }),
-      /signature/i
-    );
+    const adminFalse = await checkSupabaseAdminRpc('user-token', {
+      clientOverride: {
+        rpc: async () => ({ data: false, error: null }),
+      },
+    });
+    assert.strictEqual(adminFalse, false);
+
+    const adminRpcErr = await checkSupabaseAdminRpc('user-token', {
+      clientOverride: {
+        rpc: async () => ({ data: null, error: new Error('RPC failed') }),
+      },
+    });
+    assert.strictEqual(adminRpcErr, false);
   });
 
   it('প্রতি ব্যবহারকারী প্রতি ঘণ্টায় সর্বোচ্চ ৩০টি অনুরোধ ও ১০টি ছবি স্ক্যানের রেট লিমিট প্রয়োগ করে', () => {
@@ -1724,6 +1698,207 @@ describe('ধাপ ১৪: ওষুধ কেনার তালিকা হ�
     assert.ok(shareText.includes('১ টির দাম নেই, মোটে ধরা হয়নি'));
     assert.ok(shareText.includes('দাম আনুমানিক, দোকানভেদে বদলাতে পারে'));
     assert.ok(!shareText.includes('seclo'));
+  });
+
+  it('শুরুর তারিখ ও শেষ তারিখ (দুই তারিখসহ) গণনা, অবৈধ পরিসর যাচাই, দ্রুত বাছাই ও বাংলা সময়কাল দেখায়', () => {
+    const med: Medicine = {
+      ...baseMed,
+      id: 'm-range',
+      brandName: 'Napa',
+      schedules: [{ id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '২টি' }],
+      stock: 4,
+      pricePerUnit: 2,
+      packageDescription: '10 tablets/strip',
+    };
+
+    // 18 Nov 2026 to 25 Nov 2026 -> 8 days inclusive
+    const rangeRes = calculateMedicineShoppingList({
+      medicines: [med],
+      patients,
+      selectedPatientId: 'p-father',
+      startDate: '2026-11-18',
+      targetDate: '2026-11-25',
+      includeBuffer: false,
+      referenceDate: new Date(2026, 10, 18),
+    });
+
+    assert.strictEqual(rangeRes.isValidDateRange, true);
+    assert.strictEqual(rangeRes.hasExplicitStartDate, true);
+    assert.strictEqual(rangeRes.daysCount, 8);
+    assert.strictEqual(rangeRes.effectiveDays, 8);
+    assert.strictEqual(
+      rangeRes.periodSummaryBn,
+      'সময়কাল: ১৮ নভেম্বর ২০২৬ থেকে ২৫ নভেম্বর ২০২৬ (৮ দিন)'
+    );
+    // 8 days * 2/day = 16 required - 4 stock = 12 to buy (2 strips = "প্রায় ২ পাতা", cost = 24)
+    assert.strictEqual(rangeRes.toBuyItems.length, 1);
+    assert.strictEqual(rangeRes.toBuyItems[0].requiredUnits, 16);
+    assert.strictEqual(rangeRes.toBuyItems[0].toBuyUnits, 12);
+    assert.strictEqual(rangeRes.toBuyItems[0].estimatedPacks, 2);
+    assert.strictEqual(rangeRes.toBuyItems[0].estimatedCost, 24);
+
+    // Same-day range: 18 Nov to 18 Nov = 1 day inclusive
+    const sameDayRes = calculateMedicineShoppingList({
+      medicines: [med],
+      patients,
+      selectedPatientId: 'p-father',
+      startDate: '2026-11-18',
+      targetDate: '2026-11-18',
+      includeBuffer: false,
+      referenceDate: new Date(2026, 10, 18),
+    });
+    assert.strictEqual(sameDayRes.isValidDateRange, true);
+    assert.strictEqual(sameDayRes.daysCount, 1);
+    assert.strictEqual(sameDayRes.toBuyItems.length, 0); // 2 needed <= 4 stock
+
+    // Empty startDate preserves previous behavior (today -> targetDate exclusive of today)
+    const emptyStartRes = calculateMedicineShoppingList({
+      medicines: [med],
+      patients,
+      selectedPatientId: 'p-father',
+      startDate: '',
+      targetDate: '2026-11-25',
+      includeBuffer: false,
+      referenceDate: new Date(2026, 10, 18),
+    });
+    assert.strictEqual(emptyStartRes.hasExplicitStartDate, false);
+    assert.strictEqual(emptyStartRes.daysCount, 7);
+
+    // Invalid range: startDate after targetDate
+    const invalidRes = calculateMedicineShoppingList({
+      medicines: [med],
+      patients,
+      selectedPatientId: 'p-father',
+      startDate: '2026-11-26',
+      targetDate: '2026-11-25',
+      includeBuffer: false,
+      referenceDate: new Date(2026, 10, 18),
+    });
+    assert.strictEqual(invalidRes.isValidDateRange, false);
+    assert.strictEqual(invalidRes.dateErrorBn, 'শুরুর তারিখ শেষ তারিখের আগে হতে হবে');
+    assert.strictEqual(invalidRes.toBuyItems.length, 0);
+
+    // Quick range presets: আজ থেকে ৭/১৫/৩০ দিন ও এই মাস
+    const nov18 = new Date(2026, 10, 18);
+    const p7 = getDateRangeForQuickPreset('7d', nov18);
+    assert.strictEqual(p7.startDateIso, '2026-11-18');
+    assert.strictEqual(p7.targetDateIso, '2026-11-24');
+
+    const pMonth = getDateRangeForQuickPreset('this_month', nov18);
+    assert.strictEqual(pMonth.startDateIso, '2026-11-18');
+    assert.strictEqual(pMonth.targetDateIso, '2026-11-30');
+
+    // Share text includes exact Bengali period summary
+    const shareText = buildShoppingListShareText({ result: rangeRes });
+    assert.ok(
+      shareText.includes('সময়কাল: ১৮ নভেম্বর ২০২৬ থেকে ২৫ নভেম্বর ২০২৬ (৮ দিন)')
+    );
+  });
+
+  it('মাঝামাঝি শুরু বা শেষ হওয়া কোর্সে শুধু কোর্সের ভেতরের দিনগুলো গোনে এবং প্রোফাইল অনুযায়ী লোকাল স্টোরেজে তারিখ রাখে', () => {
+    // Starts mid-range on 2026-11-21 (chronic): in [18..25 Nov] -> 5 active days (21..25)
+    const lateStartMed: Medicine = {
+      ...baseMed,
+      id: 'm-late-start',
+      brandName: 'LateStart',
+      startDate: '2026-11-21',
+      isChronic: true,
+      schedules: [{ id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '২টি' }],
+      stock: 0,
+    };
+
+    // Finite 7-day course started 2026-11-15 -> ends 2026-11-21: in [18..25 Nov] + 2d buffer -> only 4 days (18..21)
+    const earlyEndMed: Medicine = {
+      ...baseMed,
+      id: 'm-early-end',
+      brandName: 'Antibiotic',
+      startDate: '2026-11-15',
+      isChronic: false,
+      durationDays: 7,
+      schedules: [{ id: 's1', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' }],
+      stock: 1,
+    };
+
+    // Finished course before startDate: 0 active days -> no buy needed
+    const finishedMed: Medicine = {
+      ...baseMed,
+      id: 'm-finished',
+      brandName: 'OldCourse',
+      startDate: '2026-11-01',
+      isChronic: false,
+      durationDays: 5, // ended 2026-11-05
+      schedules: [{ id: 's1', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' }],
+      stock: 0,
+      expiryDate: '2026-11-20',
+    };
+
+    const res = calculateMedicineShoppingList({
+      medicines: [lateStartMed, earlyEndMed, finishedMed],
+      patients,
+      selectedPatientId: 'p-father',
+      startDate: '2026-11-18',
+      targetDate: '2026-11-25',
+      includeBuffer: true, // horizon [18..27]
+      referenceDate: new Date(2026, 10, 18),
+    });
+
+    // lateStart: Nov 21..27 = 7 days * 2/day = 14
+    const lateItem = res.toBuyItems.find((i) => i.medicine.id === 'm-late-start')!;
+    assert.strictEqual(lateItem.activeDaysInPeriod, 7);
+    assert.strictEqual(lateItem.requiredUnits, 14);
+    assert.strictEqual(lateItem.toBuyUnits, 14);
+
+    // earlyEnd: course ends Nov 21, so buffer beyond Nov 21 is NOT counted -> Nov 18..21 = 4 days * 1/day = 4 - 1 stock = 3
+    const earlyItem = res.toBuyItems.find((i) => i.medicine.id === 'm-early-end')!;
+    assert.strictEqual(earlyItem.activeDaysInPeriod, 4);
+    assert.strictEqual(earlyItem.requiredUnits, 4);
+    assert.strictEqual(earlyItem.toBuyUnits, 3);
+
+    // finished course: 0 active days, NOT pushed into toBuyItems
+    assert.strictEqual(
+      res.toBuyItems.some((i) => i.medicine.id === 'm-finished'),
+      false
+    );
+    const finishedSufficient = res.sufficientItems.find(
+      (i) => i.medicine.id === 'm-finished'
+    )!;
+    assert.strictEqual(finishedSufficient.activeDaysInPeriod, 0);
+    assert.strictEqual(finishedSufficient.requiredUnits, 0);
+
+    // Per-profile localStorage persistence (zero Firestore interaction)
+    const backing = new Map<string, string>();
+    const mockStorage: ShoppingDateRangeStorageLike = {
+      getItem: (k) => backing.get(k) ?? null,
+      setItem: (k, v) => {
+        backing.set(k, v);
+      },
+    };
+    const nov18 = new Date(2026, 10, 18);
+
+    saveShoppingDateRange(
+      'p-father',
+      { startDateIso: '2026-11-18', targetDateIso: '2026-11-25', preset: 'custom' },
+      mockStorage
+    );
+    saveShoppingDateRange(
+      'p-mother',
+      { startDateIso: '', targetDateIso: '2026-11-30', preset: 'custom' },
+      mockStorage
+    );
+
+    assert.deepStrictEqual(
+      loadSavedShoppingDateRange('p-father', nov18, mockStorage),
+      { startDateIso: '2026-11-18', targetDateIso: '2026-11-25', preset: 'custom' }
+    );
+    assert.deepStrictEqual(
+      loadSavedShoppingDateRange('p-mother', nov18, mockStorage),
+      { startDateIso: '', targetDateIso: '2026-11-30', preset: 'custom' }
+    );
+    // Unsaved profile defaults to 15d from today
+    assert.deepStrictEqual(
+      loadSavedShoppingDateRange('all', nov18, mockStorage),
+      { startDateIso: '2026-11-18', targetDateIso: '2026-12-02', preset: '15d' }
+    );
   });
 });
 
@@ -4531,6 +4706,84 @@ describe('ধাপ ২৮: টার্গেটেড ডার্টি স�
     assert.strictEqual(snapshot.writesByCollection['doseLogs'], 2);
     assert.strictEqual(snapshot.writesByCollection['medicines'], 1);
     assert.strictEqual(snapshot.readsByCollection['doctors'], 5);
+  });
+});
+
+describe('ধাপ ৩১: AI মডেল কনফিগারেশন, ফলব্যাক নির্বাচন, স্ট্যান্ডার্ড কোড ও নিরাপদ মডেল লগিং', () => {
+  it('ai.models.list থেকে শুধু flash/pro যুক্ত সর্বোচ্চ ২০টি মডেলের নাম ফিল্টার করে এবং ফলব্যাক flash মডেল বাছাই করে', () => {
+    const rawNames = [
+      'models/embedding-001',
+      'models/gemini-1.5-flash',
+      'models/gemini-2.0-flash',
+      'models/gemini-2.5-flash-tts',
+      'models/gemini-2.5-flash',
+      'models/gemini-2.5-pro',
+      'models/gemini-3.8-flash',
+      ...Array.from({ length: 25 }, (_, i) => `models/gemini-extra-${i}-flash`),
+    ];
+
+    const filtered = filterAvailableFlashProModels(rawNames, 20);
+    assert.strictEqual(filtered.length, 20);
+    assert.strictEqual(filtered.includes('embedding-001'), false);
+    assert.strictEqual(filtered[0], 'gemini-1.5-flash');
+
+    // Auto fallback skips 1.5/2.0/tts and primary gemini-3.8-flash -> picks gemini-2.5-flash
+    const autoFallback = pickFallbackFlashModel(filtered, 'gemini-3.8-flash');
+    assert.strictEqual(autoFallback, 'gemini-2.5-flash');
+
+    // Env GEMINI_FALLBACK_MODEL overrides auto pick and strips models/ prefix
+    const envFallback = pickFallbackFlashModel(
+      filtered,
+      'gemini-3.8-flash',
+      'models/gemini-4-hydrogen'
+    );
+    assert.strictEqual(envFallback, 'gemini-4-hydrogen');
+    assert.strictEqual(normalizeGeminiModelName('models/gemini-3.8-flash'), 'gemini-3.8-flash');
+  });
+
+  it('404 ও 400 invalid model ত্রুটি সঠিকভাবে শনাক্ত করে এবং সব AI কোডে শ্রেণিবদ্ধ করে', () => {
+    assert.strictEqual(isModelNotFoundError({ status: 404, message: 'NOT_FOUND' }), true);
+    assert.strictEqual(
+      isModelNotFoundError({ status: 400, message: 'INVALID_ARGUMENT: invalid model name' }),
+      true
+    );
+    assert.strictEqual(
+      isModelNotFoundError({ status: 400, message: 'INVALID_ARGUMENT: missing contents' }),
+      false
+    );
+    assert.strictEqual(isModelNotFoundError({ status: 429, message: 'RESOURCE_EXHAUSTED' }), false);
+
+    assert.strictEqual(classifyAiError({ status: 404, message: 'NOT_FOUND' }, 'err').code, 'model_not_found');
+    assert.strictEqual(classifyAiError({ status: 401, message: 'API key not valid' }, 'err').code, 'invalid_key');
+    assert.strictEqual(classifyAiError({ status: 429, message: 'RESOURCE_EXHAUSTED' }, 'err').code, 'quota');
+    assert.strictEqual(classifyAiError({ status: 503, message: 'UNAVAILABLE' }, 'err').code, 'overloaded');
+    assert.strictEqual(classifyAiError({ status: 504, message: 'DEADLINE_EXCEEDED' }, 'err').code, 'timeout');
+    assert.strictEqual(classifyAiError(new SyntaxError('Unexpected token in JSON'), 'err').code, 'bad_response');
+  });
+
+  it('ব্যর্থতার লগে endpoint, model, status রাখে এবং চাবি/ছবি/রোগীর তথ্য গোপন রাখে', () => {
+    const errLog = formatSafeAiErrorLog(
+      '/api/ai/prescription',
+      404,
+      new Error('Model not found for AIzaSy12345678901234567890123456789012345'),
+      ['রোগী আব্দুল্লাহ'],
+      'gemini-3.8-flash'
+    );
+    assert.ok(errLog.includes('route=/api/ai/prescription'));
+    assert.ok(errLog.includes('status=404'));
+    assert.ok(errLog.includes('model=gemini-3.8-flash'));
+    assert.strictEqual(errLog.includes('AIzaSy'), false);
+  });
+
+  it('AiServiceError এবং getAiErrorDisplay সাধারণ বাংলা বার্তা ও অ্যাডমিন কোড আলাদাভাবে সংরক্ষণ করে', () => {
+    const err = new AiServiceError('AI মডেল পাওয়া যায়নি।', 'model_not_found', 404);
+    const display = getAiErrorDisplay(err, 'সাধারণ ত্রুটি');
+    assert.strictEqual(display.message, 'AI মডেল পাওয়া যায়নি।');
+    assert.strictEqual(display.code, 'model_not_found');
+
+    const genericDisplay = getAiErrorDisplay(new Error('অজানা সমস্যা'), 'সাধারণ ত্রুটি');
+    assert.strictEqual(genericDisplay.message, 'অজানা সমস্যা');
+    assert.strictEqual(genericDisplay.code, undefined);
   });
 });
 

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { fetchMedicineInfo, MedicineInfoResponse } from '../../services/aiService';
+import { useMedicine } from '../../context/MedicineContext';
+import { fetchMedicineInfo, getAiErrorDisplay, MedicineInfoResponse } from '../../services/aiService';
 import {
   Sparkles,
   Search,
@@ -35,10 +36,12 @@ export const MedicineInfoModal: React.FC<MedicineInfoModalProps> = ({
   initialMedicineName = '',
   onAddToMedicines,
 }) => {
+  const { isAdmin } = useMedicine();
   const [query, setQuery] = useState(initialMedicineName);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<MedicineInfoResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -48,13 +51,19 @@ export const MedicineInfoModal: React.FC<MedicineInfoModalProps> = ({
 
     setLoading(true);
     setError(null);
+    setErrorCode(null);
     setResult(null);
 
     try {
       const data = await fetchMedicineInfo(med);
       setResult(data);
-    } catch (err: any) {
-      setError(err?.message || 'তথ্য লোড করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।');
+    } catch (err: unknown) {
+      const display = getAiErrorDisplay(
+        err,
+        'তথ্য লোড করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
+      setError(display.message);
+      setErrorCode(display.code ?? null);
     } finally {
       setLoading(false);
     }
@@ -161,6 +170,9 @@ export const MedicineInfoModal: React.FC<MedicineInfoModalProps> = ({
             <div>
               <p className="font-semibold">তথ্য আনতে সমস্যা হয়েছে</p>
               <p className="mt-0.5 text-text">{error}</p>
+              {isAdmin && errorCode && (
+                <p className="mt-1 text-[11px] font-mono text-text-muted">কোড: {errorCode}</p>
+              )}
             </div>
           </div>
         )}

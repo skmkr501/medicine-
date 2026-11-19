@@ -1,4 +1,4 @@
-import crypto from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
 
 export const UNAUTH_ERROR_MSG = 'লগইন করে আবার চেষ্টা করুন';
 export const FORBIDDEN_ADMIN_MSG = 'অননুমোদিত: শুধুমাত্র অ্যাডমিন এই তথ্য দেখতে পারবেন।';
@@ -11,54 +11,13 @@ export const MAX_AI_REQUESTS_PER_HOUR = 30;
 export const MAX_SCAN_REQUESTS_PER_HOUR = 10;
 export const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
-export const ADMIN_EMAIL = 'sarashatikmkr501@gmail.com';
-const GOOGLE_CERTS_URL =
-  'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+export const DEFAULT_SUPABASE_URL = 'https://fpseqtfzxwlceqjxkmke.supabase.co';
+export const DEFAULT_SUPABASE_PUBLISHABLE_KEY =
+  'sb_publishable_vVL1acuDgJgJeyweEEQndQ__dSrPqRC';
 
-export interface VerifiedFirebaseUser {
-  uid: string;
+export interface VerifiedSupabaseUser {
+  id: string;
   email?: string;
-  emailVerified: boolean;
-}
-
-interface CertCache {
-  certs: Record<string, string>;
-  expiresAtMs: number;
-  lastFetchMs: number;
-}
-
-let certCache: CertCache | null = null;
-
-function parseMaxAgeSeconds(cacheControl: string | null): number {
-  if (!cacheControl) return 3600;
-  const match = cacheControl.match(/max-age=(\d+)/i);
-  if (!match) return 3600;
-  const parsed = Number(match[1]);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3600;
-}
-
-async function fetchGooglePublicCerts(forceRefresh = false): Promise<Record<string, string>> {
-  const now = Date.now();
-  if (!forceRefresh && certCache && now < certCache.expiresAtMs) {
-    return certCache.certs;
-  }
-
-  const response = await fetch(GOOGLE_CERTS_URL);
-  if (!response.ok) {
-    if (certCache) {
-      return certCache.certs;
-    }
-    throw new Error(`Failed to load Google public certs (HTTP ${response.status})`);
-  }
-
-  const certs = (await response.json()) as Record<string, string>;
-  const maxAgeSec = parseMaxAgeSeconds(response.headers.get('cache-control'));
-  certCache = {
-    certs,
-    expiresAtMs: now + maxAgeSec * 1000,
-    lastFetchMs: now,
-  };
-  return certs;
 }
 
 export function extractBearerToken(authHeader?: string | string[]): string | null {
@@ -70,106 +29,83 @@ export function extractBearerToken(authHeader?: string | string[]): string | nul
   return token;
 }
 
-function decodeBase64UrlJson(segment: string): Record<string, any> {
-  const jsonStr = Buffer.from(segment, 'base64url').toString('utf8');
-  const parsed = JSON.parse(jsonStr);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Invalid JWT segment object');
-  }
-  return parsed;
-}
-
-/**
- * Verifies a Firebase Auth ID Token following Google's official JWT verification spec:
- * - Algorithm === RS256 and valid key ID (kid)
- * - Cryptographic RS256 signature verification against Google's official x509 public certs
- * - Claims validation: exp, iat, auth_time, aud === projectId, iss === https://securetoken.google.com/<projectId>, sub
- */
-export async function verifyFirebaseIdToken(
+export async function verifySupabaseAccessToken(
   token: string,
-  projectId: string,
   options?: {
-    certsOverride?: Record<string, string>;
-    nowSeconds?: number;
+    supabaseUrl?: string;
+    supabasePublishableKey?: string;
+    clientOverride?: {
+      auth: {
+        getUser: (
+          jwt?: string
+        ) => Promise<{
+          data: { user: { id: string; email?: string | null } | null };
+          error: unknown;
+        }>;
+      };
+    };
   }
-): Promise<VerifiedFirebaseUser> {
-  if (!token || typeof token !== 'string') {
-    throw new Error('Missing ID token');
-  }
-
-  const parts = token.split('.');
-  if (parts.length !== 3 || parts.some((p) => !p)) {
-    throw new Error('Malformed JWT');
-  }
-
-  const [headerB64, payloadB64, signatureB64] = parts;
-  const header = decodeBase64UrlJson(headerB64);
-  const payload = decodeBase64UrlJson(payloadB64);
-
-  if (header.alg !== 'RS256' || typeof header.kid !== 'string' || !header.kid) {
-    throw new Error('Invalid JWT header');
+): Promise<VerifiedSupabaseUser> {
+  if (!token || typeof token !== 'string' || !token.trim()) {
+    throw new Error('Missing access token');
   }
 
-  const now = options?.nowSeconds ?? Math.floor(Date.now() / 1000);
-  const expectedIssuer = `https://securetoken.google.com/${projectId}`;
+  const supabaseUrl = options?.supabaseUrl || DEFAULT_SUPABASE_URL;
+  const supabaseKey = options?.supabasePublishableKey || DEFAULT_SUPABASE_PUBLISHABLE_KEY;
 
-  if (typeof payload.exp !== 'number' || payload.exp <= now) {
-    throw new Error('Token expired');
-  }
-  if (typeof payload.iat !== 'number' || payload.iat > now + 300) {
-    throw new Error('Token issued in the future');
-  }
-  if (typeof payload.auth_time !== 'number' || payload.auth_time > now + 300) {
-    throw new Error('Invalid auth_time');
-  }
-  if (payload.aud !== projectId) {
-    throw new Error('Invalid audience');
-  }
-  if (payload.iss !== expectedIssuer) {
-    throw new Error('Invalid issuer');
-  }
-  if (typeof payload.sub !== 'string' || !payload.sub.trim() || payload.sub.length > 128) {
-    throw new Error('Invalid subject');
-  }
+  const client =
+    options?.clientOverride ||
+    createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
 
-  let certPem: string | undefined;
-  if (options?.certsOverride) {
-    certPem = options.certsOverride[header.kid];
-  } else {
-    let certs = await fetchGooglePublicCerts(false);
-    certPem = certs[header.kid];
-    if (!certPem && (!certCache || Date.now() - certCache.lastFetchMs > 30_000)) {
-      certs = await fetchGooglePublicCerts(true);
-      certPem = certs[header.kid];
-    }
-  }
-
-  if (!certPem) {
-    throw new Error('Unknown signing key');
-  }
-
-  const verifier = crypto.createVerify('RSA-SHA256');
-  verifier.update(`${headerB64}.${payloadB64}`);
-  verifier.end();
-
-  const signatureBuffer = Buffer.from(signatureB64, 'base64url');
-  if (!verifier.verify(certPem, signatureBuffer)) {
-    throw new Error('Invalid signature');
+  const { data, error } = await client.auth.getUser(token);
+  if (error || !data?.user?.id) {
+    throw new Error('Invalid or expired Supabase access token');
   }
 
   return {
-    uid: payload.sub,
-    email: typeof payload.email === 'string' ? payload.email : undefined,
-    emailVerified: Boolean(payload.email_verified),
+    id: data.user.id,
+    email: typeof data.user.email === 'string' ? data.user.email : undefined,
   };
 }
 
-export function isVerifiedAdmin(user: VerifiedFirebaseUser): boolean {
-  return Boolean(
-    user.email &&
-      user.emailVerified &&
-      user.email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase()
-  );
+export async function checkSupabaseAdminRpc(
+  token: string,
+  options?: {
+    supabaseUrl?: string;
+    supabasePublishableKey?: string;
+    clientOverride?: {
+      rpc: (fnName: string) => Promise<{ data: unknown; error: unknown }>;
+    };
+  }
+): Promise<boolean> {
+  if (!token || typeof token !== 'string' || !token.trim()) {
+    return false;
+  }
+
+  const supabaseUrl = options?.supabaseUrl || DEFAULT_SUPABASE_URL;
+  const supabaseKey = options?.supabasePublishableKey || DEFAULT_SUPABASE_PUBLISHABLE_KEY;
+
+  const client =
+    options?.clientOverride ||
+    createClient(supabaseUrl, supabaseKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+
+  const { data, error } = await client.rpc('is_admin');
+  return !error && data === true;
 }
 
 /**
@@ -294,12 +230,263 @@ export function formatSafeAiErrorLog(
   route: string,
   status: number | null,
   error: any,
-  sensitiveSnippets: string[] = []
+  sensitiveSnippets: string[] = [],
+  model?: string
 ): string {
   const errName = typeof error?.name === 'string' ? error.name : 'Error';
   const safeReason = sanitizeServerLogMessage(
     typeof error?.message === 'string' ? error.message : String(error || ''),
     sensitiveSnippets
   );
-  return `[AI Error] route=${route} status=${status ?? 'unknown'} type=${errName}${safeReason ? ` reason="${safeReason}"` : ''}`;
+  const modelPart = model ? ` model=${sanitizeServerLogMessage(model).slice(0, 64)}` : '';
+  return `[AI Error] route=${route} status=${status ?? 'unknown'}${modelPart} type=${errName}${safeReason ? ` reason="${safeReason}"` : ''}`;
 }
+
+export type AiErrorCode =
+  | 'model_not_found'
+  | 'invalid_key'
+  | 'quota'
+  | 'overloaded'
+  | 'timeout'
+  | 'bad_response'
+  | 'unauthenticated'
+  | 'rate_limited';
+
+export function normalizeGeminiModelName(name: string): string {
+  if (typeof name !== 'string') return '';
+  return name.trim().replace(/^models\//i, '');
+}
+
+export function filterAvailableFlashProModels(rawNames: string[], limit = 20): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of rawNames) {
+    const clean = normalizeGeminiModelName(raw);
+    if (!clean) continue;
+    const lower = clean.toLowerCase();
+    if (!lower.includes('flash') && !lower.includes('pro')) continue;
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    result.push(clean);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+export function pickFallbackFlashModel(
+  availableModels: string[],
+  primaryModel: string,
+  envFallback?: string
+): string | null {
+  const explicit = normalizeGeminiModelName(envFallback || '');
+  if (explicit) {
+    return explicit;
+  }
+
+  const normalizedPrimary = normalizeGeminiModelName(primaryModel).toLowerCase();
+  const flashCandidates = availableModels
+    .map((m) => normalizeGeminiModelName(m))
+    .filter((m) => {
+      const lower = m.toLowerCase();
+      return (
+        lower.includes('flash') &&
+        lower !== normalizedPrimary &&
+        !lower.includes('1.5') &&
+        !lower.includes('2.0')
+      );
+    });
+
+  const preferredGeneralFlash = flashCandidates.find((m) => {
+    const lower = m.toLowerCase();
+    return (
+      !lower.includes('-tts') &&
+      !lower.includes('-image') &&
+      !lower.includes('-audio') &&
+      !lower.includes('live') &&
+      !lower.includes('embedding')
+    );
+  });
+
+  if (preferredGeneralFlash) return preferredGeneralFlash;
+  if (flashCandidates.length > 0) return flashCandidates[0];
+
+  const anyFlash = availableModels
+    .map((m) => normalizeGeminiModelName(m))
+    .find((m) => {
+      const lower = m.toLowerCase();
+      return lower.includes('flash') && lower !== normalizedPrimary;
+    });
+
+  return anyFlash || null;
+}
+
+export function extractGeminiErrorStatus(error: any): number | null {
+  if (!error) return null;
+  if (typeof error.status === 'number') return error.status;
+  if (typeof error.statusCode === 'number') return error.statusCode;
+  if (typeof error.code === 'number') return error.code;
+  if (typeof error.response?.status === 'number') return error.response.status;
+  if (typeof error.error?.code === 'number') return error.error.code;
+  if (typeof error.error?.status === 'number') return error.error.status;
+
+  const msg = String(error.message || error || '');
+  const lower = msg.toLowerCase();
+
+  if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) return 429;
+  if (
+    msg.includes('401') ||
+    msg.includes('UNAUTHENTICATED') ||
+    lower.includes('api key') ||
+    lower.includes('api_key')
+  ) {
+    return 401;
+  }
+  if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) return 403;
+  if (msg.includes('404') || msg.includes('NOT_FOUND')) return 404;
+  if (msg.includes('504') || msg.includes('DEADLINE_EXCEEDED') || lower.includes('timed out') || lower.includes('timeout')) {
+    return 504;
+  }
+  if (msg.includes('503') || msg.includes('UNAVAILABLE') || lower.includes('overloaded') || lower.includes('high demand')) {
+    return 503;
+  }
+  if (msg.includes('400') || msg.includes('INVALID_ARGUMENT')) return 400;
+
+  return null;
+}
+
+export function isModelNotFoundError(error: any): boolean {
+  const status = extractGeminiErrorStatus(error);
+  const msg = String(error?.message || error || '');
+  const lower = msg.toLowerCase();
+
+  if (status === 404 || msg.includes('NOT_FOUND')) {
+    return true;
+  }
+
+  const mentionsInvalidModel =
+    lower.includes('invalid model') ||
+    lower.includes('model not found') ||
+    lower.includes('unknown model') ||
+    lower.includes('is not found for api version') ||
+    lower.includes('not supported for generatecontent') ||
+    (lower.includes('model') && (lower.includes('invalid') || lower.includes('unsupported') || lower.includes('does not exist')));
+
+  if ((status === 400 || msg.includes('INVALID_ARGUMENT')) && mentionsInvalidModel) {
+    return true;
+  }
+
+  return false;
+}
+
+export function classifyAiError(
+  error: any,
+  fallbackMessage: string
+): {
+  status: number;
+  code: AiErrorCode;
+  message: string;
+  reasonBn: string;
+  hintBn: string;
+} {
+  const status = extractGeminiErrorStatus(error);
+  const msg = String(error?.message || error || '');
+  const lower = msg.toLowerCase();
+
+  if (error?.name === 'AbortError' || status === 504 || msg.includes('DEADLINE_EXCEEDED') || lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout')) {
+    return {
+      status: 504,
+      code: 'timeout',
+      message: 'সার্ভার থেকে উত্তর আসতে বেশি সময় লাগছে। কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      reasonBn: 'সময়সীমা অতিক্রম (Timeout)',
+      hintBn: 'নেটওয়ার্ক সংযোগ বা Gemini API প্রতিক্রিয়া সময় পরীক্ষা করুন এবং আবার চেষ্টা করুন।',
+    };
+  }
+
+  if (
+    lower.includes('enotfound') ||
+    lower.includes('econnrefused') ||
+    lower.includes('econnreset') ||
+    lower.includes('fetch failed') ||
+    lower.includes('network')
+  ) {
+    return {
+      status: 503,
+      code: 'overloaded',
+      message: 'AI সার্ভারের সাথে সংযোগ স্থাপন করা যায়নি। কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      reasonBn: 'নেটওয়ার্ক সমস্যা',
+      hintBn: 'সার্ভারের আউটবাউন্ড ইন্টারনেট সংযোগ ও DNS ঠিক আছে কিনা যাচাই করুন।',
+    };
+  }
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    msg.includes('UNAUTHENTICATED') ||
+    msg.includes('PERMISSION_DENIED') ||
+    lower.includes('api key') ||
+    lower.includes('api_key')
+  ) {
+    return {
+      status: status === 401 || status === 403 ? status : 403,
+      code: 'invalid_key',
+      message: 'AI সেবা এখন চালু করা নেই। অ্যাডমিনকে জানান।',
+      reasonBn: 'চাবি অবৈধ বা বাতিল',
+      hintBn: 'সার্ভার এনভায়রনমেন্টে বৈধ GEMINI_API_KEY যুক্ত ও সক্রিয় করুন।',
+    };
+  }
+
+  if (status === 429 || msg.includes('RESOURCE_EXHAUSTED') || lower.includes('quota')) {
+    return {
+      status: 429,
+      code: 'quota',
+      message: 'AI সেবায় এখন অনেক চাপ, ১ মিনিট পরে চেষ্টা করুন।',
+      reasonBn: 'কোটা শেষ',
+      hintBn: 'Gemini API চাবির ব্যবহার সীমা (quota) বা বিলিং স্ট্যাটাস পরীক্ষা করুন।',
+    };
+  }
+
+  if (isModelNotFoundError(error)) {
+    return {
+      status: 404,
+      code: 'model_not_found',
+      message: 'AI মডেল পাওয়া যায়নি।',
+      reasonBn: 'মডেল পাওয়া যায়নি',
+      hintBn: 'উপলব্ধ তালিকা থেকে বৈধ flash মডেলের নাম GEMINI_MODEL বা GEMINI_FALLBACK_MODEL-এ সেট করুন।',
+    };
+  }
+
+  if (
+    status === 503 ||
+    status === 502 ||
+    msg.includes('UNAVAILABLE') ||
+    lower.includes('overloaded') ||
+    lower.includes('high demand')
+  ) {
+    return {
+      status: status || 503,
+      code: 'overloaded',
+      message: 'AI সেবায় এখন অনেক চাপ, কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      reasonBn: 'Gemini এখন ব্যস্ত',
+      hintBn: 'Gemini সার্ভার সাময়িকভাবে ব্যস্ত; কয়েক সেকেন্ড পরে আবার পরীক্ষা করুন।',
+    };
+  }
+
+  if (error instanceof SyntaxError || lower.includes('json') || lower.includes('empty response') || lower.includes('bad_response')) {
+    return {
+      status: 502,
+      code: 'bad_response',
+      message: fallbackMessage,
+      reasonBn: 'অসম্পূর্ণ বা অপ্রত্যাশিত উত্তর',
+      hintBn: 'AI থেকে সঠিক ফরম্যাটে উত্তর আসেনি; আবার চেষ্টা করুন অথবা মডেল পরিবর্তন করুন।',
+    };
+  }
+
+  return {
+    status: status || 500,
+    code: status && status >= 500 ? 'overloaded' : 'bad_response',
+    message: fallbackMessage,
+    reasonBn: status && status >= 500 ? 'Gemini এখন ব্যস্ত' : 'AI অনুরোধ ব্যর্থ হয়েছে',
+    hintBn: 'সার্ভার লগে বিস্তারিত ত্রুটির ধরন দেখে মডেল ও API চাবি যাচাই করুন।',
+  };
+}
+

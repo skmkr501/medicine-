@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
-import { fetchMedicineInfo, MedicineInfoResponse } from '../../services/aiService';
+import {
+  fetchMedicineInfo,
+  getAiErrorDisplay,
+  MedicineInfoResponse,
+  PrescriptionScanResult,
+} from '../../services/aiService';
 import { PrescriptionScannerModal } from '../medicines/PrescriptionScannerModal';
-import { PrescriptionScanResult } from '../../services/aiService';
 import { buildAiResponseSpeechText, useBengaliSpeech } from '../../utils/speechUtils';
 import {
   Sparkles,
@@ -32,11 +36,12 @@ const COMMON_PRESETS = [
 ];
 
 export const AiAssistantPage: React.FC = () => {
-  const { setCurrentPage, showToast } = useMedicine();
+  const { setCurrentPage, showToast, isAdmin } = useMedicine();
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<MedicineInfoResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const { hasBengaliVoice, isSpeaking, voiceSettings, speak, stop } = useBengaliSpeech();
   const canSpeak = hasBengaliVoice && voiceSettings.enabled;
@@ -48,13 +53,19 @@ export const AiAssistantPage: React.FC = () => {
     stop();
     setLoading(true);
     setError(null);
+    setErrorCode(null);
     setResult(null);
 
     try {
       const data = await fetchMedicineInfo(med);
       setResult(data);
-    } catch (err: any) {
-      setError(err?.message || 'তথ্য লোড করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।');
+    } catch (err: unknown) {
+      const display = getAiErrorDisplay(
+        err,
+        'তথ্য লোড করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
+      setError(display.message);
+      setErrorCode(display.code ?? null);
     } finally {
       setLoading(false);
     }
@@ -175,6 +186,9 @@ export const AiAssistantPage: React.FC = () => {
             <div>
               <p className="font-semibold">তথ্য আনতে সমস্যা হয়েছে</p>
               <p className="mt-0.5">{error}</p>
+              {isAdmin && errorCode && (
+                <p className="mt-1 text-[11px] font-mono text-text-muted">কোড: {errorCode}</p>
+              )}
             </div>
           </div>
         )}

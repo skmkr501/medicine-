@@ -1,4 +1,4 @@
-import { auth } from './config';
+import { getCachedSupabaseUser } from '../supabase/client';
 import {
   QUOTA_EXCEEDED_BN_MSG,
   isQuotaExceededError,
@@ -37,19 +37,16 @@ export function handleFirestoreError(
   operationType: OperationType,
   path: string | null
 ): never {
+  const sbUser = getCachedSupabaseUser();
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
-          providerId: provider.providerId,
-          email: provider.email,
-        })) || [],
+      userId: sbUser?.id,
+      email: sbUser?.email,
+      emailVerified: Boolean(sbUser?.email_confirmed_at),
+      isAnonymous: false,
+      tenantId: null,
+      providerInfo: [],
     },
     operationType,
     path,

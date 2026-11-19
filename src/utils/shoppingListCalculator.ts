@@ -3,6 +3,18 @@ import { formatBengaliDate, toBengaliNumber } from './bengaliUtils';
 import { calculateDailyConsumption } from './stockPredictor';
 
 export type DurationPresetKey = '7d' | '15d' | '30d' | '3m' | 'custom';
+export type QuickRangePresetKey = '7d' | '15d' | '30d' | 'this_month' | 'custom';
+
+export interface ShoppingDateRangeStorageLike {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+export interface SavedShoppingDateRange {
+  startDateIso: string;
+  targetDateIso: string;
+  preset: QuickRangePresetKey;
+}
 
 export interface ParsedPackageInfo {
   unitsPerPack: number;
@@ -33,6 +45,7 @@ export interface ShoppingListNeedItem {
   unit: string;
   requiredUnits: number;
   toBuyUnits: number;
+  activeDaysInPeriod: number;
   daysRemaining: number;
   estimatedRunOutDate: Date;
   estimatedRunOutDateStr: string;
@@ -58,6 +71,7 @@ export interface ShoppingListSufficientItem {
   currentStock: number;
   unit: string;
   requiredUnits: number;
+  activeDaysInPeriod: number;
   daysRemaining: number;
   estimatedRunOutDate: Date;
   estimatedRunOutDateStr: string;
@@ -81,6 +95,7 @@ export interface ShoppingListInput {
   patients: PatientProfile[];
   globalMedicines?: GlobalMedicine[];
   selectedPatientId: string | 'all';
+  startDate?: Date | string | null;
   targetDate: Date | string;
   includeBuffer: boolean;
   referenceDate?: Date;
@@ -90,9 +105,15 @@ export interface ShoppingListResult {
   startDate: Date;
   startDateIso: string;
   startDateBn: string;
+  startDateShortBn: string;
   targetDate: Date;
   targetDateIso: string;
   targetDateBn: string;
+  targetDateShortBn: string;
+  referenceDateBn: string;
+  hasExplicitStartDate: boolean;
+  periodSummaryBn: string;
+  dateErrorBn?: string;
   daysCount: number;
   bufferDays: number;
   effectiveDays: number;
@@ -181,8 +202,34 @@ export function calculateDaysBetween(startDate: Date, endDate: Date): number {
   return Math.round((end.getTime() - start.getTime()) / msPerDay);
 }
 
+const BENGALI_FULL_MONTHS = [
+  'জানুয়ারি',
+  'ফেব্রুয়ারি',
+  'মার্চ',
+  'এপ্রিল',
+  'মে',
+  'জুন',
+  'জুলাই',
+  'আগস্ট',
+  'সেপ্টেম্বর',
+  'অক্টোবর',
+  'নভেম্বর',
+  'ডিসেম্বর',
+];
+
 /**
- * Maps quick preset keys to target Dates relative to referenceDate.
+ * Formats a local Date in Bengali without weekday (e.g., "১৮ নভেম্বর ২০২৬").
+ */
+export function formatBengaliDateOnly(date: Date): string {
+  const safe = normalizeLocalDate(date);
+  const day = toBengaliNumber(safe.getDate());
+  const monthName = BENGALI_FULL_MONTHS[safe.getMonth()] || '';
+  const year = toBengaliNumber(safe.getFullYear());
+  return `${day} ${monthName} ${year}`;
+}
+
+/**
+ * Maps legacy duration preset keys to target Dates relative to referenceDate.
  */
 export function getTargetDateForPreset(
   preset: Exclude<DurationPresetKey, 'custom'>,
@@ -198,6 +245,118 @@ export function getTargetDateForPreset(
       return addLocalDays(today, 30);
     case '3m':
       return addLocalDays(today, 90);
+  }
+}
+
+/**
+ * Maps quick date-range presets ("আজ থেকে ৭/১৫/৩০ দিন", "এই মাস") to inclusive start & end dates.
+ */
+export function getDateRangeForQuickPreset(
+  preset: Exclude<QuickRangePresetKey, 'custom'>,
+  referenceDate: Date = new Date()
+): { startDate: Date; targetDate: Date; startDateIso: string; targetDateIso: string } {
+  const today = normalizeLocalDate(referenceDate);
+  let targetDate: Date;
+  switch (preset) {
+    case '7d':
+      targetDate = addLocalDays(today, 6);
+      break;
+    case '15d':
+      targetDate = addLocalDays(today, 14);
+      break;
+    case '30d':
+      targetDate = addLocalDays(today, 29);
+      break;
+    case 'this_month':
+      targetDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      break;
+  }
+  return {
+    startDate: today,
+    targetDate,
+    startDateIso: toLocalIsoDate(today),
+    targetDateIso: toLocalIsoDate(targetDate),
+  };
+}
+
+export function getShoppingDateRangeStorageKey(profileId: string | 'all'): string {
+  return `shasthobondhu_shopping_range_v1_${profileId || 'all'}`;
+}
+
+const VALID_QUICK_PRESETS: ReadonlySet<string> = new Set([
+  '7d',
+  '15d',
+  '30d',
+  'this_month',
+  'custom',
+]);
+
+export function loadSavedShoppingDateRange(
+  profileId: string | 'all',
+  referenceDate: Date = new Date(),
+  storage?: ShoppingDateRangeStorageLike
+): SavedShoppingDateRange {
+  const fallbackPreset = getDateRangeForQuickPreset('15d', referenceDate);
+  const defaultRange: SavedShoppingDateRange = {
+    startDateIso: fallbackPreset.startDateIso,
+    targetDateIso: fallbackPreset.targetDateIso,
+    preset: '15d',
+  };
+
+  const targetStorage =
+    storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
+  if (!targetStorage) return defaultRange;
+
+  try {
+    const raw = targetStorage.getItem(getShoppingDateRangeStorageKey(profileId));
+    if (!raw) return defaultRange;
+    const parsed = JSON.parse(raw) as Partial<SavedShoppingDateRange> | null;
+    if (!parsed || typeof parsed !== 'object') return defaultRange;
+
+    const targetOk =
+      typeof parsed.targetDateIso === 'string' &&
+      parseLocalIsoDate(parsed.targetDateIso) !== null;
+    const startOk =
+      typeof parsed.startDateIso === 'string' &&
+      (parsed.startDateIso === '' || parseLocalIsoDate(parsed.startDateIso) !== null);
+
+    if (!targetOk || !startOk) return defaultRange;
+
+    const preset: QuickRangePresetKey =
+      typeof parsed.preset === 'string' && VALID_QUICK_PRESETS.has(parsed.preset)
+        ? (parsed.preset as QuickRangePresetKey)
+        : 'custom';
+
+    return {
+      startDateIso: parsed.startDateIso!,
+      targetDateIso: parsed.targetDateIso!,
+      preset,
+    };
+  } catch {
+    return defaultRange;
+  }
+}
+
+export function saveShoppingDateRange(
+  profileId: string | 'all',
+  range: SavedShoppingDateRange,
+  storage?: ShoppingDateRangeStorageLike
+): void {
+  const targetStorage =
+    storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
+  if (!targetStorage) return;
+
+  try {
+    targetStorage.setItem(
+      getShoppingDateRangeStorageKey(profileId),
+      JSON.stringify({
+        startDateIso: range.startDateIso,
+        targetDateIso: range.targetDateIso,
+        preset: range.preset,
+      })
+    );
+  } catch {
+    // Ignore storage quota or private browsing errors
   }
 }
 
@@ -428,27 +587,104 @@ export function calculateShoppingCostSummary(
   };
 }
 
+function parseOptionalStartDate(value?: Date | string | null): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : normalizeLocalDate(value);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return parseLocalIsoDate(trimmed);
+  }
+  return null;
+}
+
+/**
+ * Computes active days inside [horizonStart, horizonEnd] overlapping the medicine's course.
+ */
+function calculateMedicineActiveDaysInHorizon(
+  med: Medicine,
+  horizonStart: Date,
+  horizonEnd: Date,
+  fallbackStart: Date
+): number {
+  const medStart = parseLocalIsoDate(med.startDate);
+  const medEnd =
+    !med.isChronic &&
+    typeof med.durationDays === 'number' &&
+    !Number.isNaN(med.durationDays) &&
+    med.durationDays > 0
+      ? addLocalDays(medStart ?? fallbackStart, Math.floor(med.durationDays) - 1)
+      : null;
+
+  const overlapStart =
+    medStart && medStart.getTime() > horizonStart.getTime() ? medStart : horizonStart;
+  const overlapEnd =
+    medEnd && medEnd.getTime() < horizonEnd.getTime() ? medEnd : horizonEnd;
+
+  if (overlapEnd.getTime() < overlapStart.getTime()) {
+    return 0;
+  }
+  return calculateDaysBetween(overlapStart, overlapEnd) + 1;
+}
+
 /**
  * Computes the complete medicine shopping list from active medicines, current stock,
- * daily schedules, target date, optional 2-day buffer, and expiry checks.
+ * daily schedules, optional start date + target date, course overlap, optional 2-day buffer, and expiry checks.
  */
 export function calculateMedicineShoppingList(
   input: ShoppingListInput
 ): ShoppingListResult {
   const today = normalizeLocalDate(input.referenceDate ?? new Date());
-  const startDateIso = toLocalIsoDate(today);
-  const startDateBn = formatBengaliDate(today);
+  const referenceDateBn = formatBengaliDate(today);
+
+  const parsedExplicitStart = parseOptionalStartDate(input.startDate);
+  const hasExplicitStartDate = parsedExplicitStart !== null;
+  const effectiveStart = parsedExplicitStart ?? today;
+  const startDateIso = toLocalIsoDate(effectiveStart);
+  const startDateBn = formatBengaliDate(effectiveStart);
+  const startDateShortBn = formatBengaliDateOnly(effectiveStart);
 
   const parsedTarget =
     typeof input.targetDate === 'string'
       ? parseLocalIsoDate(input.targetDate) ?? today
       : normalizeLocalDate(input.targetDate);
+  const targetDateIso = toLocalIsoDate(parsedTarget);
+  const targetDateBn = formatBengaliDate(parsedTarget);
+  const targetDateShortBn = formatBengaliDateOnly(parsedTarget);
 
-  const rawDaysDiff = calculateDaysBetween(today, parsedTarget);
-  const isValidDateRange = rawDaysDiff >= 1;
-  const daysCount = Math.max(1, rawDaysDiff);
   const bufferDays = input.includeBuffer ? 2 : 0;
-  const effectiveDays = daysCount + bufferDays;
+
+  let isValidDateRange: boolean;
+  let daysCount: number;
+  let effectiveDays: number;
+  let dateErrorBn: string | undefined;
+
+  if (hasExplicitStartDate) {
+    const diff = calculateDaysBetween(effectiveStart, parsedTarget);
+    isValidDateRange = diff >= 0;
+    if (isValidDateRange) {
+      daysCount = diff + 1;
+      effectiveDays = daysCount + bufferDays;
+    } else {
+      daysCount = 0;
+      effectiveDays = 0;
+      dateErrorBn = 'শুরুর তারিখ শেষ তারিখের আগে হতে হবে';
+    }
+  } else {
+    const rawDaysDiff = calculateDaysBetween(today, parsedTarget);
+    isValidDateRange = rawDaysDiff >= 1;
+    daysCount = Math.max(1, rawDaysDiff);
+    effectiveDays = daysCount + bufferDays;
+    if (!isValidDateRange) {
+      dateErrorBn = 'দয়া করে আজকের পরের একটি তারিখ বেছে নিন (ন্যূনতম ১ দিন)।';
+    }
+  }
+
+  const periodSummaryBn = isValidDateRange
+    ? `সময়কাল: ${startDateShortBn} থেকে ${targetDateShortBn} (${toBengaliNumber(daysCount)} দিন)`
+    : '';
 
   const patientMap = new Map<string, PatientProfile>();
   for (const p of input.patients) {
@@ -485,6 +721,36 @@ export function calculateMedicineShoppingList(
     return med.assignedPatientId === input.selectedPatientId;
   });
 
+  if (hasExplicitStartDate && !isValidDateRange) {
+    return {
+      startDate: effectiveStart,
+      startDateIso,
+      startDateBn,
+      startDateShortBn,
+      targetDate: parsedTarget,
+      targetDateIso,
+      targetDateBn,
+      targetDateShortBn,
+      referenceDateBn,
+      hasExplicitStartDate,
+      periodSummaryBn,
+      dateErrorBn,
+      daysCount,
+      bufferDays,
+      effectiveDays,
+      patientLabelBn,
+      patientAge,
+      isValidDateRange,
+      toBuyItems: [],
+      sufficientItems: [],
+      asNeededItems: [],
+      totalActiveMedicinesConsidered: candidateMedicines.length,
+    };
+  }
+
+  const horizonStart = effectiveStart;
+  const horizonEnd = addLocalDays(horizonStart, Math.max(0, effectiveDays - 1));
+
   const toBuyItems: ShoppingListNeedItem[] = [];
   const sufficientItems: ShoppingListSufficientItem[] = [];
   const asNeededItems: ShoppingListAsNeededItem[] = [];
@@ -505,9 +771,6 @@ export function calculateMedicineShoppingList(
       expiryObj && expiryObj.getTime() < parsedTarget.getTime()
     );
     const expiryDateFormattedBn = expiryObj ? formatBengaliDate(expiryObj) : undefined;
-    const expiryWarningBn = expiresBeforeTarget
-      ? 'এই তারিখের আগেই মেয়াদ শেষ হবে, নতুন প্যাকেট কিনুন'
-      : undefined;
 
     const isExplicitPrn = med.mealTiming === 'প্রয়োজনমতো';
     const hasSchedules = Array.isArray(med.schedules) && med.schedules.length > 0;
@@ -516,6 +779,9 @@ export function calculateMedicineShoppingList(
       : 0;
 
     if (isExplicitPrn || !hasSchedules || dailyUsage <= 0) {
+      const expiryWarningBn = expiresBeforeTarget
+        ? 'এই তারিখের আগেই মেয়াদ শেষ হবে, নতুন প্যাকেট কিনুন'
+        : undefined;
       asNeededItems.push({
         medicine: med,
         patientName,
@@ -530,7 +796,19 @@ export function calculateMedicineShoppingList(
       continue;
     }
 
-    const requiredUnits = Math.round(dailyUsage * effectiveDays * 100) / 100;
+    const activeDaysInPeriod = calculateMedicineActiveDaysInHorizon(
+      med,
+      horizonStart,
+      horizonEnd,
+      today
+    );
+
+    const effectiveExpiresBeforeTarget = activeDaysInPeriod > 0 && expiresBeforeTarget;
+    const expiryWarningBn = effectiveExpiresBeforeTarget
+      ? 'এই তারিখের আগেই মেয়াদ শেষ হবে, নতুন প্যাকেট কিনুন'
+      : undefined;
+
+    const requiredUnits = Math.round(dailyUsage * activeDaysInPeriod * 100) / 100;
     const shortfall = Math.max(0, requiredUnits - currentStock);
     const toBuyUnits = shortfall > 0 ? Math.ceil(shortfall) : 0;
 
@@ -542,7 +820,7 @@ export function calculateMedicineShoppingList(
         ? 'স্টক শেষ (আজ)'
         : formatBengaliDate(estimatedRunOutDate);
 
-    if (toBuyUnits > 0 || expiresBeforeTarget) {
+    if (toBuyUnits > 0 || effectiveExpiresBeforeTarget) {
       const catalogMatch = findMatchingCatalogMedicine(med, input.globalMedicines);
       const packDesc =
         med.packageDescription?.trim() || catalogMatch.medicine?.packageDescription?.trim();
@@ -599,6 +877,7 @@ export function calculateMedicineShoppingList(
         unit,
         requiredUnits,
         toBuyUnits,
+        activeDaysInPeriod,
         daysRemaining,
         estimatedRunOutDate,
         estimatedRunOutDateStr,
@@ -612,9 +891,9 @@ export function calculateMedicineShoppingList(
         catalogMatchType: catalogMatch.matchType,
         expiryDate: med.expiryDate,
         expiryDateFormattedBn,
-        expiresBeforeTarget,
+        expiresBeforeTarget: effectiveExpiresBeforeTarget,
         expiryWarningBn,
-        needsExpiryReplacementOnly: toBuyUnits === 0 && expiresBeforeTarget,
+        needsExpiryReplacementOnly: toBuyUnits === 0 && effectiveExpiresBeforeTarget,
       });
     } else {
       sufficientItems.push({
@@ -624,6 +903,7 @@ export function calculateMedicineShoppingList(
         currentStock,
         unit,
         requiredUnits,
+        activeDaysInPeriod,
         daysRemaining,
         estimatedRunOutDate,
         estimatedRunOutDateStr,
@@ -652,12 +932,18 @@ export function calculateMedicineShoppingList(
   });
 
   return {
-    startDate: today,
+    startDate: effectiveStart,
     startDateIso,
     startDateBn,
+    startDateShortBn,
     targetDate: parsedTarget,
-    targetDateIso: toLocalIsoDate(parsedTarget),
-    targetDateBn: formatBengaliDate(parsedTarget),
+    targetDateIso,
+    targetDateBn,
+    targetDateShortBn,
+    referenceDateBn,
+    hasExplicitStartDate,
+    periodSummaryBn,
+    dateErrorBn,
     daysCount,
     bufferDays,
     effectiveDays,

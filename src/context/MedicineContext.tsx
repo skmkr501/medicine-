@@ -41,11 +41,8 @@ import {
   clearAllNativeReminders,
   isNativeRemindersAvailable,
 } from '../services/nativeReminders';
-import { auth, db, resumeFirestoreNetwork, testFirestoreConnection, stripUndefined, isFirestoreNetworkDisabled } from '../firebase/config';
-import {
-  onAuthStateChanged,
-  User,
-} from 'firebase/auth';
+import { db, resumeFirestoreNetwork, testFirestoreConnection, stripUndefined, isFirestoreNetworkDisabled } from '../firebase/config';
+import { useAuth, type AuthUser } from './AuthContext';
 import {
   collection,
   doc,
@@ -66,9 +63,6 @@ import {
   deleteAppointmentFromCloud,
   migrateLocalDataToCloud,
   flushOutboxToCloud,
-  logOut,
-  ADMIN_EMAIL,
-  isUserAdmin,
   fetchLibraryMetaFromCloud,
   fetchLibraryChunksByVersion,
   publishChunkedLibraryCatalog,
@@ -357,8 +351,8 @@ interface MedicineContextType {
   isLoadingOlderDoseLogs: boolean;
   loadOlderDoseLogs: (forceRefresh?: boolean) => Promise<void>;
   
-  // Firebase Auth & Cloud Sync States
-  currentUser: User | null;
+  // Auth & Cloud Sync States
+  currentUser: AuthUser | null;
   isAuthLoading: boolean;
   isCloudConnected: boolean;
   isSyncing: boolean;
@@ -685,9 +679,13 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const openStockAdjustmentModal = (medicineId: string) => setStockAdjustmentModalMedId(medicineId);
   const closeStockAdjustmentModal = () => setStockAdjustmentModalMedId(null);
 
-  // Firebase Auth & Cloud state
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  // Supabase Auth (via AuthContext) & Cloud state
+  const {
+    user: currentUser,
+    isAuthLoading,
+    isAdmin,
+    signOut: signOutSupabase,
+  } = useAuth();
   const [isCloudConnected, setIsCloudConnected] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : false
   );
@@ -732,7 +730,6 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const openResetConfirmationModal = () => setIsResetConfirmationModalOpen(true);
   const closeResetConfirmationModal = () => setIsResetConfirmationModalOpen(false);
 
-  const isAdmin = isUserAdmin(currentUser?.email);
 
   // Caregiver Mode State (কোনো অপ্রয়োজনীয় লিসেনার বা পোলিং ছাড়া)
   const [patientCaregiverLinks, setPatientCaregiverLinks] = useState<CaregiverLinkDoc[]>([]);
@@ -1365,23 +1362,24 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, [currentUser]);
 
-  // Firebase Auth State Listener (Requirement 1 & 11)
+  // Auth state notifications & reset when Supabase session changes
+  const notifiedUserIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setIsAuthLoading(false);
-      if (user) {
-        showToast(`স্বাগতম, ${user.displayName || user.email?.split('@')[0] || 'ব্যবহারকারী'}!`, 'success');
-      } else {
-        setDemoCleanupReadyKey(null);
-        setMigrationReadyUid(null);
-        setPendingConflictSnapshot(null);
-        setIsDataConflictModalOpen(false);
-        setConflictInfo(null);
+    if (isAuthLoading) return;
+    if (currentUser) {
+      if (notifiedUserIdRef.current !== currentUser.uid) {
+        notifiedUserIdRef.current = currentUser.uid;
+        showToast(`স্বাগতম, ${currentUser.displayName || currentUser.email?.split('@')[0] || 'ব্যবহারকারী'}!`, 'success');
       }
-    });
-    return () => unsubscribe();
-  }, []);
+    } else {
+      notifiedUserIdRef.current = null;
+      setDemoCleanupReadyKey(null);
+      setMigrationReadyUid(null);
+      setPendingConflictSnapshot(null);
+      setIsDataConflictModalOpen(false);
+      setConflictInfo(null);
+    }
+  }, [currentUser, isAuthLoading]);
 
   const updateLiveSyncTime = (hasPendingWrites: boolean) => {
     if (isDeviceOffline() || isWriteQuotaPaused()) {
@@ -2153,7 +2151,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const signOutUser = async () => {
     const prevUid = currentUser?.uid;
     clearAllNativeReminders();
-    await logOut();
+    await signOutSupabase();
     if (prevUid) {
       clearUserReadOptimizerCaches(prevUid);
       clearCachedDoctors(prevUid);
@@ -4159,7 +4157,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: 'publish',
         title: 'অপেক্ষমাণ ওষুধ একসাথে প্রকাশ (Single Version)',
         description: `সারিতে থাকা ${queuedMeds.length}টি ওষুধ একসাথে সংস্করণ v${res.newVersion}-এ প্রকাশিত হয়েছে (মোট: ${res.totalCount}টি)।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       pendingPublishMedicinesRef.current = [];
@@ -4332,7 +4330,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       id: batchId,
       importedAt: new Date().toISOString(),
       importedByUid: currentUser?.uid || 'admin',
-      importedByEmail: currentUser?.email || ADMIN_EMAIL,
+      importedByEmail: currentUser?.email || '',
     };
 
     // Sanitize ID and validate against catalog constraints
@@ -4507,7 +4505,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: 'publish',
         title: 'ওষুধ অনুমোদন ও সার্বজনীন প্রকাশ',
         description: `ওষুধ "${updatedMed.brandName}" (${updatedMed.id}) যাচাইকৃত ও গ্লোবাল ক্যাটালগে প্রকাশিত হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(`"${updatedMed.brandName}" সফলভাবে অনুমোদিত ও লাইব্রেরিতে প্রকাশিত হয়েছে!`, 'success');
@@ -4589,7 +4587,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: 'publish',
         title: 'বাল্ক ওষুধ অনুমোদন ও সার্বজনীন প্রকাশ',
         description: `মোট ${targets.length}টি ওষুধ সরাসরি অনুমোদন করে লাইব্রেরিতে সার্বজনীন প্রকাশ করা হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(
@@ -4646,7 +4644,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: 'delete',
         title: 'টেস্ট ডাটা নিরাপদ অপসারণ',
         description: `খসড়া কিউ থেকে "${target.brandName}" মুছে ফেলা হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(`"${target.brandName}" রেকর্ডটি সফলভাবে ক্লাউড থেকে মুছে ফেলা হয়েছে`, 'info');
@@ -4707,7 +4705,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: 'delete',
         title: 'বাল্ক টেস্ট ডাটা নিরাপদ অপসারণ',
         description: `খসড়া কিউ থেকে ${safeIdSet.size}টি রেকর্ড মুছে ফেলা হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(`${safeIdSet.size} টি রেকর্ড সফলভাবে ক্লাউড থেকে মুছে ফেলা হয়েছে`, 'info');
@@ -4804,7 +4802,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: isPublished ? 'publish' : 'import',
         title: isPublished ? 'ম্যানুয়াল ওষুধ অন্তর্ভুক্তি ও সার্বজনীন প্রকাশ' : 'ম্যানুয়াল ওষুধ খসড়া তৈরি',
         description: `ওষুধ "${cleanMedicine.brandName}" (${cleanMedicine.strength}, ${cleanMedicine.manufacturer}) সরাসরি ম্যানুয়ালি ক্লাউড লাইব্রেরিতে ${isPublished ? 'প্রকাশ' : 'খসড়া'} করা হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(
@@ -4899,7 +4897,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: 'publish',
         title: 'ওষুধের তথ্য সম্পাদনা',
         description: `ওষুধ "${cleanMed.brandName}" (${cleanMed.strength}, ${cleanMed.manufacturer}) হালনাগাদ করা হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(`"${cleanMed.brandName}" সফলভাবে হালনাগাদ হয়েছে`, 'success');
@@ -4953,7 +4951,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: 'publish',
         title: 'বাল্ক ওষুধ তথ্য হালনাগাদ',
         description: `${targetCount}টি ওষুধের তথ্য (${changedFields.join(', ')}) হালনাগাদ করা হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(`${targetCount}টি ওষুধের তথ্য সফলভাবে হালনাগাদ হয়েছে`, 'success');
@@ -5004,7 +5002,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           deletedItems.length === 1
             ? `"${deletedItems[0].brandName}" লাইব্রেরি থেকে মুছে ফেলা হয়েছে।`
             : `${deletedItems.length}টি ওষুধ লাইব্রেরি থেকে মুছে ফেলা হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
         metadata: {
           count: deletedItems.length,
           action: 'admin_library_delete',
@@ -5047,7 +5045,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         type: 'publish',
         title: 'মুছে ফেলা ওষুধ পূর্বাবস্থায় ফেরানো (Undo)',
         description: `${itemsToRestore.length}টি মুছে ফেলা ওষুধ লাইব্রেরিতে ফিরিয়ে আনা হয়েছে।`,
-        adminEmail: currentUser?.email || ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(`${itemsToRestore.length}টি ওষুধ সফলভাবে ফিরিয়ে আনা হয়েছে!`, 'success');
@@ -5988,7 +5986,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         libraryVersion,
         importBatches,
         isAdmin,
-        adminEmail: ADMIN_EMAIL,
+        adminEmail: currentUser?.email || '',
         lastSyncTime,
         isOnline,
         isGlobalFromCache,

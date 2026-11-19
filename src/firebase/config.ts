@@ -1,5 +1,4 @@
 import { initializeApp, onLog } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
 import {
   initializeFirestore,
   doc,
@@ -32,8 +31,6 @@ export const db = initializeFirestore(
   },
   firebaseConfig.firestoreDatabaseId
 );
-
-export const auth = getAuth(app);
 
 // Best-effort cleanup of any legacy Firestore IndexedDB databases left by prior persistentLocalCache
 // so stale mutation queues are removed cleanly (never touches ShasthoBondhuLibraryDB).

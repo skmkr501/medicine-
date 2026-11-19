@@ -1,5 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { scanPrescriptionImage, PrescriptionScanResult } from '../../services/aiService';
+import { useMedicine } from '../../context/MedicineContext';
+import {
+  getAiErrorDisplay,
+  scanPrescriptionImage,
+  PrescriptionScanResult,
+} from '../../services/aiService';
 import {
   Camera,
   Upload,
@@ -26,11 +31,13 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
   onClose,
   onApplyData,
 }) => {
+  const { isAdmin } = useMedicine();
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [mimeType, setMimeType] = useState('image/jpeg');
   const [loading, setLoading] = useState(false);
   const [scanResult, setScanResult] = useState<PrescriptionScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -42,11 +49,13 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
 
     if (!file.type.startsWith('image/')) {
       setError('অনুগ্রহ করে শুধুমাত্র ছবি (JPG বা PNG) আপলোড করুন।');
+      setErrorCode(null);
       return;
     }
 
     setMimeType(file.type);
     setError(null);
+    setErrorCode(null);
     setScanResult(null);
 
     const reader = new FileReader();
@@ -61,6 +70,7 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
 
     setLoading(true);
     setError(null);
+    setErrorCode(null);
     setScanResult(null);
 
     try {
@@ -69,9 +79,15 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
         setScanResult(res.data);
       } else {
         setError('ছবি থেকে স্পষ্ট তথ্য শনাক্ত করা যায়নি। আরও পরিষ্কার আলোতে ছবি তুলুন।');
+        setErrorCode('bad_response');
       }
-    } catch (err: any) {
-      setError(err?.message || 'স্ক্যান করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।');
+    } catch (err: unknown) {
+      const display = getAiErrorDisplay(
+        err,
+        'স্ক্যান করতে সমস্যা হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।'
+      );
+      setError(display.message);
+      setErrorCode(display.code ?? null);
     } finally {
       setLoading(false);
     }
@@ -81,6 +97,7 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
     setImagePreview(null);
     setScanResult(null);
     setError(null);
+    setErrorCode(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -209,6 +226,9 @@ export const PrescriptionScannerModal: React.FC<PrescriptionScannerModalProps> =
             <div>
               <p className="font-semibold">স্ক্যান ব্যর্থ হয়েছে</p>
               <p className="mt-0.5 text-text">{error}</p>
+              {isAdmin && errorCode && (
+                <p className="mt-1 text-[11px] font-mono text-text-muted">কোড: {errorCode}</p>
+              )}
             </div>
           </div>
         )}
