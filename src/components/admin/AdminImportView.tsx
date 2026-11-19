@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { GlobalMedicine, ImportPreviewRecord, ImportDataSource, ImportSourceType } from '../../types';
 import {
@@ -11,6 +11,10 @@ import {
   getSampleDIMSCSV,
   isTestMedicine,
 } from '../../utils/medicineImportParser';
+import {
+  checkDuplicateKeysInSupabase,
+  fetchUnpublishedDraftsFromSupabase,
+} from '../../supabase/libraryService';
 import {
   ShieldAlert,
   ShieldCheck,
@@ -44,7 +48,7 @@ export const AdminImportView: React.FC = () => {
     currentUser,
     isAdmin,
     adminEmail,
-    globalMedicines,
+    libraryMutationVersion,
     importBatches,
     executeAdminBatchImport,
     openAuthModal,
@@ -84,7 +88,8 @@ export const AdminImportView: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Draft / Unpublished Queue Management States & Handlers
+  // Draft / Unpublished Queue Management States & Handlers (fetched from Supabase)
+  const [unpublishedMedicines, setUnpublishedMedicines] = useState<GlobalMedicine[]>([]);
   const [draftTabFilter, setDraftTabFilter] = useState<'all' | 'test_only'>('all');
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set());
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{
@@ -98,9 +103,24 @@ export const AdminImportView: React.FC = () => {
   });
   const [approvingId, setApprovingId] = useState<string | null>(null);
 
-  const unpublishedMedicines = globalMedicines.filter(
-    (m) => m.status !== 'published' || !m.verifiedByAdmin
-  );
+  useEffect(() => {
+    if (!isAdmin) {
+      setUnpublishedMedicines([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchUnpublishedDraftsFromSupabase(200)
+      .then((drafts) => {
+        if (!cancelled) setUnpublishedMedicines(drafts);
+      })
+      .catch((err) => {
+        console.warn('Could not load unpublished drafts:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, libraryMutationVersion]);
+
   const testUnpublishedMedicines = unpublishedMedicines.filter((m) => isTestMedicine(m));
 
   const displayedDrafts =
@@ -142,7 +162,7 @@ export const AdminImportView: React.FC = () => {
   };
 
   const promptBulkDraftDelete = () => {
-    const selectedMeds = globalMedicines.filter(
+    const selectedMeds = unpublishedMedicines.filter(
       (m) =>
         selectedDraftIds.has(m.id) &&
         (m.status !== 'published' || !m.verifiedByAdmin || isTestMedicine(m))
@@ -251,7 +271,7 @@ export const AdminImportView: React.FC = () => {
     setIsProcessingFile(true);
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
         let parsedRows: any[] = [];
@@ -273,10 +293,26 @@ export const AdminImportView: React.FC = () => {
           return;
         }
 
+        // First pass: generate normalized duplicateKey values without downloading catalog
+        const pre = processImportPayload(
+          parsedRows,
+          sourceProfile,
+          [],
+          licenseReference.trim(),
+          writtenPermissionRef.trim() || undefined,
+          targetStatus
+        );
+        const duplicateKeys = pre.previewRecords
+          .map((rec) => rec.record.duplicateKey)
+          .filter((k): k is string => Boolean(k));
+
+        // Check duplicate_key matches in Supabase in 200-key batches
+        const existingMatches = await checkDuplicateKeysInSupabase(duplicateKeys);
+
         const result = processImportPayload(
           parsedRows,
           sourceProfile,
-          globalMedicines,
+          existingMatches,
           licenseReference.trim(),
           writtenPermissionRef.trim() || undefined,
           targetStatus
@@ -490,7 +526,7 @@ export const AdminImportView: React.FC = () => {
             onClick={() => setCurrentPage('library')}
             className="px-3.5 py-2 text-xs font-semibold text-text bg-surface-2 hover:bg-border/60 rounded-xl transition-colors cursor-pointer"
           >
-            লাইব্রেরি দেখুন ({globalMedicines.length})
+            লাইব্রেরি দেখুন ({cloudStats.total})
           </button>
         </div>
       </div>

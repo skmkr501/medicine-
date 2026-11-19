@@ -45,7 +45,7 @@ export const DocumentPrintModal: React.FC<DocumentPrintModalProps> = ({
         if (cancelled) return;
         const page = bundle.pages[i];
         try {
-          const rawUrl = await loadDocumentPageImage(page.fileId);
+          const rawUrl = await loadDocumentPageImage(page.fileId, page.docId);
           if (rawUrl) {
             nextMap[page.key] =
               page.rotation !== 0

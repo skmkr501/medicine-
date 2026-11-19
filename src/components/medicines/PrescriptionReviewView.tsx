@@ -23,7 +23,8 @@ import {
   getAiErrorDisplay,
   PrescriptionAiResponse,
 } from '../../services/aiService';
-import { MealTiming, MedicineType, TimeSlot } from '../../types';
+import { GlobalMedicine, MealTiming, MedicineType, TimeSlot } from '../../types';
+import { searchLibraryMedicines } from '../../supabase/libraryService';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import {
   PRESCRIPTION_DEFAULT_SLOT_TIMES,
@@ -88,18 +89,20 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
     patients,
     activePatientId,
     medicines,
-    globalMedicines,
     currentUser,
     openAuthModal,
     openCreateProfileModal,
     addMultipleMedicines,
     setCurrentPage,
-    showToast,
     doctors,
     loadDoctors,
     addDoctor,
     isAdmin,
+    showToast,
   } = useMedicine();
+
+  const [fetchedCatalogPool, setFetchedCatalogPool] = useState<GlobalMedicine[]>([]);
+  const brandLookupTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
     void loadDoctors();
@@ -197,7 +200,32 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
       }
 
       setAiResponse(data);
-      const builtItems = buildReviewItemsFromAiResponse(data, globalMedicines);
+
+      // Query Supabase search_library for each scanned brand name in parallel (uses in-session cache)
+      const uniqueBrands = Array.from(
+        new Set(
+          data.items
+            .map((i) => (i.brandName || '').trim())
+            .filter((b) => b.length > 1)
+        )
+      ).slice(0, 20);
+
+      let matchedPool: GlobalMedicine[] = [];
+      if (uniqueBrands.length > 0) {
+        const searchBatches = await Promise.all(
+          uniqueBrands.map((b) =>
+            searchLibraryMedicines(b, { limit: 15 }).catch(() => [] as GlobalMedicine[])
+          )
+        );
+        const dedup = new Map<string, GlobalMedicine>();
+        for (const list of searchBatches) {
+          for (const gm of list) dedup.set(gm.id, gm);
+        }
+        matchedPool = Array.from(dedup.values());
+        setFetchedCatalogPool(matchedPool);
+      }
+
+      const builtItems = buildReviewItemsFromAiResponse(data, matchedPool);
       setReviewItems(builtItems);
 
       const suggestedPatient = findSuggestedPatientMatch(data.patientName, activePatients);
@@ -274,10 +302,15 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
     field: 'brandName' | 'strength',
     value: string
   ) => {
+    let latestBrand = '';
+    let latestStrength = '';
+
     updateItem(tempId, (item) => {
       const nextBrand = field === 'brandName' ? value : item.brandName;
       const nextStrength = field === 'strength' ? value : item.strength;
-      const matched = matchLocalLibraryMedicine(nextBrand, nextStrength, globalMedicines);
+      latestBrand = nextBrand;
+      latestStrength = nextStrength;
+      const matched = matchLocalLibraryMedicine(nextBrand, nextStrength, fetchedCatalogPool);
       const prevMatchedGeneric = item.catalogMatch?.genericName || '';
       const shouldFillGeneric =
         matched && (!item.genericName.trim() || item.genericName.trim() === prevMatchedGeneric);
@@ -291,6 +324,44 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
         needsVerification: item.confidence === 'low' || !nextBrand.trim(),
       };
     });
+
+    const trimmed = latestBrand.trim();
+    if (brandLookupTimerRef.current[tempId]) {
+      clearTimeout(brandLookupTimerRef.current[tempId]);
+    }
+    if (trimmed.length > 1) {
+      brandLookupTimerRef.current[tempId] = setTimeout(() => {
+        void searchLibraryMedicines(trimmed, { limit: 15 })
+          .then((results) => {
+            if (results.length === 0) return;
+            setFetchedCatalogPool((prev) => {
+              const map = new Map(prev.map((m) => [m.id, m]));
+              for (const r of results) map.set(r.id, r);
+              return Array.from(map.values());
+            });
+            updateItem(tempId, (curr) => {
+              if (curr.brandName !== latestBrand) return curr;
+              const matched = matchLocalLibraryMedicine(
+                curr.brandName,
+                latestStrength || curr.strength,
+                results
+              );
+              if (!matched) return curr;
+              const prevMatchedGeneric = curr.catalogMatch?.genericName || '';
+              const shouldFillGeneric =
+                !curr.genericName.trim() || curr.genericName.trim() === prevMatchedGeneric;
+              return {
+                ...curr,
+                catalogMatch: matched,
+                genericName: shouldFillGeneric ? matched.genericName : curr.genericName,
+              };
+            });
+          })
+          .catch(() => {
+            // ignore transient search errors during typing
+          });
+      }, 200);
+    }
   };
 
   const handleToggleSlot = (tempId: string, slot: TimeSlot) => {

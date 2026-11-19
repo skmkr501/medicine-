@@ -3,8 +3,7 @@ import React, {
   useMemo,
   useEffect,
   useCallback,
-  useDeferredValue,
-  useTransition,
+  useRef,
 } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { GlobalMedicine } from '../../types';
@@ -12,7 +11,14 @@ import { GlobalMedicineDetailModal } from './GlobalMedicineDetailModal';
 import { AddToPersonalModal } from './AddToPersonalModal';
 import { LibrarySearchInput } from './LibrarySearchInput';
 import { LibraryMedicineCard } from './LibraryMedicineCard';
-import { LIBRARY_PAGE_SIZE, paginateMedicines } from '../../utils/libraryRealtime';
+import {
+  LIBRARY_BROWSE_PAGE_SIZE,
+  fetchLibraryBrowsePage,
+  fetchLibraryFilterOptions,
+  fetchLibraryMedicinesByIds,
+  fetchSameGenericAlternativesFromSupabase,
+  searchLibraryMedicines,
+} from '../../supabase/libraryService';
 import {
   Filter,
   Plus,
@@ -25,33 +31,24 @@ import {
   CheckSquare,
   Square,
   WifiOff,
-  X,
   Star,
   History,
   SlidersHorizontal,
   ShieldCheck,
+  Loader2,
 } from 'lucide-react';
 import { isTestMedicine } from '../../utils/medicineImportParser';
 import {
   ALPHABET_INDEX_LETTERS,
-  findSameGenericAlternatives,
+  getMedicineAlphabetLetter,
   loadLibraryFavoriteIds,
   loadRecentlyViewedIds,
   recordRecentlyViewedId,
   saveLibraryFavoriteIds,
 } from '../../utils/libraryManagement';
-import {
-  computeLibraryMetadata,
-  getOrBuildLibrarySearchIndex,
-  LibrarySearchFilters,
-  LibrarySearchIndex,
-  quickBasicSearchMedicines,
-  searchIndexedMedicines,
-} from '../../utils/librarySearchIndex';
 
 export const MedicineLibrary: React.FC = () => {
   const {
-    globalMedicines,
     patients,
     isAdmin,
     setCurrentPage,
@@ -69,22 +66,16 @@ export const MedicineLibrary: React.FC = () => {
     openManualAddModal,
     lastSyncTime,
     isOnline,
-    isGlobalFromCache,
     isCloudConnected,
-    latestLibraryNotice,
-    dismissLibraryNotice,
-    pendingPublishMedicines,
+    cloudStats,
+    libraryMutationVersion,
   } = useMedicine();
 
-  const pendingPublishIdSet = useMemo(
-    () => new Set((isAdmin ? pendingPublishMedicines : []).map((m) => m.id)),
-    [isAdmin, pendingPublishMedicines]
-  );
+  const publishedCount = cloudStats.published;
+  const pendingCount = cloudStats.draft;
+  const totalCatalogCount = cloudStats.total;
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearchTransitionPending, startSearchTransition] = useTransition();
-  const deferredSearchQuery = useDeferredValue(searchQuery);
-
   const [selectedForm, setSelectedForm] = useState<string>('all');
   const [selectedManufacturer, setSelectedManufacturer] = useState<string>('all');
   const [selectedSource, setSelectedSource] = useState<string>('all');
@@ -97,41 +88,37 @@ export const MedicineLibrary: React.FC = () => {
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [isBulkPublishing, setIsBulkPublishing] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [visibleCount, setVisibleCount] = useState<number>(LIBRARY_PAGE_SIZE);
 
-  // Module-cached search index (non-blocking 500-item idle batches on cold load, incremental updates on edit/import/delete)
-  const [readyIndex, setReadyIndex] = useState<LibrarySearchIndex | null>(() =>
-    getOrBuildLibrarySearchIndex(globalMedicines, (built) => {
-      setReadyIndex(built);
-    })
-  );
+  // Server-paginated browse state + RPC search results
+  const [page, setPage] = useState<number>(1);
+  const [browseItems, setBrowseItems] = useState<GlobalMedicine[]>([]);
+  const [browseTotalCount, setBrowseTotalCount] = useState<number>(0);
+  const [searchResults, setSearchResults] = useState<GlobalMedicine[]>([]);
+  const [matchedByGenericSample, setMatchedByGenericSample] = useState<GlobalMedicine[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const activeRequestIdRef = useRef(0);
+
+  // Dynamic filter options fetched once from library_medicines
+  const [uniqueForms, setUniqueForms] = useState<string[]>([]);
+  const [uniqueManufacturers, setUniqueManufacturers] = useState<string[]>([]);
 
   useEffect(() => {
-    const syncOrCached = getOrBuildLibrarySearchIndex(globalMedicines, (built) => {
-      setReadyIndex(built);
-    });
-    if (syncOrCached) {
-      setReadyIndex(syncOrCached);
-    }
-  }, [globalMedicines]);
-
-  // Cached metadata (uniqueManufacturers, uniqueForms, availableLetters, counts)
-  const libraryMetadata = useMemo(
-    () =>
-      readyIndex && readyIndex.totalCount === globalMedicines.length
-        ? readyIndex
-        : computeLibraryMetadata(globalMedicines),
-    [readyIndex, globalMedicines]
-  );
-
-  const { uniqueManufacturers, uniqueForms, publishedCount, pendingCount } = libraryMetadata;
-
-  const availableLetters = useMemo(() => {
-    if (!isAdmin) return libraryMetadata.availableLettersPublished;
-    if (adminStatusFilter === 'published') return libraryMetadata.availableLettersPublished;
-    if (adminStatusFilter === 'pending') return libraryMetadata.availableLettersPending;
-    return libraryMetadata.availableLettersAll;
-  }, [libraryMetadata, isAdmin, adminStatusFilter]);
+    let cancelled = false;
+    void fetchLibraryFilterOptions({ includeUnpublished: isAdmin })
+      .then((opts) => {
+        if (cancelled) return;
+        setUniqueForms(opts.forms);
+        setUniqueManufacturers(opts.manufacturers);
+      })
+      .catch(() => {
+        // non-fatal
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, libraryMutationVersion]);
 
   const roleScopedCount = !isAdmin
     ? publishedCount
@@ -139,15 +126,35 @@ export const MedicineLibrary: React.FC = () => {
     ? publishedCount
     : adminStatusFilter === 'pending'
     ? pendingCount
-    : globalMedicines.length;
+    : totalCatalogCount;
 
-  // Local persisted Favorites & Recently Viewed (zero Firestore cost)
+  // Local persisted Favorites & Recently Viewed (zero server cost until viewed)
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadLibraryFavoriteIds());
   const [recentlyViewedIds, setRecentlyViewedIds] = useState<string[]>(() =>
     loadRecentlyViewedIds()
   );
+  const [recentlyViewedMedicines, setRecentlyViewedMedicines] = useState<GlobalMedicine[]>([]);
 
   const favoriteIdSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
+
+  useEffect(() => {
+    const ids = recentlyViewedIds.slice(0, 8);
+    if (ids.length === 0) {
+      setRecentlyViewedMedicines([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchLibraryMedicinesByIds(ids, { includeUnpublished: isAdmin })
+      .then((items) => {
+        if (!cancelled) setRecentlyViewedMedicines(items);
+      })
+      .catch(() => {
+        if (!cancelled) setRecentlyViewedMedicines([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [recentlyViewedIds, isAdmin, libraryMutationVersion]);
 
   const toggleFavorite = useCallback((e: React.MouseEvent | null, medId: string) => {
     if (e) e.stopPropagation();
@@ -179,61 +186,166 @@ export const MedicineLibrary: React.FC = () => {
     isDeleting: false,
   });
 
-  const recentlyViewedMedicines = useMemo(() => {
-    if (recentlyViewedIds.length === 0) return [];
-    const byId = new Map<string, GlobalMedicine>();
-    for (let i = 0; i < globalMedicines.length; i++) {
-      const m = globalMedicines[i];
-      byId.set(m.id, m);
-    }
-    return recentlyViewedIds
-      .map((id) => byId.get(id))
-      .filter((m): m is GlobalMedicine => Boolean(m && (isAdmin || m.status === 'published')));
-  }, [globalMedicines, recentlyViewedIds, isAdmin]);
-
   const handleDebouncedSearchChange = useCallback((nextValue: string) => {
-    startSearchTransition(() => {
-      setSearchQuery(nextValue);
-    });
+    setSearchQuery(nextValue);
   }, []);
 
-  // Multi-stage fast indexed search (falls back to lightweight basic search while cold index builds in background)
-  const { filteredMedicines, matchedByGenericSample } = useMemo(() => {
-    const query = deferredSearchQuery.trim();
-    const filters: LibrarySearchFilters = {
-      isAdmin,
-      adminStatusFilter,
-      favoritesOnly,
-      favoriteIdSet,
-      selectedLetter,
+  const trimmedQuery = searchQuery.trim();
+  const isSearchMode = trimmedQuery.length > 1;
+
+  // Reset to page 1 when filters or search change
+  useEffect(() => {
+    setPage(1);
+  }, [
+    trimmedQuery,
+    selectedForm,
+    selectedManufacturer,
+    selectedSource,
+    priceFilter,
+    favoritesOnly,
+    selectedLetter,
+    adminStatusFilter,
+    isAdmin,
+    libraryMutationVersion,
+  ]);
+
+  // Execute RPC search (when query.trim().length > 1) OR paginated browse
+  useEffect(() => {
+    const reqId = ++activeRequestIdRef.current;
+    setFetchError(null);
+
+    if (isSearchMode) {
+      setIsLoading(true);
+      void searchLibraryMedicines(trimmedQuery, {
+        includeUnpublished: isAdmin,
+        limit: 30,
+      })
+        .then(async (items) => {
+          if (reqId !== activeRequestIdRef.current) return;
+          setSearchResults(items);
+          setIsLoading(false);
+
+          const firstWithGeneric = items.find((m) => m.genericName?.trim());
+          if (firstWithGeneric?.genericName) {
+            try {
+              const alts = await fetchSameGenericAlternativesFromSupabase(
+                firstWithGeneric.genericName,
+                undefined,
+                10
+              );
+              if (reqId === activeRequestIdRef.current) {
+                setMatchedByGenericSample(alts);
+              }
+            } catch {
+              if (reqId === activeRequestIdRef.current) {
+                setMatchedByGenericSample([]);
+              }
+            }
+          } else {
+            setMatchedByGenericSample([]);
+          }
+        })
+        .catch(() => {
+          if (reqId !== activeRequestIdRef.current) return;
+          setSearchResults([]);
+          setMatchedByGenericSample([]);
+          setFetchError('অনুসন্ধান করতে সমস্যা হয়েছে। ইন্টারনেট সংযোগ পরীক্ষা করুন।');
+          setIsLoading(false);
+        });
+      return;
+    }
+
+    // Browse mode
+    setMatchedByGenericSample([]);
+    if (page === 1) {
+      setIsLoading(true);
+    } else {
+      setIsLoadingMore(true);
+    }
+
+    const mappedStatus = !isAdmin
+      ? 'published'
+      : adminStatusFilter === 'pending'
+      ? 'unpublished'
+      : adminStatusFilter;
+
+    void fetchLibraryBrowsePage({
+      page,
+      pageSize: LIBRARY_BROWSE_PAGE_SIZE,
+      adminStatusFilter: mappedStatus,
+      selectedLetter: selectedLetter === 'ALL' ? 'all' : selectedLetter,
       selectedForm,
       selectedManufacturer,
-      priceFilter,
       selectedSource,
-    };
-
-    const searchResult =
-      readyIndex && readyIndex.totalCount === globalMedicines.length
-        ? searchIndexedMedicines(readyIndex, filters, query)
-        : quickBasicSearchMedicines(globalMedicines, filters, query);
-
-    const sameGenericExtra =
-      query && searchResult.firstGenericMatch
-        ? findSameGenericAlternatives(
-            globalMedicines,
-            searchResult.firstGenericMatch.genericName,
-            undefined,
-            10
-          )
-        : [];
-
-    return {
-      filteredMedicines: searchResult.medicines,
-      matchedByGenericSample: sameGenericExtra,
-    };
+      priceFilter,
+      favoriteIdsOnly: favoritesOnly ? favoriteIds : undefined,
+    })
+      .then((res) => {
+        if (reqId !== activeRequestIdRef.current) return;
+        setBrowseTotalCount(res.totalCount);
+        setBrowseItems((prev) => {
+          if (page === 1) return res.items;
+          const existingIds = new Set(prev.map((m) => m.id));
+          const additions = res.items.filter((m) => !existingIds.has(m.id));
+          return [...prev, ...additions];
+        });
+      })
+      .catch(() => {
+        if (reqId !== activeRequestIdRef.current) return;
+        if (page === 1) setBrowseItems([]);
+        setFetchError('লাইব্রেরি তালিকা লোড করা যায়নি।');
+      })
+      .finally(() => {
+        if (reqId === activeRequestIdRef.current) {
+          setIsLoading(false);
+          setIsLoadingMore(false);
+        }
+      });
   }, [
-    readyIndex,
-    globalMedicines,
+    isSearchMode,
+    trimmedQuery,
+    page,
+    isAdmin,
+    adminStatusFilter,
+    selectedLetter,
+    selectedForm,
+    selectedManufacturer,
+    selectedSource,
+    priceFilter,
+    favoritesOnly,
+    favoriteIds,
+    libraryMutationVersion,
+  ]);
+
+  // Apply secondary UI filters client-side when displaying RPC search results (<= 30 rows)
+  const filteredSearchResults = useMemo(() => {
+    if (!isSearchMode) return [];
+    return searchResults.filter((m) => {
+      if (!isAdmin && (m.status !== 'published' || !m.verifiedByAdmin)) return false;
+      if (isAdmin && adminStatusFilter === 'published' && (m.status !== 'published' || !m.verifiedByAdmin)) {
+        return false;
+      }
+      if (isAdmin && adminStatusFilter === 'pending' && m.status === 'published' && m.verifiedByAdmin) {
+        return false;
+      }
+      if (favoritesOnly && !favoriteIdSet.has(m.id)) return false;
+      if (selectedLetter !== 'ALL' && getMedicineAlphabetLetter(m.brandName) !== selectedLetter) {
+        return false;
+      }
+      if (selectedForm !== 'all' && m.dosageForm !== selectedForm) return false;
+      if (selectedManufacturer !== 'all' && m.manufacturer !== selectedManufacturer) return false;
+      if (selectedSource !== 'all' && m.source !== selectedSource) return false;
+      if (priceFilter === 'has_price' && !(typeof m.pricePerUnit === 'number' && m.pricePerUnit > 0)) {
+        return false;
+      }
+      if (priceFilter === 'no_price' && typeof m.pricePerUnit === 'number' && m.pricePerUnit > 0) {
+        return false;
+      }
+      return true;
+    });
+  }, [
+    isSearchMode,
+    searchResults,
     isAdmin,
     adminStatusFilter,
     favoritesOnly,
@@ -241,40 +353,16 @@ export const MedicineLibrary: React.FC = () => {
     selectedLetter,
     selectedForm,
     selectedManufacturer,
-    priceFilter,
-    selectedSource,
-    deferredSearchQuery,
-  ]);
-
-  useEffect(() => {
-    setVisibleCount(LIBRARY_PAGE_SIZE);
-  }, [
-    deferredSearchQuery,
-    selectedForm,
-    selectedManufacturer,
     selectedSource,
     priceFilter,
-    favoritesOnly,
-    selectedLetter,
-    adminStatusFilter,
-    isAdmin,
   ]);
 
-  useEffect(() => {
-    if (!latestLibraryNotice) return;
-    const timer = setTimeout(() => {
-      dismissLibraryNotice();
-    }, 10000);
-    return () => clearTimeout(timer);
-  }, [latestLibraryNotice, dismissLibraryNotice]);
+  const visibleMedicines = isSearchMode ? filteredSearchResults : browseItems;
+  const totalMatchedCount = isSearchMode ? filteredSearchResults.length : browseTotalCount;
+  const hasMore = !isSearchMode && browseItems.length < browseTotalCount;
+  const remainingCount = Math.max(0, browseTotalCount - browseItems.length);
 
-  const { visibleItems: visibleMedicines, remainingCount, hasMore } = useMemo(
-    () => paginateMedicines(filteredMedicines, visibleCount),
-    [filteredMedicines, visibleCount]
-  );
-
-  const isOfflineMode = !isOnline || (!isCloudConnected && isGlobalFromCache);
-  const isSearchStale = isSearchTransitionPending || searchQuery !== deferredSearchQuery;
+  const isOfflineMode = !isOnline || !isCloudConnected;
 
   // Quick verify & publish by admin
   const handleQuickPublish = useCallback(
@@ -300,11 +388,16 @@ export const MedicineLibrary: React.FC = () => {
     });
   }, []);
 
+  const visibleTestDrafts = useMemo(
+    () =>
+      visibleMedicines.filter(
+        (m) => (m.status !== 'published' || !m.verifiedByAdmin) && isTestMedicine(m)
+      ),
+    [visibleMedicines]
+  );
+
   const handleSelectAllTestDrafts = () => {
-    const testDrafts = filteredMedicines.filter(
-      (m) => (m.status !== 'published' || !m.verifiedByAdmin) && isTestMedicine(m)
-    );
-    const testDraftIds = testDrafts.map((m) => m.id);
+    const testDraftIds = visibleTestDrafts.map((m) => m.id);
     const allSelected =
       testDraftIds.length > 0 && testDraftIds.every((id) => selectedDraftIds.has(id));
     if (allSelected) {
@@ -331,12 +424,30 @@ export const MedicineLibrary: React.FC = () => {
     });
   }, []);
 
-  const promptBulkDelete = () => {
-    const selectedMeds = globalMedicines.filter(
-      (m) =>
-        selectedDraftIds.has(m.id) &&
-        (m.status !== 'published' || !m.verifiedByAdmin || isTestMedicine(m))
-    );
+  const promptBulkDelete = async () => {
+    const selectedIdsList = Array.from(selectedDraftIds);
+    if (selectedIdsList.length === 0) return;
+    const byVisible = new Map(visibleMedicines.map((m) => [m.id, m]));
+    const missingIds = selectedIdsList.filter((id) => !byVisible.has(id));
+    let fetchedExtra: GlobalMedicine[] = [];
+    if (missingIds.length > 0) {
+      try {
+        fetchedExtra = await fetchLibraryMedicinesByIds(missingIds, { includeUnpublished: true });
+      } catch {
+        fetchedExtra = [];
+      }
+    }
+    const mergedMap = new Map<string, GlobalMedicine>();
+    visibleMedicines.forEach((m) => mergedMap.set(m.id, m));
+    fetchedExtra.forEach((m) => mergedMap.set(m.id, m));
+
+    const selectedMeds = selectedIdsList
+      .map((id) => mergedMap.get(id))
+      .filter(
+        (m): m is GlobalMedicine =>
+          Boolean(m && (m.status !== 'published' || !m.verifiedByAdmin || isTestMedicine(m)))
+      );
+
     if (selectedMeds.length === 0) return;
     setDeleteConfirmModal({
       isOpen: true,
@@ -431,7 +542,7 @@ export const MedicineLibrary: React.FC = () => {
             >
               <span className="inline-flex items-center gap-1.5 font-semibold text-warning-text">
                 <WifiOff className="w-3.5 h-3.5 shrink-0" />
-                <span>অফলাইন, শেষ জানা তালিকা</span>
+                <span>অফলাইন</span>
               </span>
               {lastSyncTime && (
                 <span className="text-[11px] text-warning-text/90 border-l border-warning/35 pl-2">
@@ -451,9 +562,11 @@ export const MedicineLibrary: React.FC = () => {
                 </span>
                 <span>লাইভ</span>
               </span>
-              <span className="text-[11px] text-success-text/90 border-l border-success/30 pl-2">
-                {lastSyncTime ? `শেষ সিঙ্ক: ${lastSyncTime}` : 'সিঙ্ক হচ্ছে...'}
-              </span>
+              {lastSyncTime && (
+                <span className="text-[11px] text-success-text/90 border-l border-success/30 pl-2">
+                  শেষ সিঙ্ক: {lastSyncTime}
+                </span>
+              )}
             </div>
           )}
 
@@ -497,27 +610,6 @@ export const MedicineLibrary: React.FC = () => {
         </div>
       </div>
 
-      {/* Live New Medicine Arrival Notice */}
-      {latestLibraryNotice && (
-        <div
-          className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-success-soft border border-success/30 text-xs text-success-text shadow-xs"
-          role="status"
-        >
-          <div className="flex items-center gap-2 font-semibold">
-            <span className="h-2 w-2 rounded-full bg-success shrink-0"></span>
-            <span>{latestLibraryNotice.message}</span>
-          </div>
-          <button
-            type="button"
-            onClick={dismissLibraryNotice}
-            className="p-1 rounded-lg hover:bg-success/15 text-success-text cursor-pointer"
-            aria-label="বার্তা বন্ধ করুন"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
       {/* Admin Publication Filter Bar */}
       {isAdmin && (
         <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-surface-2 rounded-xl border border-border text-xs">
@@ -555,7 +647,7 @@ export const MedicineLibrary: React.FC = () => {
                     : 'text-text-muted hover:text-text'
                 }`}
               >
-                সকল ({globalMedicines.length})
+                সকল ({totalCatalogCount})
               </button>
             </div>
           </div>
@@ -566,21 +658,15 @@ export const MedicineLibrary: React.FC = () => {
                 type="button"
                 disabled={isBulkPublishing}
                 onClick={async () => {
-                  const pendingMeds = globalMedicines.filter(
-                    (m) => m.status !== 'published' || !m.verifiedByAdmin
-                  );
-                  if (pendingMeds.length === 0) return;
                   setIsBulkPublishing(true);
-                  const success = await bulkPublishGlobalMedicinesAction(
-                    pendingMeds.map((m) => m.id)
-                  );
-                  if (success) {
+                  const count = await bulkPublishGlobalMedicinesAction();
+                  if (count > 0) {
                     setAdminStatusFilter('published');
                   }
                   setIsBulkPublishing(false);
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-[#15803D] hover:bg-[#166534] text-white rounded-lg font-bold text-xs shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-                title="সকল অপেক্ষমাণ খসড়া সরাসরি অনুমোদন দিয়ে লাইব্রেরিতে প্রকাশ করুন যাতে অন্য সব ফোনেও তাৎক্ষণিক দেখা যায়"
+                title="সকল অপেক্ষমাণ খসড়া সরাসরি অনুমোদন দিয়ে লাইব্রেরিতে প্রকাশ করুন"
               >
                 <Check className="w-3.5 h-3.5" />
                 <span>
@@ -607,26 +693,14 @@ export const MedicineLibrary: React.FC = () => {
               onClick={handleSelectAllTestDrafts}
               className="flex items-center gap-2 font-semibold text-text hover:text-danger-text cursor-pointer"
             >
-              {(() => {
-                const testDrafts = filteredMedicines.filter(
-                  (m) => (m.status !== 'published' || !m.verifiedByAdmin) && isTestMedicine(m)
-                );
-                const allSelected =
-                  testDrafts.length > 0 && testDrafts.every((m) => selectedDraftIds.has(m.id));
-                return allSelected ? (
-                  <CheckSquare className="w-4 h-4 text-danger-text" />
-                ) : (
-                  <Square className="w-4 h-4 text-text-muted" />
-                );
-              })()}
+              {visibleTestDrafts.length > 0 &&
+              visibleTestDrafts.every((m) => selectedDraftIds.has(m.id)) ? (
+                <CheckSquare className="w-4 h-4 text-danger-text" />
+              ) : (
+                <Square className="w-4 h-4 text-text-muted" />
+              )}
               <span>
-                সকল খসড়া টেস্ট তথ্য নির্বাচন (
-                {
-                  filteredMedicines.filter(
-                    (m) => (m.status !== 'published' || !m.verifiedByAdmin) && isTestMedicine(m)
-                  ).length
-                }{' '}
-                টি)
+                সকল খসড়া টেস্ট তথ্য নির্বাচন ({visibleTestDrafts.length} টি)
               </span>
             </button>
 
@@ -674,11 +748,11 @@ export const MedicineLibrary: React.FC = () => {
       {/* Search and Collapsible Filters Bar */}
       <div className="bg-surface rounded-2xl p-4 sm:p-5 border border-border shadow-xs space-y-3">
         <div className="flex flex-col sm:flex-row gap-3">
-          {/* Isolated Debounced Search Input */}
+          {/* Isolated 200ms Debounced Search Input */}
           <LibrarySearchInput
             value={searchQuery}
             onDebouncedChange={handleDebouncedSearchChange}
-            isSearching={isSearchStale}
+            isSearching={isLoading && isSearchMode}
             debounceMs={200}
           />
 
@@ -776,11 +850,11 @@ export const MedicineLibrary: React.FC = () => {
                 className="min-h-[48px] w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-base text-text focus:outline-hidden"
               >
                 <option value="all">সকল উৎস</option>
-                <option value="DGDA">সরকারি অনুমোদিত তালিকা</option>
+                <option value="DGDA_GOV">সরকারি অনুমোদিত তালিকা</option>
                 <option value="MANUFACTURER">প্রস্তুতকারকের তথ্য</option>
-                <option value="INDEPENDENT">চিকিৎসা যাচাইকৃত</option>
-                <option value="MEDEX">স্বীকৃত তালিকা (মেডেক্স)</option>
-                <option value="DIMS">স্বীকৃত তালিকা (ডিমস)</option>
+                <option value="INDEPENDENT_VERIFIED">চিকিৎসা যাচাইকৃত</option>
+                <option value="MEDEX_LICENSED">স্বীকৃত তালিকা (মেডেক্স)</option>
+                <option value="DIMS_LICENSED">স্বীকৃত তালিকা (ডিমস)</option>
               </select>
             </div>
           </div>
@@ -802,20 +876,16 @@ export const MedicineLibrary: React.FC = () => {
               সব
             </button>
             {ALPHABET_INDEX_LETTERS.map((letter) => {
-              const hasItems = availableLetters.has(letter);
               const isSelected = selectedLetter === letter;
               return (
                 <button
                   key={letter}
                   type="button"
-                  disabled={!hasItems && !isSelected}
                   onClick={() => setSelectedLetter((prev) => (prev === letter ? 'ALL' : letter))}
-                  className={`min-h-[36px] min-w-[32px] px-2 py-1 rounded-lg text-xs font-bold shrink-0 transition-colors ${
+                  className={`min-h-[36px] min-w-[32px] px-2 py-1 rounded-lg text-xs font-bold shrink-0 transition-colors cursor-pointer ${
                     isSelected
-                      ? 'bg-primary text-on-primary cursor-pointer'
-                      : hasItems
-                      ? 'bg-surface-2 text-text hover:bg-primary-soft hover:text-primary cursor-pointer'
-                      : 'text-text-muted/35 cursor-not-allowed'
+                      ? 'bg-primary text-on-primary'
+                      : 'bg-surface-2 text-text hover:bg-primary-soft hover:text-primary'
                   }`}
                 >
                   {letter}
@@ -828,7 +898,7 @@ export const MedicineLibrary: React.FC = () => {
 
       {/* Recently Viewed Strip ("সম্প্রতি দেখা") */}
       {recentlyViewedMedicines.length > 0 &&
-        !deferredSearchQuery &&
+        !trimmedQuery &&
         !favoritesOnly &&
         selectedLetter === 'ALL' && (
           <section className="space-y-2">
@@ -860,8 +930,8 @@ export const MedicineLibrary: React.FC = () => {
           </section>
         )}
 
-      {/* Same Generic Alternatives Highlight when searching by generic name */}
-      {deferredSearchQuery.trim() && matchedByGenericSample.length > 0 && (
+      {/* Same Generic Alternatives Highlight when searching */}
+      {isSearchMode && matchedByGenericSample.length > 0 && (
         <section className="bg-primary-soft/60 rounded-2xl p-4 border border-primary/25 space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-bold text-text">
@@ -896,7 +966,7 @@ export const MedicineLibrary: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-2 text-base text-text-muted px-1">
         <span>
           পাওয়া গেছে:{' '}
-          <strong className="text-text font-bold tabular-nums">{filteredMedicines.length}</strong>{' '}
+          <strong className="text-text font-bold tabular-nums">{totalMatchedCount}</strong>{' '}
           টি ওষুধ
           {hasMore && (
             <span className="text-text-muted"> (দেখানো হচ্ছে {visibleMedicines.length} টি)</span>
@@ -914,8 +984,22 @@ export const MedicineLibrary: React.FC = () => {
         )}
       </div>
 
+      {/* Fetch error banner */}
+      {fetchError && (
+        <div className="p-4 rounded-2xl bg-danger-soft border border-danger/30 text-xs font-semibold text-danger-text flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>{fetchError}</span>
+        </div>
+      )}
+
       {/* Medicines Grid */}
-      {filteredMedicines.length > 0 ? (
+      {isLoading && visibleMedicines.length === 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3, 4, 5, 6].map((n) => (
+            <div key={n} className="h-44 rounded-2xl bg-surface-2 border border-border animate-pulse" />
+          ))}
+        </div>
+      ) : visibleMedicines.length > 0 ? (
         <div className="space-y-5">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {visibleMedicines.map((med) => {
@@ -928,7 +1012,7 @@ export const MedicineLibrary: React.FC = () => {
                   isAdmin={isAdmin}
                   isFavorite={favoriteIdSet.has(med.id)}
                   isUnpublished={isUnpublished}
-                  isPendingPublish={isAdmin && pendingPublishIdSet.has(med.id)}
+                  isPendingPublish={false}
                   isTest={isTest}
                   isDraftSelected={selectedDraftIds.has(med.id)}
                   isPublishing={publishingId === med.id}
@@ -947,10 +1031,12 @@ export const MedicineLibrary: React.FC = () => {
             <div className="flex justify-center pt-2">
               <button
                 type="button"
-                onClick={() => setVisibleCount((prev) => prev + LIBRARY_PAGE_SIZE)}
-                className="min-h-[48px] inline-flex items-center gap-2 px-7 py-3 text-base font-bold text-primary bg-primary-soft hover:bg-primary/15 border border-primary/30 rounded-2xl shadow-xs transition-colors cursor-pointer"
+                disabled={isLoadingMore}
+                onClick={() => setPage((prev) => prev + 1)}
+                className="min-h-[48px] inline-flex items-center gap-2 px-7 py-3 text-base font-bold text-primary bg-primary-soft hover:bg-primary/15 border border-primary/30 rounded-2xl shadow-xs transition-colors cursor-pointer disabled:opacity-50"
               >
-                <span>আরও দেখান</span>
+                {isLoadingMore && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span>{isLoadingMore ? 'লোড হচ্ছে...' : 'আরও দেখান'}</span>
                 <span className="text-sm font-semibold opacity-85">({remainingCount} টি বাকি)</span>
               </button>
             </div>
@@ -964,24 +1050,24 @@ export const MedicineLibrary: React.FC = () => {
           </div>
           <div className="max-w-md mx-auto space-y-1.5">
             <h3 className="text-base font-bold text-text">
-              {globalMedicines.length === 0
+              {totalCatalogCount === 0
                 ? 'ওষুধ লাইব্রেরি বর্তমানে খালি রয়েছে'
                 : isAdmin && adminStatusFilter === 'pending' && pendingCount === 0
                 ? 'কোনো অপেক্ষমাণ খসড়া নেই'
                 : 'কোনো ওষুধ খুঁজে পাওয়া যায়নি'}
             </h3>
             <p className="text-xs text-text-muted leading-relaxed">
-              {globalMedicines.length === 0
+              {totalCatalogCount === 0
                 ? 'অনুমোদিত ওষুধ তালিকা যুক্ত করা হলে তালিকাটি এখানে প্রদর্শিত হবে।'
                 : isAdmin && adminStatusFilter === 'pending' && pendingCount === 0
                 ? 'আপনার সকল ওষুধ অনুমোদিত ও প্রকাশিত হয়েছে। আপনি "প্রকাশিত ওষুধ" অংশে সব দেখতে পাবেন।'
-                : deferredSearchQuery.trim()
-                ? `"${deferredSearchQuery.trim()}" নামে কোনো মিল পাওয়া যায়নি। অনুগ্রহ করে বানান একটু পরিবর্তন করে অথবা ওষুধের সংক্ষিপ্ত নাম (যেমন: নাপা, Paracetamol, Seclo) লিখে আবার খুঁজুন।`
+                : trimmedQuery
+                ? `"${trimmedQuery}" নামে কোনো মিল পাওয়া যায়নি। অনুগ্রহ করে বানান একটু পরিবর্তন করে অথবা ওষুধের সংক্ষিপ্ত নাম (যেমন: নাপা, Paracetamol, Seclo) লিখে আবার খুঁজুন।`
                 : 'আপনার বাছাই করা ফিল্টার শর্ত অনুযায়ী কোনো ওষুধ পাওয়া যায়নি। ফিল্টার বাতিল করে আবার চেষ্টা করুন।'}
             </p>
           </div>
 
-          {hasActiveFilter && globalMedicines.length > 0 && (
+          {hasActiveFilter && totalCatalogCount > 0 && (
             <div className="pt-1 flex justify-center">
               <button
                 type="button"
@@ -1005,7 +1091,7 @@ export const MedicineLibrary: React.FC = () => {
             </div>
           )}
 
-          {globalMedicines.length === 0 && (
+          {totalCatalogCount === 0 && (
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
               {isAdmin ? (
                 <button
@@ -1027,10 +1113,9 @@ export const MedicineLibrary: React.FC = () => {
         </div>
       )}
 
-      {/* Global Medicine Detail Modal */}
+      {/* Global Medicine Detail Modal (loads same-generic alternatives on demand) */}
       <GlobalMedicineDetailModal
         medicine={selectedGlobalMedForDetail}
-        allMedicines={globalMedicines}
         isFavorite={
           selectedGlobalMedForDetail ? favoriteIdSet.has(selectedGlobalMedForDetail.id) : false
         }

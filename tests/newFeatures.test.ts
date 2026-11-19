@@ -18,6 +18,15 @@ import {
   phonebookFromRow,
   settingsToRow,
   settingsFromRow,
+  libraryMedicineToRow,
+  libraryMedicineFromRow,
+  importBatchToRow,
+  importBatchFromRow,
+  adminActivityToRow,
+  adminActivityFromRow,
+  medicalDocumentToRow,
+  medicalDocumentFromRow,
+  feedbackFromRow,
 } from '../src/supabase/mappers';
 import {
   chunkArray,
@@ -25,6 +34,36 @@ import {
   upsertRowsInBatches,
   SUPABASE_UPSERT_BATCH_SIZE,
 } from '../src/supabase/userDataService';
+import {
+  LIBRARY_SEARCH_LIMIT,
+  LIBRARY_BROWSE_PAGE_SIZE,
+  ADMIN_LIBRARY_PAGE_SIZE,
+  LIBRARY_ID_BATCH_SIZE,
+  LIBRARY_DUPLICATE_BATCH_SIZE,
+  LIBRARY_DELETE_BATCH_SIZE,
+  LIBRARY_UPSERT_BATCH_SIZE,
+  clearLibrarySearchSessionCache,
+  rerankSearchResults,
+  searchLibraryMedicines,
+  fetchLibraryMedicinesByIds,
+  checkDuplicateKeysInSupabase,
+  upsertLibraryMedicinesInBatches,
+  deleteLibraryMedicinesInBatches,
+} from '../src/supabase/libraryService';
+import {
+  MEDICAL_DOCS_BUCKET,
+  DOC_SIGNED_URL_TTL_SECONDS,
+  buildDocumentStoragePath,
+  clearDocumentSignedUrlCache,
+  getDocumentSignedUrl,
+} from '../src/supabase/documentsService';
+import {
+  MAX_IMAGE_DIMENSION,
+  INITIAL_IMAGE_QUALITY,
+  MAX_FILE_BYTES,
+  MAX_THUMB_BYTES,
+  dataUrlToJpegBlob,
+} from '../src/utils/medicalDocuments';
 import { parseAndMergeLocalBackup } from '../src/utils/backupMerge';
 import { t } from '../src/utils/translations';
 import {
@@ -41,12 +80,6 @@ import {
   isDemoRecordId,
   cleanDemoDataSnapshot,
 } from '../src/utils/demoCleanup';
-import {
-  LIBRARY_PAGE_SIZE,
-  evaluateGlobalCatalogSnapshot,
-  paginateMedicines,
-  PublishedBaselineState,
-} from '../src/utils/libraryRealtime';
 import {
   extractBearerToken,
   verifySupabaseAccessToken,
@@ -84,13 +117,6 @@ import {
   markOnboardingDone,
 } from '../src/utils/onboarding';
 import {
-  DEFAULT_LIBRARY_CHUNK_SIZE,
-  buildLibraryChunks,
-  estimateUtf8Bytes,
-  hasCatalogChanges,
-  shouldFetchChunksForMeta,
-} from '../src/utils/libraryChunks';
-import {
   QUOTA_EXCEEDED_BN_MSG,
   WRITE_QUOTA_PAUSE_KEY,
   QuotaExceededWriteError,
@@ -104,7 +130,14 @@ import {
   subscribeWriteQuotaExceeded,
   getFriendlyErrorMessage,
 } from '../src/firebase/errors';
-import { GlobalMedicine, Medicine, PatientProfile } from '../src/types';
+import {
+  AdminActivity,
+  FeedbackEntry,
+  GlobalMedicine,
+  ImportBatch,
+  Medicine,
+  PatientProfile,
+} from '../src/types';
 import {
   calculateMedicineShoppingList,
   calculateShoppingCostSummary,
@@ -140,13 +173,6 @@ import {
   recordRecentlyViewedId,
   saveLibraryFavoriteIds,
 } from '../src/utils/libraryManagement';
-import {
-  buildLibrarySearchIndexSync,
-  clearLibrarySearchIndexCache,
-  computeLibraryMetadata,
-  quickBasicSearchMedicines,
-  searchIndexedMedicines,
-} from '../src/utils/librarySearchIndex';
 import {
   CAREGIVER_INVITE_TTL_MS,
   MAX_CAREGIVERS,
@@ -186,13 +212,6 @@ import {
   getLastSuccessfulSyncMs,
   collectDirtySyncPlan,
 } from '../src/utils/cloudSyncOutbox';
-import {
-  dedupeAndMergeQueueMedicines,
-  removeIdsFromPublishQueue,
-  mergePendingQueueForAdminDisplay,
-  combineCatalogWithPendingQueueForSingleVersionPublish,
-  shouldAttemptAdminQueueAutoPublish,
-} from '../src/utils/adminPublishQueue';
 import {
   recordFirestoreWrite,
   recordFirestoreRead,
@@ -818,119 +837,6 @@ describe('ধাপ ৯: নতুন ব্যবহারকারীর জ�
   });
 });
 
-describe('ধাপ ১০: রিয়েল-টাইম ওষুধ লাইব্রেরি, অফলাইন ক্যাশ গার্ড ও পেজিনেশন', () => {
-  it('প্রথম লোড ও বুট ক্যাশে নতুন ওষুধের বার্তা দেখায় না, তবে পরের লাইভ আপডেটে সঠিক সংখ্যা দেখায়', () => {
-    let state: PublishedBaselineState = {
-      hasInitialServerLoad: false,
-      prevPublishedCount: null,
-      skipNextListenerBaseline: false,
-    };
-
-    // 1. Empty cache while existing local catalog exists -> must NOT wipe list
-    const emptyCache = evaluateGlobalCatalogSnapshot({
-      medicines: [],
-      fromCache: true,
-      empty: true,
-      hasExistingCatalog: true,
-      state,
-    });
-    assert.strictEqual(emptyCache.shouldApplyList, false);
-    assert.strictEqual(emptyCache.newlyAddedPublishedCount, 0);
-
-    // 2. Initial cache load (2 published) -> apply list silently, no notification, no sync time update
-    const bootCache = evaluateGlobalCatalogSnapshot({
-      medicines: [{ status: 'published' }, { status: 'published' }],
-      fromCache: true,
-      empty: false,
-      hasExistingCatalog: true,
-      state,
-    });
-    assert.strictEqual(bootCache.shouldApplyList, true);
-    assert.strictEqual(bootCache.shouldUpdateSyncTime, false);
-    assert.strictEqual(bootCache.newlyAddedPublishedCount, 0);
-    state = bootCache.nextState;
-
-    // 3. First server load arrives (even with 5 items > 2 cached) -> sets baseline, NO notification on initial load
-    const initialServer = evaluateGlobalCatalogSnapshot({
-      medicines: [
-        { status: 'published' },
-        { status: 'published' },
-        { status: 'published' },
-        { status: 'published' },
-        { status: 'published' },
-      ],
-      fromCache: false,
-      empty: false,
-      hasExistingCatalog: true,
-      state,
-    });
-    assert.strictEqual(initialServer.shouldApplyList, true);
-    assert.strictEqual(initialServer.shouldUpdateSyncTime, true);
-    assert.strictEqual(initialServer.newlyAddedPublishedCount, 0);
-    state = initialServer.nextState;
-    assert.strictEqual(state.hasInitialServerLoad, true);
-    assert.strictEqual(state.prevPublishedCount, 5);
-
-    // 4. Draft added later (published stays 5) -> NO notification
-    const draftAdded = evaluateGlobalCatalogSnapshot({
-      medicines: [
-        { status: 'published' },
-        { status: 'published' },
-        { status: 'published' },
-        { status: 'published' },
-        { status: 'published' },
-        { status: 'draft' },
-      ],
-      fromCache: false,
-      empty: false,
-      hasExistingCatalog: true,
-      state,
-    });
-    assert.strictEqual(draftAdded.newlyAddedPublishedCount, 0);
-    state = draftAdded.nextState;
-
-    // 5. Admin publishes/imports 3 more medicines -> triggers exact delta = 3
-    const livePublished = evaluateGlobalCatalogSnapshot({
-      medicines: [
-        ...Array.from({ length: 8 }, () => ({ status: 'published' })),
-        { status: 'draft' },
-      ],
-      fromCache: false,
-      empty: false,
-      hasExistingCatalog: true,
-      state,
-    });
-    assert.strictEqual(livePublished.newlyAddedPublishedCount, 3);
-    assert.strictEqual(livePublished.shouldUpdateSyncTime, true);
-    state = livePublished.nextState;
-
-    // 6. Listener re-subscribe (admin toggle) skips alert on first snapshot
-    const adminSwitch = evaluateGlobalCatalogSnapshot({
-      medicines: Array.from({ length: 9 }, () => ({ status: 'published' })),
-      fromCache: false,
-      empty: false,
-      hasExistingCatalog: true,
-      state: { ...state, skipNextListenerBaseline: true },
-    });
-    assert.strictEqual(adminSwitch.newlyAddedPublishedCount, 0);
-    assert.strictEqual(adminSwitch.nextState.prevPublishedCount, 9);
-    assert.strictEqual(adminSwitch.nextState.skipNextListenerBaseline, false);
-  });
-
-  it('লাইব্রেরির তালিকা পেজিনেশন ও আরও দেখান হিসাব সঠিকভাবে করে', () => {
-    const sample = Array.from({ length: 55 }, (_, i) => ({ id: `med-${i}` }));
-    const page1 = paginateMedicines(sample, LIBRARY_PAGE_SIZE);
-    assert.strictEqual(page1.visibleItems.length, LIBRARY_PAGE_SIZE);
-    assert.strictEqual(page1.remainingCount, 55 - LIBRARY_PAGE_SIZE);
-    assert.strictEqual(page1.hasMore, true);
-
-    const page3 = paginateMedicines(sample, LIBRARY_PAGE_SIZE * 3);
-    assert.strictEqual(page3.visibleItems.length, 55);
-    assert.strictEqual(page3.remainingCount, 0);
-    assert.strictEqual(page3.hasMore, false);
-  });
-});
-
 describe('ধাপ ১১: AI এন্ডপয়েন্ট নিরাপত্তা, টোকেন যাচাই, রেট লিমিট ও নিরাপদ এরর লগ', () => {
   it('Bearer টোকেন নিষ্কাশন, Supabase অ্যাক্সেস টোকেন ও is_admin RPC যাচাই সঠিকভাবে কাজ করে', async () => {
     assert.strictEqual(extractBearerToken(undefined), null);
@@ -1116,93 +1022,7 @@ describe('ধাপ ১২: সহজ মোড, কথা বলে শোন�
   });
 });
 
-describe('ধাপ ১৩: চাঙ্কড লাইব্রেরি, মেটাডাটা সংস্করণ ও কোটা সীমা হ্যান্ডলিং', () => {
-  const makeMed = (idx: number, extraNotes = ''): GlobalMedicine => ({
-    id: `gmed_${idx}`,
-    brandName: `Napa ${idx}`,
-    genericName: 'Paracetamol',
-    strength: '500 mg',
-    dosageForm: 'ট্যাবলেট',
-    manufacturer: 'Beximco Pharmaceuticals Ltd.',
-    source: 'DGDA_GOV',
-    sourceType: 'government',
-    sourceName: 'DGDA',
-    licenseReference: 'DGDA Open Data',
-    duplicateKey: `napa_${idx}|paracetamol|500 mg|ট্যাবলেট|beximco`,
-    status: 'published',
-    verifiedByAdmin: true,
-    indication: extraNotes || 'Fever and mild pain',
-    importedAt: '2026-11-12T00:00:00.000Z',
-  });
-
-  it('সর্বোচ্চ ২০০টি ওষুধ প্রতি চাঙ্ক এবং ১MB সীমার নিচে স্বয়ংক্রিয়ভাবে ভাগ করে', () => {
-    // 505 items -> 3 chunks (200, 200, 105)
-    const meds505 = Array.from({ length: 505 }, (_, i) => makeMed(i + 1));
-    const chunks = buildLibraryChunks(meds505, 3);
-    assert.strictEqual(chunks.length, 3);
-    assert.strictEqual(chunks[0].version, 3);
-    assert.strictEqual(chunks[0].index, 0);
-    assert.strictEqual(chunks[0].items.length, DEFAULT_LIBRARY_CHUNK_SIZE);
-    assert.strictEqual(chunks[1].items.length, DEFAULT_LIBRARY_CHUNK_SIZE);
-    assert.strictEqual(chunks[2].items.length, 105);
-
-    // Byte-size limit splits chunks below 200 when items are large
-    const largeNotes = 'X'.repeat(5000);
-    const largeMeds = Array.from({ length: 20 }, (_, i) => makeMed(i + 1, largeNotes));
-    const byteCappedChunks = buildLibraryChunks(largeMeds, 4, 200, 25_000);
-    assert.ok(byteCappedChunks.length > 1, 'Large items must split into multiple chunks');
-    for (const chunk of byteCappedChunks) {
-      assert.ok(estimateUtf8Bytes(chunk) <= 25_000, 'Each chunk must stay within byte budget');
-    }
-  });
-
-  it('ডুপ্লিকেট বা অপরিবর্তিত ইমপোর্টে changed=false দেয় এবং নতুন ওষুধ থাকলে শুধু বদল যোগ করে', () => {
-    const existing = [makeMed(1), makeMed(2)];
-
-    const identicalIncoming = [makeMed(1), makeMed(2)];
-    const noChange = hasCatalogChanges(existing, identicalIncoming);
-    assert.strictEqual(noChange.changed, false);
-    assert.strictEqual(noChange.addedOrUpdatedCount, 0);
-    assert.strictEqual(noChange.mergedList.length, 2);
-
-    const updatedAndNew = [makeMed(1), makeMed(2, 'Updated pain relief'), makeMed(3)];
-    const hasDiff = hasCatalogChanges(existing, updatedAndNew);
-    assert.strictEqual(hasDiff.changed, true);
-    assert.strictEqual(hasDiff.addedOrUpdatedCount, 2);
-    assert.strictEqual(hasDiff.mergedList.length, 3);
-    assert.strictEqual(hasDiff.mergedList[1].indication, 'Updated pain relief');
-  });
-
-  it('ফোনে একই সংস্করণ থাকলে ০টি চাঙ্ক ডাউনলোড করে এবং নতুন সংস্করণে চাঙ্ক আনে', () => {
-    assert.strictEqual(
-      shouldFetchChunksForMeta({
-        meta: { version: 5, chunkCount: 25, totalCount: 5000, updatedAt: '2026-11-12T00:00:00Z' },
-        localVersion: 5,
-        hasLocalCatalog: true,
-      }),
-      false
-    );
-
-    assert.strictEqual(
-      shouldFetchChunksForMeta({
-        meta: { version: 6, chunkCount: 26, totalCount: 5020, updatedAt: '2026-11-12T01:00:00Z' },
-        localVersion: 5,
-        hasLocalCatalog: true,
-      }),
-      true
-    );
-
-    // Missing local catalog triggers chunk fetch even if version matches
-    assert.strictEqual(
-      shouldFetchChunksForMeta({
-        meta: { version: 5, chunkCount: 25, totalCount: 5000, updatedAt: '2026-11-12T00:00:00Z' },
-        localVersion: 5,
-        hasLocalCatalog: false,
-      }),
-      true
-    );
-  });
-
+describe('ধাপ ১৩: কোটা সীমা হ্যান্ডলিং ও সার্কিট-ব্রেকার', () => {
   it('Firestore quota exceeded এরর শনাক্ত করে ও সেশনে কেবল একবার বাংলা সতর্কতা দেখায়', () => {
     resetQuotaNoticeForTests();
     const quotaErr1 = { code: 'resource-exhausted', message: 'Quota exceeded.' };
@@ -3152,129 +2972,6 @@ describe('ধাপ ২০: সময় অনুযায়ী ওষুধ (
   });
 });
 
-describe('ধাপ ২১: দ্রুত লাইব্রেরি সার্চ সূচি (librarySearchIndex) ও ইনক্রিমেন্টাল আপডেট', () => {
-  it('সূচি ক্যাশ করে, ইনক্রিমেন্টাল পরিবর্তনে পুরনো এন্ট্রি পুনর্ব্যবহার করে এবং ইংরেজি/বাংলা/টাইপো/দুই শব্দে সঠিক ফল দেয়', () => {
-    clearLibrarySearchIndexCache();
-    const meds: GlobalMedicine[] = [
-      {
-        id: 'lib-1',
-        brandName: 'Napa Extra',
-        brandNameBn: 'নাপা এক্সট্রা',
-        genericName: 'Paracetamol + Caffeine',
-        genericNameBn: 'প্যারাসিটামল + ক্যাফেইন',
-        strength: '500 mg',
-        dosageForm: 'ট্যাবলেট',
-        manufacturer: 'Beximco Pharma',
-        pricePerUnit: 2.5,
-        source: 'DGDA_GOV',
-        sourceType: 'government',
-        sourceName: 'DGDA',
-        licenseReference: 'DGDA',
-        importedAt: '2026-11-01T00:00:00.000Z',
-        verifiedByAdmin: true,
-        status: 'published',
-        duplicateKey: 'napa_extra_500_beximco',
-      },
-      {
-        id: 'lib-2',
-        brandName: 'Seclo',
-        brandNameBn: 'সেক্লো',
-        genericName: 'Omeprazole',
-        genericNameBn: 'অমিপ্রাজল',
-        strength: '20 mg',
-        dosageForm: 'ক্যাপসুল',
-        manufacturer: 'Square Pharma',
-        pricePerUnit: 6,
-        source: 'DGDA_GOV',
-        sourceType: 'government',
-        sourceName: 'DGDA',
-        licenseReference: 'DGDA',
-        importedAt: '2026-11-01T00:00:00.000Z',
-        verifiedByAdmin: true,
-        status: 'published',
-        duplicateKey: 'seclo_20_square',
-      },
-      {
-        id: 'lib-3',
-        brandName: 'DraftMed',
-        genericName: 'Azithromycin',
-        strength: '500 mg',
-        dosageForm: 'ট্যাবলেট',
-        manufacturer: 'Incepta',
-        source: 'DGDA_GOV',
-        sourceType: 'government',
-        sourceName: 'DGDA',
-        licenseReference: 'DGDA',
-        importedAt: '2026-11-01T00:00:00.000Z',
-        verifiedByAdmin: false,
-        status: 'draft',
-        duplicateKey: 'draftmed_500_incepta',
-      },
-    ];
-
-    const idx1 = buildLibrarySearchIndexSync(meds, true);
-    const idx1Again = buildLibrarySearchIndexSync(meds, true);
-    assert.strictEqual(idx1, idx1Again); // Exact cached reference reused
-
-    const meta = computeLibraryMetadata(meds);
-    assert.deepStrictEqual(meta.uniqueForms, ['ক্যাপসুল', 'ট্যাবলেট']);
-    assert.strictEqual(meta.publishedCount, 2);
-    assert.strictEqual(meta.pendingCount, 1);
-    assert.ok(meta.availableLettersPublished.has('N'));
-    assert.ok(meta.availableLettersPublished.has('S'));
-    assert.ok(!meta.availableLettersPublished.has('D'));
-
-    // Incremental update: keep lib-1 unchanged, remove lib-3, add lib-4
-    const updatedMeds: GlobalMedicine[] = [
-      meds[0],
-      meds[1],
-      {
-        id: 'lib-4',
-        brandName: 'Monas',
-        brandNameBn: 'মোনাস',
-        genericName: 'Montelukast',
-        genericNameBn: 'মন্টেলুকাস্ট',
-        strength: '10 mg',
-        dosageForm: 'ট্যাবলেট',
-        manufacturer: 'Acme',
-        source: 'DGDA_GOV',
-        sourceType: 'government',
-        sourceName: 'DGDA',
-        licenseReference: 'DGDA',
-        importedAt: '2026-11-02T00:00:00.000Z',
-        verifiedByAdmin: true,
-        status: 'published',
-        duplicateKey: 'monas_10_acme',
-      },
-    ];
-    const idx2 = buildLibrarySearchIndexSync(updatedMeds, true);
-    assert.strictEqual(idx2.entries[0], idx1.entries[0]); // Unchanged entry object reused!
-    assert.strictEqual(idx2.totalCount, 3);
-
-    const baseFilters = {
-      isAdmin: false,
-      adminStatusFilter: 'published' as const,
-      favoritesOnly: false,
-      favoriteIdSet: new Set<string>(),
-      selectedLetter: 'ALL',
-      selectedForm: 'all',
-      selectedManufacturer: 'all',
-      priceFilter: 'all' as const,
-      selectedSource: 'all',
-    };
-
-    // English, Bengali, Typo, Two-word searches
-    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'Napa Extra').medicines[0].id, 'lib-1');
-    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'সেক্লো').medicines[0].id, 'lib-2');
-    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'omeprazol').medicines[0].id, 'lib-2');
-    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'Paracetamol 500').medicines[0].id, 'lib-1');
-    assert.strictEqual(searchIndexedMedicines(idx2, baseFilters, 'montlukast').medicines[0].id, 'lib-4');
-
-    // Quick basic fallback also works cleanly during cold startup
-    assert.strictEqual(quickBasicSearchMedicines(updatedMeds, baseFilters, 'Monas').medicines[0].id, 'lib-4');
-  });
-});
-
 describe('ধাপ ২২: জরুরি কার্ড QR (টোকেন, গোপনীয়তা ফিল্টারিং, ৫০০ অক্ষর সীমা ও QR ম্যাট্রিক্স)', () => {
   it('>= ১২৮-বিট নিরাপদ টোকেন, /e/{token} রাউট পার্সিং এবং ডিফল্ট গোপনীয়তা (ওষুধ বন্ধ) নিশ্চিত করে', () => {
     const token = generateEmergencyToken();
@@ -4640,72 +4337,6 @@ describe('ধাপ ২৮: টার্গেটেড ডার্টি স�
     assert.deepStrictEqual(dirtyPlan.outboxToFlush.upserts.doseLogs, ['log-6', 'log-43']);
   });
 
-  it('এডমিন অপেক্ষমাণ প্রকাশ সারি ডিডুপ করে, এক সংস্করণে যুক্ত করে, সাধারণ ব্যবহারকারীর কাছে লুকায় ও ১৪:১০ BDT রিসেটে স্বয়ংক্রিয় চেষ্টা চালায়', () => {
-    const makeGlobal = (id: string, brand: string): GlobalMedicine => ({
-      id,
-      brandName: brand,
-      genericName: 'Paracetamol',
-      strength: '500 mg',
-      dosageForm: 'ট্যাবলেট',
-      manufacturer: 'Beximco',
-      source: 'DGDA_GOV',
-      sourceType: 'government',
-      sourceName: 'DGDA',
-      licenseReference: 'DGDA Gazette',
-      duplicateKey: `${id}|paracetamol|500 mg`,
-      status: 'published',
-      verifiedByAdmin: true,
-      importedAt: '2026-11-17T00:00:00.000Z',
-    });
-
-    const cloudCatalog = [makeGlobal('gmed_1', 'Napa')];
-    const q1 = dedupeAndMergeQueueMedicines([], [makeGlobal('gmed_2', 'Ace'), makeGlobal('gmed_3', 'Sergel')]);
-    const q2 = dedupeAndMergeQueueMedicines(q1, [makeGlobal('gmed_2', 'Ace Plus')]);
-    assert.strictEqual(q2.length, 2);
-    assert.strictEqual(q2.find((m) => m.id === 'gmed_2')?.brandName, 'Ace Plus');
-
-    // Admin sees queued items; regular users see ONLY cloudCatalog
-    assert.strictEqual(mergePendingQueueForAdminDisplay(cloudCatalog, q2, true).length, 3);
-    assert.strictEqual(mergePendingQueueForAdminDisplay(cloudCatalog, q2, false).length, 1);
-
-    // Combined single-version merge puts all queued items into one list
-    const singleVersionList = combineCatalogWithPendingQueueForSingleVersionPublish(cloudCatalog, q2);
-    assert.strictEqual(singleVersionList.length, 3);
-
-    const removed = removeIdsFromPublishQueue(q2, ['gmed_2']);
-    assert.deepStrictEqual(removed.map((m) => m.id), ['gmed_3']);
-
-    // Post-reset retry check: 14:15 Asia/Dhaka = 08:15 UTC
-    const postResetUtc = new Date(Date.UTC(2026, 10, 17, 8, 15, 0));
-    const preResetUtc = new Date(Date.UTC(2026, 10, 17, 7, 55, 0)); // 13:55 Asia/Dhaka
-
-    const attemptAfterReset = shouldAttemptAdminQueueAutoPublish({
-      hasPending: true,
-      isAdmin: true,
-      isOnline: true,
-      isFlushing: false,
-      isQuotaPausedNow: true,
-      now: postResetUtc,
-      lastAttemptMs: preResetUtc.getTime(),
-      postResetRetriedDhakaDayKey: null,
-    });
-    assert.strictEqual(attemptAfterReset.shouldAttempt, true);
-    assert.strictEqual(attemptAfterReset.reason, 'post_reset_210pm');
-
-    // Before 14:10 BDT while quota is paused, do NOT burn retry writes
-    const attemptBeforeReset = shouldAttemptAdminQueueAutoPublish({
-      hasPending: true,
-      isAdmin: true,
-      isOnline: true,
-      isFlushing: false,
-      isQuotaPausedNow: true,
-      now: preResetUtc,
-      lastAttemptMs: preResetUtc.getTime() - 10_000,
-      postResetRetriedDhakaDayKey: null,
-    });
-    assert.strictEqual(attemptBeforeReset.shouldAttempt, false);
-  });
-
   it('দৈনিক Firestore write ও read কালেকশন অনুযায়ী সঠিকভাবে হিসাব করে', () => {
     const map = new Map<string, string>();
     const memStore = {
@@ -5111,6 +4742,369 @@ describe('ধাপ ৩২: Supabase ৮টি মূল টেবিলের M
     assert.strictEqual(secondMerge.doctors.length, 1);
     assert.strictEqual(secondMerge.addedCount, 0);
     assert.strictEqual(secondMerge.updatedCount, 4);
+  });
+});
+
+describe('ধাপ ৩৩: Supabase অংশ ২খ — লাইব্রেরি RPC/ব্যাচ, ইম্পোর্ট ব্যাচ, এডমিন অ্যাক্টিভিটি, ফিডব্যাক ও মেডিকেল ডকুমেন্টস ভল্ট', () => {
+  it('library_medicines, import_batches (imported_by_uid ছাড়া), admin_activity, medical_documents (doc_date ও pendingCloudUpload বাদ) এবং feedback ম্যাপার সঠিকভাবে কাজ করে', () => {
+    const gmed: GlobalMedicine = {
+      id: 'gmed_test_1',
+      brandName: 'Napa Extra',
+      genericName: 'Paracetamol + Caffeine',
+      strength: '500 mg + 65 mg',
+      dosageForm: 'ট্যাবলেট',
+      manufacturer: 'Beximco',
+      brandNameBn: 'নাপা এক্সট্রা',
+      genericNameBn: 'প্যারাসিটামল',
+      pricePerUnit: 2.5,
+      priceUnit: 'প্রতি পিস',
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'DGDA Public List',
+      importedAt: '2026-11-18T10:00:00.000Z',
+      verifiedByAdmin: true,
+      status: 'published',
+      duplicateKey: 'napa_extra|paracetamol|500|tab|beximco',
+    };
+    const gRow = libraryMedicineToRow(gmed);
+    assert.strictEqual(gRow.brand_name, 'Napa Extra');
+    assert.strictEqual(gRow.price_per_unit, 2.5);
+    assert.strictEqual(gRow.duplicate_key, 'napa_extra|paracetamol|500|tab|beximco');
+    const gBack = libraryMedicineFromRow(gRow);
+    assert.strictEqual(gBack.brandNameBn, 'নাপা এক্সট্রা');
+    assert.strictEqual(gBack.verifiedByAdmin, true);
+
+    const batch: ImportBatch = {
+      id: 'batch_1',
+      source: 'DGDA_GOV',
+      sourceProfile: 'dgda_gov',
+      sourceType: 'government',
+      importedAt: '2026-11-18T11:00:00.000Z',
+      importedByUid: 'admin-uid-99',
+      importedByEmail: 'admin@example.com',
+      licenseReference: 'DGDA Gazette',
+      attestationAccepted: true,
+      totalRecordsInFile: 100,
+      validRecordsCount: 95,
+      duplicateRecordsCount: 5,
+      errorRecordsCount: 0,
+      publishedCount: 95,
+      status: 'completed',
+      fileName: 'dgda.csv',
+    };
+    const bRow = importBatchToRow(batch);
+    assert.strictEqual('imported_by_uid' in bRow, false);
+    assert.strictEqual(bRow.imported_by_email, 'admin@example.com');
+    assert.strictEqual(bRow.published_count, 95);
+    const bBack = importBatchFromRow(bRow);
+    assert.strictEqual(bBack.fileName, 'dgda.csv');
+    assert.strictEqual(bBack.publishedCount, 95);
+
+    const activity: AdminActivity = {
+      id: 'act_1',
+      type: 'import',
+      title: 'ওষুধ ইমপোর্ট',
+      description: '৯৫টি প্রকাশিত',
+      adminEmail: 'admin@example.com',
+      timestamp: '2026-11-18T11:05:00.000Z',
+      metadata: { count: 95 },
+    };
+    const actRow = adminActivityToRow(activity);
+    assert.strictEqual(actRow.admin_email, 'admin@example.com');
+    assert.strictEqual(adminActivityFromRow(actRow).metadata?.count, 95);
+
+    const docWithClientFlag: MedicalDocument & { pendingCloudUpload?: boolean } = {
+      id: 'doc_1',
+      kind: 'prescription',
+      patientId: 'pat_1',
+      doctorId: 'doc_prof_1',
+      title: 'ডা. করিমের প্রেসক্রিপশন',
+      date: '2026-11-15',
+      note: 'খাওয়ার পরে',
+      pages: [{ fileId: 'file_1', thumb: 'data:image/jpeg;base64,AA==', width: 200, height: 280, rotation: 90 }],
+      createdAt: '2026-11-15T08:00:00.000Z',
+      updatedAt: '2026-11-15T08:05:00.000Z',
+      pendingCloudUpload: true,
+    };
+    const docRow = medicalDocumentToRow(docWithClientFlag);
+    assert.strictEqual(docRow.doc_date, '2026-11-15');
+    assert.strictEqual('pendingCloudUpload' in docRow, false);
+    assert.strictEqual('pending_cloud_upload' in docRow, false);
+    const docBack = medicalDocumentFromRow(docRow);
+    assert.strictEqual(docBack.date, '2026-11-15');
+    assert.strictEqual(docBack.pages[0].rotation, 90);
+
+    const fb: FeedbackEntry = feedbackFromRow({
+      id: 'fb_1',
+      user_id: 'u_1',
+      message: 'দারুণ অ্যাপ!',
+      app_version: '2026.3.0',
+      created_at: '2026-11-18T12:00:00.000Z',
+    });
+    assert.strictEqual(fb.message, 'দারুণ অ্যাপ!');
+    assert.strictEqual(fb.appVersion, '2026.3.0');
+  });
+
+  it('searchLibraryMedicines ১ অক্ষরে RPC বাদ দেয়, ২+ অক্ষরে search_library RPC চালায়, সেশন ক্যাশ করে এবং সঠিক মিল আগে রাখে', async () => {
+    clearLibrarySearchSessionCache();
+    assert.strictEqual(LIBRARY_SEARCH_LIMIT, 30);
+    assert.strictEqual(LIBRARY_BROWSE_PAGE_SIZE, 30);
+    assert.strictEqual(ADMIN_LIBRARY_PAGE_SIZE, 50);
+
+    let rpcCalls = 0;
+    const mockClient = {
+      rpc: async (fn: string, args?: Record<string, unknown>) => {
+        rpcCalls += 1;
+        assert.strictEqual(fn, 'search_library');
+        assert.strictEqual(args?.q, 'Napa');
+        assert.strictEqual(args?.lim, 30);
+        return {
+          data: [
+            {
+              id: 'm2',
+              brand_name: 'Napa Extra',
+              generic_name: 'Paracetamol',
+              strength: '500mg',
+              dosage_form: 'ট্যাবলেট',
+              manufacturer: 'Beximco',
+              source: 'DGDA_GOV',
+              source_type: 'government',
+              source_name: 'DGDA',
+              license_reference: 'DGDA',
+              imported_at: '2026-11-01T00:00:00.000Z',
+              verified_by_admin: true,
+              status: 'published',
+              duplicate_key: 'k2',
+            },
+            {
+              id: 'm1',
+              brand_name: 'Napa',
+              generic_name: 'Paracetamol',
+              strength: '500mg',
+              dosage_form: 'ট্যাবলেট',
+              manufacturer: 'Beximco',
+              source: 'DGDA_GOV',
+              source_type: 'government',
+              source_name: 'DGDA',
+              license_reference: 'DGDA',
+              imported_at: '2026-11-01T00:00:00.000Z',
+              verified_by_admin: true,
+              status: 'published',
+              duplicate_key: 'k1',
+            },
+            {
+              id: 'm3',
+              brand_name: 'Napa Draft',
+              generic_name: 'Paracetamol',
+              strength: '500mg',
+              dosage_form: 'ট্যাবলেট',
+              manufacturer: 'Beximco',
+              source: 'DGDA_GOV',
+              source_type: 'government',
+              source_name: 'DGDA',
+              license_reference: 'DGDA',
+              imported_at: '2026-11-01T00:00:00.000Z',
+              verified_by_admin: false,
+              status: 'draft',
+              duplicate_key: 'k3',
+            },
+          ],
+          error: null,
+        };
+      },
+    };
+
+    // 1-char query must NOT call RPC
+    const tooShort = await searchLibraryMedicines('N', { client: mockClient });
+    assert.deepStrictEqual(tooShort, []);
+    assert.strictEqual(rpcCalls, 0);
+
+    // Valid query calls RPC once, filters draft, reranks exact match ('Napa') first
+    const first = await searchLibraryMedicines('Napa', { client: mockClient });
+    assert.strictEqual(rpcCalls, 1);
+    assert.deepStrictEqual(
+      first.map((m) => m.id),
+      ['m1', 'm2']
+    );
+
+    // Second identical search hits session Map cache without extra RPC
+    const second = await searchLibraryMedicines('napa', { client: mockClient });
+    assert.strictEqual(rpcCalls, 1);
+    assert.strictEqual(second.length, 2);
+
+    // Direct rerank check
+    const reranked = rerankSearchResults([first[1], first[0]], 'Napa');
+    assert.strictEqual(reranked[0].brandName, 'Napa');
+  });
+
+  it('ব্যাচ সাইজ (ID ১০০, ডুপ্লিকেট ২০০, আপসার্ট ৫০০, ডিলিট ২০০) এবং অস্থায়ী ত্রুটিতে রিট্রাই সঠিকভাবে কাজ করে', async () => {
+    assert.strictEqual(LIBRARY_ID_BATCH_SIZE, 100);
+    assert.strictEqual(LIBRARY_DUPLICATE_BATCH_SIZE, 200);
+    assert.strictEqual(LIBRARY_UPSERT_BATCH_SIZE, 500);
+    assert.strictEqual(LIBRARY_DELETE_BATCH_SIZE, 200);
+
+    const idBatches: number[] = [];
+    const ids250 = Array.from({ length: 250 }, (_, i) => `id_${i}`);
+    await fetchLibraryMedicinesByIds(ids250, {
+      client: {
+        from: () => ({
+          select: () => ({
+            in: async (_col: string, values: string[]) => {
+              idBatches.push(values.length);
+              return { data: [], error: null };
+            },
+          }),
+        }),
+      },
+    });
+    assert.deepStrictEqual(idBatches, [100, 100, 50]);
+
+    const dupBatches: number[] = [];
+    const keys450 = Array.from({ length: 450 }, (_, i) => `key_${i}`);
+    await checkDuplicateKeysInSupabase(keys450, {
+      client: {
+        from: () => ({
+          select: () => ({
+            in: async (_col: string, values: string[]) => {
+              dupBatches.push(values.length);
+              return { data: [], error: null };
+            },
+          }),
+        }),
+      },
+    });
+    assert.deepStrictEqual(dupBatches, [200, 200, 50]);
+
+    const makeGlobal = (i: number): GlobalMedicine => ({
+      id: `gm_${i}`,
+      brandName: `Brand ${i}`,
+      genericName: 'Generic',
+      strength: '10 mg',
+      dosageForm: 'ট্যাবলেট',
+      manufacturer: 'Pharma',
+      source: 'DGDA_GOV',
+      sourceType: 'government',
+      sourceName: 'DGDA',
+      licenseReference: 'DGDA',
+      importedAt: '2026-11-01T00:00:00.000Z',
+      verifiedByAdmin: true,
+      status: 'published',
+      duplicateKey: `dk_${i}`,
+    });
+
+    const upsertBatchSizes: number[] = [];
+    let failFirstUpsert = true;
+    const upsertedCount = await upsertLibraryMedicinesInBatches(
+      Array.from({ length: 650 }, (_, i) => makeGlobal(i)),
+      {
+        maxRetries: 3,
+        baseDelayMs: 1,
+        client: {
+          from: () => ({
+            upsert: async (rows) => {
+              if (failFirstUpsert) {
+                failFirstUpsert = false;
+                return { error: new Error('network error') };
+              }
+              upsertBatchSizes.push(rows.length);
+              return { error: null };
+            },
+          }),
+        },
+      }
+    );
+    assert.strictEqual(upsertedCount, 650);
+    assert.deepStrictEqual(upsertBatchSizes, [500, 150]);
+
+    const deleteBatchSizes: number[] = [];
+    let failFirstDelete = true;
+    const deletedCount = await deleteLibraryMedicinesInBatches(
+      Array.from({ length: 450 }, (_, i) => `gm_${i}`),
+      {
+        maxRetries: 3,
+        baseDelayMs: 1,
+        client: {
+          from: () => ({
+            delete: () => ({
+              in: async (_col: string, batch: string[]) => {
+                if (failFirstDelete) {
+                  failFirstDelete = false;
+                  return { error: new Error('timeout') };
+                }
+                deleteBatchSizes.push(batch.length);
+                return { error: null };
+              },
+            }),
+          }),
+        },
+      }
+    );
+    assert.strictEqual(deletedCount, 450);
+    assert.deepStrictEqual(deleteBatchSizes, [200, 200, 50]);
+  });
+
+  it('medical-docs স্টোরেজ পাথ, সীমা (1600px, 0.8, 1.5MB, 10 পাতা/ডক, 120 মোট), Blob রূপান্তর এবং স্বাক্ষরিত URL ক্যাশ কাজ করে', async () => {
+    assert.strictEqual(MEDICAL_DOCS_BUCKET, 'medical-docs');
+    assert.strictEqual(DOC_SIGNED_URL_TTL_SECONDS, 3600);
+    assert.strictEqual(MAX_IMAGE_DIMENSION, 1600);
+    assert.strictEqual(INITIAL_IMAGE_QUALITY, 0.8);
+    assert.strictEqual(MAX_FILE_BYTES, 1.5 * 1024 * 1024);
+    assert.strictEqual(MAX_THUMB_BYTES, 10 * 1024);
+    assert.strictEqual(MAX_DOCUMENT_PAGES, 10);
+    assert.strictEqual(MAX_USER_DOCUMENT_PAGES, 120);
+
+    const storagePath = buildDocumentStoragePath('user-1', 'doc-99', 'file-abc');
+    assert.strictEqual(storagePath, 'user-1/doc-99/file-abc.jpg');
+
+    const blob = dataUrlToJpegBlob('data:image/jpeg;base64,/9j/4AAQ');
+    assert.strictEqual(blob.type, 'image/jpeg');
+    assert.ok(blob.size > 0);
+
+    clearDocumentSignedUrlCache();
+    let signCalls = 0;
+    const mockStorageClient = {
+      storage: {
+        from: (bucket: string) => {
+          assert.strictEqual(bucket, 'medical-docs');
+          return {
+            upload: async () => ({ error: null }),
+            createSignedUrl: async (path: string, expiresIn: number) => {
+              signCalls += 1;
+              assert.strictEqual(path, 'user-1/doc-99/file-abc.jpg');
+              assert.strictEqual(expiresIn, 3600);
+              return { data: { signedUrl: `https://signed.example/${signCalls}` }, error: null };
+            },
+            download: async () => ({ data: null, error: null }),
+            remove: async () => ({ error: null }),
+          };
+        },
+      },
+    };
+
+    const t0 = 1_760_000_000_000;
+    const url1 = await getDocumentSignedUrl('user-1', 'doc-99', 'file-abc', {
+      client: mockStorageClient,
+      nowMs: t0,
+    });
+    assert.strictEqual(url1, 'https://signed.example/1');
+    assert.strictEqual(signCalls, 1);
+
+    // Within TTL (30 min later) -> returns cached signed URL without new API call
+    const url2 = await getDocumentSignedUrl('user-1', 'doc-99', 'file-abc', {
+      client: mockStorageClient,
+      nowMs: t0 + 30 * 60 * 1000,
+    });
+    assert.strictEqual(url2, 'https://signed.example/1');
+    assert.strictEqual(signCalls, 1);
+
+    // Near/after expiry -> fetches fresh signed URL
+    const url3 = await getDocumentSignedUrl('user-1', 'doc-99', 'file-abc', {
+      client: mockStorageClient,
+      nowMs: t0 + 59.5 * 60 * 1000,
+    });
+    assert.strictEqual(url3, 'https://signed.example/2');
+    assert.strictEqual(signCalls, 2);
   });
 });
 

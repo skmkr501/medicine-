@@ -2,6 +2,7 @@ import React from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import { EmergencyCard } from '../emergency/EmergencyCard';
+import { FeedbackCard } from '../settings/FeedbackCard';
 import {
   User,
   Users,
@@ -327,6 +328,9 @@ export const MePage: React.FC = () => {
           );
         })}
       </section>
+
+      {/* Feedback Card */}
+      <FeedbackCard />
 
       {/* Account Card */}
       <section className="bg-surface border border-border rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-2xs">

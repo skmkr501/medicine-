@@ -1,9 +1,15 @@
 import {
+  AdminActivity,
   DoctorAppointment,
   DoctorProfile,
   DoseLog,
   DoseSchedule,
+  FeedbackEntry,
+  GlobalMedicine,
   HealthRecord,
+  ImportBatch,
+  MedicalDocument,
+  MedicalDocumentPageMeta,
   Medicine,
   PatientProfile,
   PhonebookEntry,
@@ -649,4 +655,357 @@ export function settingsFromRow(row: Partial<UserSettingsRow>): ReminderSettings
   }
 
   return result;
+}
+
+// ============================================================================
+// 9. library_medicines (GlobalMedicine)
+// ============================================================================
+export interface LibraryMedicineRow {
+  id: string;
+  brand_name: string;
+  generic_name: string;
+  strength: string;
+  dosage_form: string;
+  manufacturer: string;
+  brand_name_bn: string | null;
+  generic_name_bn: string | null;
+  therapeutic_class: string | null;
+  indication: string | null;
+  price_per_unit: number | null;
+  price_unit: string | null;
+  package_description: string | null;
+  dar_number: string | null;
+  source: GlobalMedicine['source'];
+  source_type: GlobalMedicine['sourceType'];
+  source_name: string;
+  license_reference: string;
+  written_permission_ref: string | null;
+  import_batch_id: string | null;
+  imported_at: string;
+  verified_by_admin: boolean;
+  verification_notes: string | null;
+  status: GlobalMedicine['status'];
+  duplicate_key: string;
+}
+
+export function libraryMedicineToRow(med: GlobalMedicine): LibraryMedicineRow {
+  const priceNum = asOptionalNumber(med.pricePerUnit);
+  return {
+    id: med.id,
+    brand_name: med.brandName ?? '',
+    generic_name: med.genericName ?? '',
+    strength: med.strength ?? '',
+    dosage_form: med.dosageForm ?? '',
+    manufacturer: med.manufacturer ?? '',
+    brand_name_bn: asNullableString(med.brandNameBn),
+    generic_name_bn: asNullableString(med.genericNameBn),
+    therapeutic_class: asNullableString(med.therapeuticClass),
+    indication: asNullableString(med.indication),
+    price_per_unit: priceNum !== undefined ? priceNum : null,
+    price_unit: asNullableString(med.priceUnit),
+    package_description: asNullableString(med.packageDescription),
+    dar_number: asNullableString(med.darNumber),
+    source: med.source || 'DGDA_GOV',
+    source_type: med.sourceType || 'government',
+    source_name: med.sourceName ?? '',
+    license_reference: med.licenseReference ?? '',
+    written_permission_ref: asNullableString(med.writtenPermissionRef),
+    import_batch_id: asNullableString(med.importBatchId),
+    imported_at: normalizeTimestampToIso(med.importedAt) ?? new Date().toISOString(),
+    verified_by_admin: Boolean(med.verifiedByAdmin),
+    verification_notes: asNullableString(med.verificationNotes),
+    status: med.status || 'published',
+    duplicate_key: med.duplicateKey ?? '',
+  };
+}
+
+export function libraryMedicineFromRow(
+  row: Partial<LibraryMedicineRow> & { id: string }
+): GlobalMedicine {
+  const result: GlobalMedicine = {
+    id: String(row.id),
+    brandName: String(row.brand_name ?? ''),
+    genericName: String(row.generic_name ?? ''),
+    strength: String(row.strength ?? ''),
+    dosageForm: String(row.dosage_form ?? ''),
+    manufacturer: String(row.manufacturer ?? ''),
+    source: (row.source as GlobalMedicine['source']) || 'DGDA_GOV',
+    sourceType: (row.source_type as GlobalMedicine['sourceType']) || 'government',
+    sourceName: String(row.source_name ?? ''),
+    licenseReference: String(row.license_reference ?? ''),
+    importedAt: row.imported_at ?? new Date().toISOString(),
+    verifiedByAdmin: Boolean(row.verified_by_admin),
+    status: (row.status as GlobalMedicine['status']) || 'published',
+    duplicateKey: String(row.duplicate_key ?? ''),
+  };
+
+  const brandNameBn = asOptionalString(row.brand_name_bn);
+  if (brandNameBn !== undefined) result.brandNameBn = brandNameBn;
+  const genericNameBn = asOptionalString(row.generic_name_bn);
+  if (genericNameBn !== undefined) result.genericNameBn = genericNameBn;
+  const therapeuticClass = asOptionalString(row.therapeutic_class);
+  if (therapeuticClass !== undefined) result.therapeuticClass = therapeuticClass;
+  const indication = asOptionalString(row.indication);
+  if (indication !== undefined) result.indication = indication;
+  const pricePerUnit = asOptionalNumber(row.price_per_unit);
+  if (pricePerUnit !== undefined) result.pricePerUnit = pricePerUnit;
+  const priceUnit = asOptionalString(row.price_unit);
+  if (priceUnit !== undefined) result.priceUnit = priceUnit;
+  const packageDescription = asOptionalString(row.package_description);
+  if (packageDescription !== undefined) result.packageDescription = packageDescription;
+  const darNumber = asOptionalString(row.dar_number);
+  if (darNumber !== undefined) result.darNumber = darNumber;
+  const writtenPermissionRef = asOptionalString(row.written_permission_ref);
+  if (writtenPermissionRef !== undefined) result.writtenPermissionRef = writtenPermissionRef;
+  const importBatchId = asOptionalString(row.import_batch_id);
+  if (importBatchId !== undefined) result.importBatchId = importBatchId;
+  const verificationNotes = asOptionalString(row.verification_notes);
+  if (verificationNotes !== undefined) result.verificationNotes = verificationNotes;
+
+  return result;
+}
+
+// ============================================================================
+// 10. import_batches (ImportBatch — NO imported_by_uid column in Postgres)
+// ============================================================================
+export interface ImportBatchRow {
+  id: string;
+  source: ImportBatch['source'];
+  source_profile: ImportBatch['sourceProfile'];
+  source_type: ImportBatch['sourceType'];
+  imported_at: string;
+  imported_by_email: string;
+  license_reference: string;
+  written_permission_ref: string | null;
+  legal_basis_notes: string | null;
+  attestation_accepted: boolean;
+  total_records_in_file: number;
+  valid_records_count: number;
+  duplicate_records_count: number;
+  error_records_count: number;
+  published_count: number;
+  pending_verification_count: number | null;
+  status: ImportBatch['status'];
+  file_name: string | null;
+}
+
+export function importBatchToRow(batch: ImportBatch): ImportBatchRow {
+  return {
+    id: batch.id,
+    source: batch.source || 'DGDA_GOV',
+    source_profile: batch.sourceProfile || 'dgda_gov',
+    source_type: batch.sourceType || 'government',
+    imported_at: normalizeTimestampToIso(batch.importedAt) ?? new Date().toISOString(),
+    imported_by_email: batch.importedByEmail ?? '',
+    license_reference: batch.licenseReference ?? '',
+    written_permission_ref: asNullableString(batch.writtenPermissionRef),
+    legal_basis_notes: asNullableString(batch.legalBasisNotes),
+    attestation_accepted: Boolean(batch.attestationAccepted),
+    total_records_in_file: Number.isFinite(Number(batch.totalRecordsInFile))
+      ? Number(batch.totalRecordsInFile)
+      : 0,
+    valid_records_count: Number.isFinite(Number(batch.validRecordsCount))
+      ? Number(batch.validRecordsCount)
+      : 0,
+    duplicate_records_count: Number.isFinite(Number(batch.duplicateRecordsCount))
+      ? Number(batch.duplicateRecordsCount)
+      : 0,
+    error_records_count: Number.isFinite(Number(batch.errorRecordsCount))
+      ? Number(batch.errorRecordsCount)
+      : 0,
+    published_count: Number.isFinite(Number(batch.publishedCount))
+      ? Number(batch.publishedCount)
+      : 0,
+    pending_verification_count: asNullableNumber(batch.pendingVerificationCount),
+    status: batch.status || 'completed',
+    file_name: asNullableString(batch.fileName),
+  };
+}
+
+export function importBatchFromRow(row: Partial<ImportBatchRow> & { id: string }): ImportBatch {
+  const result: ImportBatch = {
+    id: String(row.id),
+    source: (row.source as ImportBatch['source']) || 'DGDA_GOV',
+    sourceProfile: (row.source_profile as ImportBatch['sourceProfile']) || 'dgda_gov',
+    sourceType: (row.source_type as ImportBatch['sourceType']) || 'government',
+    importedAt: row.imported_at ?? new Date().toISOString(),
+    importedByUid: '',
+    importedByEmail: String(row.imported_by_email ?? ''),
+    licenseReference: String(row.license_reference ?? ''),
+    attestationAccepted: Boolean(row.attestation_accepted),
+    totalRecordsInFile: asOptionalNumber(row.total_records_in_file) ?? 0,
+    validRecordsCount: asOptionalNumber(row.valid_records_count) ?? 0,
+    duplicateRecordsCount: asOptionalNumber(row.duplicate_records_count) ?? 0,
+    errorRecordsCount: asOptionalNumber(row.error_records_count) ?? 0,
+    publishedCount: asOptionalNumber(row.published_count) ?? 0,
+    status: (row.status as ImportBatch['status']) || 'completed',
+  };
+
+  const writtenPermissionRef = asOptionalString(row.written_permission_ref);
+  if (writtenPermissionRef !== undefined) result.writtenPermissionRef = writtenPermissionRef;
+  const legalBasisNotes = asOptionalString(row.legal_basis_notes);
+  if (legalBasisNotes !== undefined) result.legalBasisNotes = legalBasisNotes;
+  const pendingVerificationCount = asOptionalNumber(row.pending_verification_count);
+  if (pendingVerificationCount !== undefined) {
+    result.pendingVerificationCount = pendingVerificationCount;
+  }
+  const fileName = asOptionalString(row.file_name);
+  if (fileName !== undefined) result.fileName = fileName;
+
+  return result;
+}
+
+// ============================================================================
+// 11. admin_activity (singular table name)
+// ============================================================================
+export interface AdminActivityRow {
+  id: string;
+  type: AdminActivity['type'];
+  title: string;
+  description: string;
+  admin_email: string;
+  timestamp: string;
+  metadata: Record<string, any> | null;
+}
+
+export function adminActivityToRow(activity: AdminActivity): AdminActivityRow {
+  return {
+    id: activity.id,
+    type: activity.type || 'system',
+    title: activity.title ?? '',
+    description: activity.description ?? '',
+    admin_email: activity.adminEmail ?? '',
+    timestamp: normalizeTimestampToIso(activity.timestamp) ?? new Date().toISOString(),
+    metadata:
+      activity.metadata && typeof activity.metadata === 'object' ? activity.metadata : null,
+  };
+}
+
+export function adminActivityFromRow(
+  row: Partial<AdminActivityRow> & { id: string }
+): AdminActivity {
+  const result: AdminActivity = {
+    id: String(row.id),
+    type: (row.type as AdminActivity['type']) || 'system',
+    title: String(row.title ?? ''),
+    description: String(row.description ?? ''),
+    adminEmail: String(row.admin_email ?? ''),
+    timestamp: row.timestamp ?? new Date().toISOString(),
+  };
+  if (row.metadata && typeof row.metadata === 'object') {
+    result.metadata = row.metadata;
+  }
+  return result;
+}
+
+// ============================================================================
+// 12. medical_documents (maps date <-> doc_date; strips pendingCloudUpload)
+// ============================================================================
+export interface MedicalDocumentRow {
+  id: string;
+  kind: MedicalDocument['kind'];
+  patient_id: string;
+  doctor_id: string | null;
+  title: string;
+  doc_date: string;
+  note: string | null;
+  report_type: string | null;
+  pages: MedicalDocumentPageMeta[];
+  created_at: string;
+  updated_at: string;
+}
+
+function sanitizeDocumentPages(pages: unknown): MedicalDocumentPageMeta[] {
+  if (!Array.isArray(pages)) return [];
+  return pages
+    .filter((p): p is MedicalDocumentPageMeta => Boolean(p && typeof p === 'object' && typeof (p as MedicalDocumentPageMeta).fileId === 'string'))
+    .map((p) => {
+      const rot = Number(p.rotation);
+      const safeRot: 0 | 90 | 180 | 270 =
+        rot === 90 || rot === 180 || rot === 270 ? rot : 0;
+      return {
+        fileId: String(p.fileId),
+        thumb: typeof p.thumb === 'string' ? p.thumb : '',
+        width: Number.isFinite(Number(p.width)) && Number(p.width) > 0 ? Math.round(Number(p.width)) : 240,
+        height: Number.isFinite(Number(p.height)) && Number(p.height) > 0 ? Math.round(Number(p.height)) : 320,
+        rotation: safeRot,
+      };
+    });
+}
+
+export function medicalDocumentToRow(
+  doc: Omit<MedicalDocument, 'createdAt' | 'updatedAt'> & {
+    createdAt?: unknown;
+    updatedAt?: unknown;
+    pendingCloudUpload?: boolean;
+  }
+): MedicalDocumentRow {
+  // Strip any client-only flags such as pendingCloudUpload
+  const nowIso = new Date().toISOString();
+  const createdAt = normalizeTimestampToIso(doc.createdAt) ?? nowIso;
+  const updatedAt = normalizeTimestampToIso(doc.updatedAt) ?? createdAt;
+
+  return {
+    id: doc.id,
+    kind: doc.kind === 'report' ? 'report' : 'prescription',
+    patient_id: doc.patientId ?? '',
+    doctor_id: asNullableString(doc.doctorId),
+    title: doc.title ?? '',
+    doc_date: doc.date ?? '',
+    note: asNullableString(doc.note),
+    report_type: asNullableString(doc.reportType),
+    pages: sanitizeDocumentPages(doc.pages),
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
+export function medicalDocumentFromRow(
+  row: Partial<MedicalDocumentRow> & { id: string }
+): MedicalDocument {
+  const createdAt = row.created_at ?? new Date().toISOString();
+  const updatedAt = row.updated_at ?? createdAt;
+  const result: MedicalDocument = {
+    id: String(row.id),
+    kind: row.kind === 'report' ? 'report' : 'prescription',
+    patientId: String(row.patient_id ?? ''),
+    title: String(row.title ?? ''),
+    date: String(row.doc_date ?? ''),
+    pages: sanitizeDocumentPages(row.pages),
+    createdAt,
+    updatedAt,
+  };
+
+  const doctorId = asOptionalString(row.doctor_id);
+  if (doctorId !== undefined) result.doctorId = doctorId;
+  const note = asOptionalString(row.note);
+  if (note !== undefined) result.note = note;
+  const reportType = asOptionalString(row.report_type);
+  if (reportType !== undefined) result.reportType = reportType;
+
+  return result;
+}
+
+// ============================================================================
+// 13. feedback
+// ============================================================================
+export interface FeedbackRow {
+  id: string;
+  user_id?: string | null;
+  message: string;
+  app_version?: string | null;
+  created_at: string;
+}
+
+export function feedbackFromRow(row: Partial<FeedbackRow> & { id: string }): FeedbackEntry {
+  const entry: FeedbackEntry = {
+    id: String(row.id),
+    message: String(row.message ?? ''),
+    createdAt: row.created_at ?? new Date().toISOString(),
+  };
+  const userId = asOptionalString(row.user_id);
+  if (userId !== undefined) entry.userId = userId;
+  const appVersion = asOptionalString(row.app_version);
+  if (appVersion !== undefined) entry.appVersion = appVersion;
+  return entry;
 }

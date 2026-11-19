@@ -20,7 +20,7 @@ import { recordFirestoreWrite } from '../utils/firestoreUsageTracker';
 const app = initializeApp(firebaseConfig);
 
 // Use memoryLocalCache() instead of persistentLocalCache():
-// App user data is persisted synchronously in localStorage and the 5,000-item catalog in libraryIndexedDb.ts.
+// App user data is persisted synchronously in localStorage.
 // Using memoryLocalCache prevents Firestore from persisting unacknowledged writes in IndexedDB and replaying
 // a poisoned write queue with infinite backoff retries across page reloads when daily quota is exhausted.
 export const db = initializeFirestore(

@@ -548,7 +548,7 @@ export interface ImportBatch {
     | 'custom';
   sourceType: ImportSourceType;
   importedAt: string;
-  importedByUid: string;
+  importedByUid?: string;
   importedByEmail: string;
   licenseReference: string;
   writtenPermissionRef?: string;
@@ -581,9 +581,15 @@ export interface AdminOverviewStats {
   totalUnpublishedMedicines: number;
   totalImportBatches: number;
   pendingVerificationCount: number;
-  firebaseConnected: boolean;
-  firebaseLatencyMs: number;
-  firebaseDatabaseId: string;
+  feedbackCount: number;
+}
+
+export interface FeedbackEntry {
+  id: string;
+  userId?: string;
+  message: string;
+  appVersion?: string;
+  createdAt: string;
 }
 
 

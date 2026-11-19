@@ -60,11 +60,7 @@ import { SyncStatusCard } from './SyncStatusCard';
 import { CaregiverSettingsSection } from '../caregiver/CaregiverSettingsSection';
 import { MySharedLinksSection } from '../reports/MySharedLinksSection';
 import { MAX_USER_DOCUMENT_PAGES } from '../../utils/medicalDocuments';
-import {
-  getTodayFirestoreUsage,
-  subscribeFirestoreUsage,
-  FirestoreDailyUsage,
-} from '../../utils/firestoreUsageTracker';
+import { FeedbackCard } from './FeedbackCard';
 
 export const Settings: React.FC = () => {
   const {
@@ -94,18 +90,6 @@ export const Settings: React.FC = () => {
 
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const [isImportingBackup, setIsImportingBackup] = useState(false);
-
-  const [todayUsage, setTodayUsage] = useState<FirestoreDailyUsage>(() =>
-    getTodayFirestoreUsage()
-  );
-
-  useEffect(() => {
-    if (!isAdmin) return;
-    setTodayUsage(getTodayFirestoreUsage());
-    return subscribeFirestoreUsage(() => {
-      setTodayUsage(getTodayFirestoreUsage());
-    });
-  }, [isAdmin]);
 
   const {
     hasBengaliVoice,
@@ -1229,65 +1213,6 @@ export const Settings: React.FC = () => {
         {/* Live Sync Status Card */}
         <SyncStatusCard />
 
-        {/* Admin-only Local Daily Firestore Read/Write Telemetry */}
-        {isAdmin && (() => {
-          const allCols = Array.from(
-            new Set([
-              ...Object.keys(todayUsage.writesByCollection),
-              ...Object.keys(todayUsage.readsByCollection),
-            ])
-          ).sort((a, b) => {
-            const totalB =
-              (todayUsage.writesByCollection[b] || 0) + (todayUsage.readsByCollection[b] || 0);
-            const totalA =
-              (todayUsage.writesByCollection[a] || 0) + (todayUsage.readsByCollection[a] || 0);
-            return totalB - totalA;
-          });
-
-          return (
-            <div className="p-4 rounded-xl bg-surface-2 border border-border space-y-2.5 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <strong className="font-bold text-text">
-                  আজ আমার ফোন থেকে আনুমানিক Firestore write: {toBengaliNumber(todayUsage.totalWrites)}
-                </strong>
-                <span className="text-text-muted font-semibold">
-                  read: {toBengaliNumber(todayUsage.totalReads)} ({todayUsage.dateKey})
-                </span>
-              </div>
-              {allCols.length > 0 ? (
-                <div className="space-y-1">
-                  <span className="text-[11px] font-semibold text-text-muted block">
-                    কোন কালেকশন কত:
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                    {allCols.map((colName) => {
-                      const w = todayUsage.writesByCollection[colName] || 0;
-                      const r = todayUsage.readsByCollection[colName] || 0;
-                      return (
-                        <div
-                          key={colName}
-                          className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface border border-border text-[11px]"
-                        >
-                          <span className="font-mono font-semibold text-text truncate">
-                            {colName}
-                          </span>
-                          <span className="text-text-muted shrink-0 ml-2">
-                            write {toBengaliNumber(w)} · read {toBengaliNumber(r)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-[11px] text-text-muted">
-                  আজ এখনো এই ফোন থেকে কোনো ক্লাউড রিড/রাইট রেকর্ড হয়নি।
-                </p>
-              )}
-            </div>
-          );
-        })()}
-
         {currentUser && (
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
             <button
@@ -1435,6 +1360,9 @@ export const Settings: React.FC = () => {
           </div>
         </div>
       </section>
+
+      {/* Feedback Section */}
+      <FeedbackCard />
 
       {/* Section 5: Healthcare Disclaimer & About */}
       <section className="bg-surface-2 border border-border rounded-2xl p-5 text-sm text-text-muted space-y-2">

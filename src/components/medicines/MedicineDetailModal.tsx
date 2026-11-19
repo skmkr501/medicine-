@@ -1,10 +1,14 @@
-import React, { useEffect } from 'react';
-import { Medicine } from '../../types';
+import React, { useEffect, useState } from 'react';
+import { GlobalMedicine, Medicine } from '../../types';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
 import { useMedicine } from '../../context/MedicineContext';
 import { predictMedicineStock } from '../../utils/stockPredictor';
 import { findMatchingCatalogMedicine } from '../../utils/shoppingListCalculator';
 import { buildMedicineDetailSpeechText, useBengaliSpeech } from '../../utils/speechUtils';
+import {
+  fetchLibraryMedicineById,
+  searchLibraryMedicines,
+} from '../../supabase/libraryService';
 import {
   X,
   Pill,
@@ -37,17 +41,50 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
   onDelete,
   onAdjustStock,
 }) => {
-  const { patients, globalMedicines, assignMedicineToPatient, openStockAdjustmentModal } = useMedicine();
+  const { patients, assignMedicineToPatient, openStockAdjustmentModal } = useMedicine();
   const { hasBengaliVoice, isSpeaking, voiceSettings, speak, stop } = useBengaliSpeech();
+  const [catalogCandidates, setCatalogCandidates] = useState<GlobalMedicine[]>([]);
 
   useEffect(() => {
     stop();
   }, [medicine?.id, stop]);
 
+  useEffect(() => {
+    if (!medicine) {
+      setCatalogCandidates([]);
+      return;
+    }
+    let cancelled = false;
+    const loadCatalog = async () => {
+      try {
+        if (medicine.catalogMedicineId) {
+          const found = await fetchLibraryMedicineById(medicine.catalogMedicineId);
+          if (!cancelled && found) {
+            setCatalogCandidates([found]);
+            return;
+          }
+        }
+        const q = medicine.brandName.trim();
+        if (q.length > 1) {
+          const results = await searchLibraryMedicines(q, { limit: 10 });
+          if (!cancelled) {
+            setCatalogCandidates(results);
+          }
+        }
+      } catch {
+        if (!cancelled) setCatalogCandidates([]);
+      }
+    };
+    void loadCatalog();
+    return () => {
+      cancelled = true;
+    };
+  }, [medicine?.id, medicine?.catalogMedicineId, medicine?.brandName]);
+
   if (!medicine) return null;
 
   const prediction = predictMedicineStock(medicine);
-  const catalogMatch = findMatchingCatalogMedicine(medicine, globalMedicines);
+  const catalogMatch = findMatchingCatalogMedicine(medicine, catalogCandidates);
   const canSpeak = hasBengaliVoice && voiceSettings.enabled;
 
   const handleCloseModal = () => {

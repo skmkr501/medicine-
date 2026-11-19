@@ -16,10 +16,10 @@ export const MAX_USER_DOCUMENT_PAGES = 120;
 export const MAX_PRINT_PAGES = 30;
 export const MAX_DOC_TITLE_LENGTH = 130;
 export const MAX_DOC_NOTE_LENGTH = 1000;
-export const MAX_IMAGE_DIMENSION = 1800;
-export const INITIAL_IMAGE_QUALITY = 0.7;
-export const MAX_FILE_BYTES = 700 * 1024; // < 700 KB
-export const MAX_FILE_DATA_CHARS = 900_000; // safely below 950,000 rules limit & 1 MB doc limit
+export const MAX_IMAGE_DIMENSION = 1600;
+export const INITIAL_IMAGE_QUALITY = 0.8;
+export const MAX_FILE_BYTES = 1.5 * 1024 * 1024; // <= 1.5 MB for Supabase Storage
+export const MAX_FILE_DATA_CHARS = 2_100_000;
 export const THUMB_MAX_DIMENSION = 240;
 export const MAX_THUMB_BYTES = 10 * 1024; // <= 10 KB
 
@@ -113,6 +113,33 @@ export function estimateBase64DataUrlBytes(dataUrl: string): number {
   if (clean.endsWith('==')) padding = 2;
   else if (clean.endsWith('=')) padding = 1;
   return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
+}
+
+/**
+ * Converts a base64 JPEG data URL into a binary Blob suitable for Supabase Storage upload.
+ */
+export function dataUrlToJpegBlob(dataUrl: string): Blob {
+  const commaIdx = dataUrl.indexOf(',');
+  const header = commaIdx >= 0 ? dataUrl.slice(0, commaIdx) : '';
+  const base64Part = (commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl).replace(/\s+/g, '');
+  const mimeMatch = header.match(/data:([^;]+);/i);
+  const mimeType = mimeMatch?.[1] === 'image/jpeg' ? 'image/jpeg' : 'image/jpeg';
+
+  let binary: string;
+  if (typeof atob === 'function') {
+    binary = atob(base64Part);
+  } else {
+    binary = Buffer.from(base64Part, 'base64').toString('binary');
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return readFileAsDataUrl(blob);
 }
 
 export function rotateDegreeClockwise(current?: number): 0 | 90 | 180 | 270 {
@@ -566,9 +593,9 @@ export async function compressDocumentImageAndThumbnail(
 
   const img = await loadHtmlImage(sourceDataUrl);
 
-  // 1. Compress full image (<= 1800px, JPEG 0.7 -> < 700 KB & <= 900,000 chars)
-  const dimensionSteps = [MAX_IMAGE_DIMENSION, 1400, 1100, 850];
-  const qualitySteps = [INITIAL_IMAGE_QUALITY, 0.58, 0.46, 0.36, 0.28];
+  // 1. Compress full image (<= 1600px, JPEG 0.8 -> <= 1.5 MB)
+  const dimensionSteps = [MAX_IMAGE_DIMENSION, 1280, 1024, 800];
+  const qualitySteps = [INITIAL_IMAGE_QUALITY, 0.68, 0.56, 0.44, 0.32];
 
   let fullResult: { dataUrl: string; bytes: number; width: number; height: number } | null = null;
   outerFull: for (const dim of dimensionSteps) {

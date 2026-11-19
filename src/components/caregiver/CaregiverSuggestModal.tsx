@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   CaregiverFullMedicineItem,
   CaregiverLinkDoc,
@@ -10,7 +10,7 @@ import {
 } from '../../types';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
-import { quickBasicSearchMedicines } from '../../utils/librarySearchIndex';
+import { searchLibraryMedicines } from '../../supabase/libraryService';
 import {
   MAX_DAILY_CAREGIVER_SUGGESTIONS,
   SUGGESTION_SLOT_ORDER,
@@ -53,25 +53,12 @@ const MEAL_TIMINGS: MealTiming[] = [
 
 const DOSAGE_PRESETS = ['১টি', '২টি', '১/২টি', '১ চামচ'];
 
-const DEFAULT_FILTER = {
-  isAdmin: false,
-  adminStatusFilter: 'published' as const,
-  favoritesOnly: false,
-  favoriteIdSet: new Set<string>(),
-  selectedLetter: '',
-  selectedForm: '',
-  selectedManufacturer: '',
-  priceFilter: 'all' as const,
-  selectedSource: '',
-};
-
 export const CaregiverSuggestModal: React.FC<CaregiverSuggestModalProps> = ({
   link,
   onClose,
 }) => {
   const {
     currentUser,
-    globalMedicines,
     sentCaregiverSuggestions,
     sendCaregiverSuggestion,
   } = useMedicine();
@@ -108,14 +95,33 @@ export const CaregiverSuggestModal: React.FC<CaregiverSuggestModalProps> = ({
     : 0;
   const remainingToday = Math.max(0, MAX_DAILY_CAREGIVER_SUGGESTIONS - todayCount);
 
-  const catalogMatches = useMemo(() => {
+  const [catalogMatches, setCatalogMatches] = useState<GlobalMedicine[]>([]);
+
+  useEffect(() => {
     const q = brandName.trim();
-    if (kind !== 'add' || q.length < 2 || globalMedicines.length === 0) {
-      return [];
+    if (kind !== 'add' || q.length <= 1) {
+      setCatalogMatches([]);
+      return;
     }
-    const res = quickBasicSearchMedicines(globalMedicines, DEFAULT_FILTER, q);
-    return res.medicines.slice(0, 6);
-  }, [brandName, kind, globalMedicines]);
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void searchLibraryMedicines(q, { limit: 6 })
+        .then((res) => {
+          if (!cancelled) {
+            setCatalogMatches(res.slice(0, 6));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setCatalogMatches([]);
+        });
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [brandName, kind]);
 
   const applySharedMedicine = (med: CaregiverFullMedicineItem, idx: number) => {
     const key = med.id || `${med.brandName}_${idx}`;

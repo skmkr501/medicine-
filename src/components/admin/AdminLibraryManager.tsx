@@ -5,8 +5,7 @@ import {
   AdminLibraryFilters,
   DEFAULT_ADMIN_FILTERS,
   BulkMedicinePatch,
-  computeLibraryQualityReport,
-  filterAndSortAdminMedicines,
+  DuplicateGroup,
   findSuspectedDuplicateGroups,
   getActiveAdminFilterChips,
   pickDuplicateIdsKeepingOne,
@@ -16,6 +15,16 @@ import {
   isMissingPrice,
 } from '../../utils/libraryManagement';
 import { isTestMedicine } from '../../utils/medicineImportParser';
+import {
+  ADMIN_LIBRARY_PAGE_SIZE,
+  fetchAdminFilteredLibraryIds,
+  fetchAdminFilteredMedicines,
+  fetchAdminLibraryPage,
+  fetchAllMedicinesForAdminAudit,
+  fetchLibraryFilterOptions,
+  fetchLibraryMedicinesByIds,
+  fetchLibraryQualityCounts,
+} from '../../supabase/libraryService';
 import {
   ArrowLeft,
   Search,
@@ -40,9 +49,10 @@ import {
   Pill,
   Check,
   SlidersHorizontal,
+  Loader2,
 } from 'lucide-react';
 
-const ADMIN_PAGE_SIZE = 50;
+const ADMIN_PAGE_SIZE = ADMIN_LIBRARY_PAGE_SIZE;
 const UNDO_WINDOW_SECONDS = 30;
 
 const DOSAGE_FORM_OPTIONS = [
@@ -61,8 +71,7 @@ const PRICE_UNIT_OPTIONS = ['পিস', 'পাতা', 'বোতল', 'টি
 
 export const AdminLibraryManager: React.FC = () => {
   const {
-    globalMedicines,
-    libraryVersion,
+    libraryMutationVersion,
     isAdmin,
     currentUser,
     openAuthModal,
@@ -77,12 +86,34 @@ export const AdminLibraryManager: React.FC = () => {
 
   // Filters, sorting, pagination & duplicate view
   const [filters, setFilters] = useState<AdminLibraryFilters>(DEFAULT_ADMIN_FILTERS);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'duplicates'>('list');
   const [page, setPage] = useState(1);
 
+  // Server-loaded states
+  const [paginatedMedicines, setPaginatedMedicines] = useState<GlobalMedicine[]>([]);
+  const [totalFilteredCount, setTotalFilteredCount] = useState(0);
+  const [isLoadingPage, setIsLoadingPage] = useState(false);
+
+  const [uniqueManufacturers, setUniqueManufacturers] = useState<string[]>([]);
+  const [uniqueDosageForms, setUniqueDosageForms] = useState<string[]>([]);
+  const [uniqueGenerics, setUniqueGenerics] = useState<string[]>([]);
+
+  const [qualityCounts, setQualityCounts] = useState({
+    totalCount: 0,
+    missingPriceCount: 0,
+    missingGenericCount: 0,
+  });
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
+  const [duplicateIdsList, setDuplicateIdsList] = useState<string[]>([]);
+  const [testDataIdsList, setTestDataIdsList] = useState<string[]>([]);
+  const [duplicateItemsCount, setDuplicateItemsCount] = useState(0);
+  const [duplicateExtraCount, setDuplicateExtraCount] = useState(0);
+
   // Marked selection state
   const [markedIds, setMarkedIds] = useState<Set<string>>(new Set());
+  const [isLoadingAction, setIsLoadingAction] = useState(false);
 
   // Delete Confirmation Modal state
   const [deleteModal, setDeleteModal] = useState<{
@@ -133,23 +164,119 @@ export const AdminLibraryManager: React.FC = () => {
     isRestoring: boolean;
   } | null>(null);
 
-  // Clean up marked IDs if medicines are removed externally
+  // Debounce search input (200ms)
   useEffect(() => {
-    const validIds = new Set(globalMedicines.map((m) => m.id));
-    setMarkedIds((prev) => {
-      if (prev.size === 0) return prev;
-      const next = new Set<string>();
-      prev.forEach((id) => {
-        if (validIds.has(id)) next.add(id);
-      });
-      return next.size === prev.size ? prev : next;
-    });
-  }, [globalMedicines]);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(filters.search);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [filters.search]);
 
-  // Reset pagination whenever filters change
+  const effectiveFilters = useMemo<AdminLibraryFilters>(
+    () => ({
+      ...filters,
+      search: debouncedSearch,
+    }),
+    [filters, debouncedSearch]
+  );
+
+  // Reset pagination whenever effective filters or view mode change
   useEffect(() => {
     setPage(1);
-  }, [filters, viewMode]);
+  }, [
+    effectiveFilters.search,
+    effectiveFilters.manufacturer,
+    effectiveFilters.dosageForm,
+    effectiveFilters.genericName,
+    effectiveFilters.priceStatus,
+    effectiveFilters.qualityFilter,
+    effectiveFilters.sortBy,
+    viewMode,
+  ]);
+
+  // Load filter options, quality counts & audit data (duplicate groups & test IDs)
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+
+    void Promise.all([
+      fetchLibraryFilterOptions({ includeUnpublished: true, includeGenerics: true }),
+      fetchLibraryQualityCounts(),
+      fetchAllMedicinesForAdminAudit(5000),
+    ])
+      .then(([opts, qCounts, allAuditMeds]) => {
+        if (cancelled) return;
+        setUniqueManufacturers(opts.manufacturers);
+        setUniqueDosageForms(opts.forms);
+        setUniqueGenerics(opts.generics.slice(0, 400));
+        setQualityCounts(qCounts);
+
+        const groups = findSuspectedDuplicateGroups(allAuditMeds);
+        const dupIdSet = new Set<string>();
+        let extraCount = 0;
+        for (const g of groups) {
+          g.items.forEach((it) => dupIdSet.add(it.id));
+          extraCount += g.items.length - 1;
+        }
+        const testIds = allAuditMeds.filter((m) => isTestMedicine(m)).map((m) => m.id);
+
+        setDuplicateGroups(groups);
+        setDuplicateIdsList(Array.from(dupIdSet));
+        setDuplicateItemsCount(dupIdSet.size);
+        setDuplicateExtraCount(extraCount);
+        setTestDataIdsList(testIds);
+      })
+      .catch((err) => {
+        console.warn('Could not load admin library metadata/audit:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, libraryMutationVersion]);
+
+  const totalPages = Math.max(1, Math.ceil(totalFilteredCount / ADMIN_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+
+  // Load current page from Supabase (50 per page)
+  useEffect(() => {
+    if (!isAdmin || viewMode !== 'list') return;
+    let cancelled = false;
+    setIsLoadingPage(true);
+
+    void fetchAdminLibraryPage({
+      filters: effectiveFilters,
+      page: safePage,
+      pageSize: ADMIN_PAGE_SIZE,
+      duplicateIdsFilter: duplicateIdsList,
+      testDataIdsFilter: testDataIdsList,
+    })
+      .then((res) => {
+        if (cancelled) return;
+        setPaginatedMedicines(res.items);
+        setTotalFilteredCount(res.totalCount);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn('Could not fetch admin library page:', err);
+        showToast('ওষুধ তালিকা লোড করা যায়নি।', 'alert');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingPage(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isAdmin,
+    viewMode,
+    effectiveFilters,
+    safePage,
+    duplicateIdsList,
+    testDataIdsList,
+    libraryMutationVersion,
+  ]);
 
   // 30-second Undo countdown timer
   useEffect(() => {
@@ -166,63 +293,6 @@ export const AdminLibraryManager: React.FC = () => {
     return () => clearTimeout(timer);
   }, [undoBanner]);
 
-  // Unique dropdown values
-  const uniqueManufacturers = useMemo(() => {
-    const set = new Set<string>();
-    globalMedicines.forEach((m) => {
-      if (m.manufacturer?.trim()) set.add(m.manufacturer.trim());
-    });
-    return Array.from(set).sort();
-  }, [globalMedicines]);
-
-  const uniqueDosageForms = useMemo(() => {
-    const set = new Set<string>();
-    globalMedicines.forEach((m) => {
-      if (m.dosageForm?.trim()) set.add(m.dosageForm.trim());
-    });
-    return Array.from(set).sort();
-  }, [globalMedicines]);
-
-  const uniqueGenerics = useMemo(() => {
-    const set = new Set<string>();
-    globalMedicines.forEach((m) => {
-      if (m.genericName?.trim() && m.genericName.trim() !== '-') {
-        set.add(m.genericName.trim());
-      }
-    });
-    return Array.from(set).sort().slice(0, 400);
-  }, [globalMedicines]);
-
-  // Quality report metrics (calculated locally from cached globalMedicines)
-  const qualityReport = useMemo(
-    () => computeLibraryQualityReport(globalMedicines),
-    [globalMedicines]
-  );
-
-  // Suspected duplicate groups
-  const duplicateGroups = useMemo(
-    () => findSuspectedDuplicateGroups(globalMedicines),
-    [globalMedicines]
-  );
-
-  // Filtered and sorted list
-  const filteredMedicines = useMemo(
-    () =>
-      filterAndSortAdminMedicines(
-        globalMedicines,
-        filters,
-        qualityReport.suspectedDuplicateIdSet
-      ),
-    [globalMedicines, filters, qualityReport.suspectedDuplicateIdSet]
-  );
-
-  const totalPages = Math.max(1, Math.ceil(filteredMedicines.length / ADMIN_PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
-  const paginatedMedicines = useMemo(() => {
-    const start = (safePage - 1) * ADMIN_PAGE_SIZE;
-    return filteredMedicines.slice(start, start + ADMIN_PAGE_SIZE);
-  }, [filteredMedicines, safePage]);
-
   const activeChips = useMemo(() => getActiveAdminFilterChips(filters), [filters]);
 
   const allOnPageMarked =
@@ -230,8 +300,7 @@ export const AdminLibraryManager: React.FC = () => {
     paginatedMedicines.every((m) => markedIds.has(m.id));
 
   const allFilteredMarked =
-    filteredMedicines.length > 0 &&
-    filteredMedicines.every((m) => markedIds.has(m.id));
+    totalFilteredCount > 0 && markedIds.size >= totalFilteredCount;
 
   // Security Lockout if non-admin
   if (!isAdmin) {
@@ -295,13 +364,25 @@ export const AdminLibraryManager: React.FC = () => {
     });
   };
 
-  const markAllFiltered = () => {
-    setMarkedIds((prev) => {
-      const next = new Set(prev);
-      filteredMedicines.forEach((m) => next.add(m.id));
-      return next;
-    });
-    showToast(`ফিল্টারে মিলে যাওয়া সব ${filteredMedicines.length}টি ওষুধ মার্ক করা হয়েছে`, 'info');
+  const markAllFiltered = async () => {
+    setIsLoadingAction(true);
+    try {
+      const ids = await fetchAdminFilteredLibraryIds({
+        filters: effectiveFilters,
+        duplicateIdsFilter: duplicateIdsList,
+        testDataIdsFilter: testDataIdsList,
+      });
+      setMarkedIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.add(id));
+        return next;
+      });
+      showToast(`ফিল্টারে মিলে যাওয়া সব ${ids.length}টি ওষুধ মার্ক করা হয়েছে`, 'info');
+    } catch {
+      showToast('সব ওষুধ মার্ক করা যায়নি। আবার চেষ্টা করুন।', 'alert');
+    } finally {
+      setIsLoadingAction(false);
+    }
   };
 
   const clearAllMarks = () => setMarkedIds(new Set());
@@ -341,9 +422,19 @@ export const AdminLibraryManager: React.FC = () => {
     });
   };
 
-  const openBulkDeleteConfirmation = () => {
-    const items = globalMedicines.filter((m) => markedIds.has(m.id));
-    openDeleteConfirmation(items);
+  const openBulkDeleteConfirmation = async () => {
+    if (markedIds.size === 0) return;
+    setIsLoadingAction(true);
+    try {
+      const items = await fetchLibraryMedicinesByIds(Array.from(markedIds), {
+        includeUnpublished: true,
+      });
+      openDeleteConfirmation(items);
+    } catch {
+      showToast('নির্বাচিত ওষুধের তথ্য লোড করা যায়নি।', 'alert');
+    } finally {
+      setIsLoadingAction(false);
+    }
   };
 
   const requiresTypedConfirm = deleteModal.items.length > 10;
@@ -466,18 +557,29 @@ export const AdminLibraryManager: React.FC = () => {
     }
   };
 
-  // Export CSV Handler
-  const handleExportCsv = (onlyMarked: boolean) => {
-    const items = onlyMarked
-      ? globalMedicines.filter((m) => markedIds.has(m.id))
-      : filteredMedicines;
+  // Export CSV Handler (loads marked or filtered rows on demand)
+  const handleExportCsv = async (onlyMarked: boolean) => {
+    setIsLoadingAction(true);
+    try {
+      const items = onlyMarked
+        ? await fetchLibraryMedicinesByIds(Array.from(markedIds), { includeUnpublished: true })
+        : await fetchAdminFilteredMedicines({
+            filters: effectiveFilters,
+            duplicateIdsFilter: duplicateIdsList,
+            testDataIdsFilter: testDataIdsList,
+          });
 
-    if (items.length === 0) {
-      showToast('রপ্তানি করার মতো কোনো ওষুধ নেই', 'info');
-      return;
+      if (items.length === 0) {
+        showToast('রপ্তানি করার মতো কোনো ওষুধ নেই', 'info');
+        return;
+      }
+      downloadMedicinesCsv(items);
+      showToast(`${items.length}টি ওষুধের CSV ফাইল ডাউনলোড হচ্ছে`, 'success');
+    } catch {
+      showToast('CSV ফাইল তৈরি করা যায়নি।', 'alert');
+    } finally {
+      setIsLoadingAction(false);
     }
-    downloadMedicinesCsv(items);
-    showToast(`${items.length}টি ওষুধের CSV ফাইল ডাউনলোড হচ্ছে`, 'success');
   };
 
   return (
@@ -497,14 +599,12 @@ export const AdminLibraryManager: React.FC = () => {
             <h1 className="text-xl sm:text-2xl font-bold text-text flex items-center gap-2">
               <span>ওষুধ ব্যবস্থাপনা</span>
             </h1>
-            {libraryVersion > 0 && (
-              <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-lg bg-surface-2 text-text-muted">
-                সংস্করণ {libraryVersion}
-              </span>
-            )}
+            <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-lg bg-surface-2 text-text-muted">
+              মোট {qualityCounts.totalCount} টি
+            </span>
           </div>
           <p className="text-sm text-text-muted">
-            ফোনে লোড করা তালিকা থেকেই তাৎক্ষণিক অনুসন্ধান, ডুপ্লিকেট বাছাই, সম্পাদনা ও নিরাপদ অপসারণ করুন।
+            সার্ভার থেকে পাতা অনুযায়ী দ্রুত অনুসন্ধান, ডুপ্লিকেট বাছাই, সম্পাদনা ও নিরাপদ অপসারণ করুন।
           </p>
         </div>
 
@@ -524,17 +624,18 @@ export const AdminLibraryManager: React.FC = () => {
             <span>
               {viewMode === 'duplicates'
                 ? 'সব ওষুধ তালিকায় ফিরুন'
-                : `ডুপ্লিকেট খুঁজুন (${qualityReport.suspectedDuplicateGroupsCount})`}
+                : `ডুপ্লিকেট খুঁজুন (${duplicateGroups.length})`}
             </span>
           </button>
 
           <button
             type="button"
-            onClick={() => handleExportCsv(false)}
-            className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm bg-surface-2 text-text border border-border hover:bg-border/50 cursor-pointer"
+            disabled={isLoadingAction}
+            onClick={() => void handleExportCsv(false)}
+            className="min-h-[48px] inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm bg-surface-2 text-text border border-border hover:bg-border/50 cursor-pointer disabled:opacity-50"
           >
             <Download className="w-4 h-4" />
-            <span>CSV রপ্তানি ({filteredMedicines.length})</span>
+            <span>CSV রপ্তানি ({totalFilteredCount})</span>
           </button>
 
           <button
@@ -632,7 +733,7 @@ export const AdminLibraryManager: React.FC = () => {
               মোট ওষুধ
             </span>
             <span className="text-2xl font-extrabold text-text tabular-nums mt-1 block">
-              {qualityReport.totalCount}
+              {qualityCounts.totalCount}
             </span>
           </button>
 
@@ -656,7 +757,7 @@ export const AdminLibraryManager: React.FC = () => {
               দাম ছাড়া
             </span>
             <span className="text-2xl font-extrabold text-warning-text tabular-nums mt-1 block">
-              {qualityReport.missingPriceCount}
+              {qualityCounts.missingPriceCount}
             </span>
           </button>
 
@@ -681,7 +782,7 @@ export const AdminLibraryManager: React.FC = () => {
               জেনেরিক ছাড়া
             </span>
             <span className="text-2xl font-extrabold text-warning-text tabular-nums mt-1 block">
-              {qualityReport.missingGenericCount}
+              {qualityCounts.missingGenericCount}
             </span>
           </button>
 
@@ -706,7 +807,7 @@ export const AdminLibraryManager: React.FC = () => {
               সম্ভাব্য ডুপ্লিকেট
             </span>
             <span className="text-2xl font-extrabold text-warning-text tabular-nums mt-1 block">
-              {qualityReport.suspectedDuplicateItemsCount}
+              {duplicateItemsCount}
             </span>
           </button>
 
@@ -730,7 +831,7 @@ export const AdminLibraryManager: React.FC = () => {
               টেস্ট ডেটা
             </span>
             <span className="text-2xl font-extrabold text-danger-text tabular-nums mt-1 block">
-              {qualityReport.testDataCount}
+              {testDataIdsList.length}
             </span>
           </button>
         </div>
@@ -756,7 +857,7 @@ export const AdminLibraryManager: React.FC = () => {
               >
                 <CheckSquare className="w-4 h-4" />
                 <span>
-                  একটি রেখে বাকিগুলো মার্ক করুন ({qualityReport.suspectedDuplicateExtraCount}টি)
+                  একটি রেখে বাকিগুলো মার্ক করুন ({duplicateExtraCount}টি)
                 </span>
               </button>
             )}
@@ -1082,13 +1183,14 @@ export const AdminLibraryManager: React.FC = () => {
                 <span>সব মার্ক করুন</span>
               </button>
 
-              {filteredMedicines.length > paginatedMedicines.length && !allFilteredMarked && (
+              {totalFilteredCount > paginatedMedicines.length && !allFilteredMarked && (
                 <button
                   type="button"
-                  onClick={markAllFiltered}
-                  className="min-h-[44px] px-3.5 py-2 rounded-xl bg-primary-soft border border-primary/30 text-xs sm:text-sm font-bold text-primary hover:bg-primary/15 cursor-pointer"
+                  disabled={isLoadingAction}
+                  onClick={() => void markAllFiltered()}
+                  className="min-h-[44px] px-3.5 py-2 rounded-xl bg-primary-soft border border-primary/30 text-xs sm:text-sm font-bold text-primary hover:bg-primary/15 cursor-pointer disabled:opacity-50"
                 >
-                  ফিল্টারে মিলে যাওয়া সব {filteredMedicines.length} টি ওষুধ মার্ক করুন
+                  ফিল্টারে মিলে যাওয়া সব {totalFilteredCount} টি ওষুধ মার্ক করুন
                 </button>
               )}
 
@@ -1103,13 +1205,21 @@ export const AdminLibraryManager: React.FC = () => {
               )}
             </div>
 
-            <div className="text-sm font-semibold text-text-muted tabular-nums">
-              মোট {filteredMedicines.length}টি · পাতা {safePage}/{totalPages}
+            <div className="text-sm font-semibold text-text-muted tabular-nums flex items-center gap-2">
+              {isLoadingPage && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
+              <span>
+                মোট {totalFilteredCount}টি · পাতা {safePage}/{totalPages}
+              </span>
             </div>
           </div>
 
           {/* Medicine List: Table on Desktop, Touch Cards on Mobile */}
-          {paginatedMedicines.length === 0 ? (
+          {isLoadingPage && paginatedMedicines.length === 0 ? (
+            <div className="bg-surface rounded-2xl border border-border p-10 text-center space-y-3">
+              <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" />
+              <p className="text-sm font-semibold text-text-muted">তালিকা লোড হচ্ছে...</p>
+            </div>
+          ) : paginatedMedicines.length === 0 ? (
             <div className="bg-surface rounded-2xl border border-border p-10 text-center space-y-3">
               <Pill className="w-10 h-10 text-text-muted mx-auto" />
               <h3 className="text-lg font-bold text-text">
@@ -1313,7 +1423,7 @@ export const AdminLibraryManager: React.FC = () => {
                 <div className="p-4 border-t border-border flex items-center justify-between gap-3 bg-surface-2/60">
                   <button
                     type="button"
-                    disabled={safePage <= 1}
+                    disabled={safePage <= 1 || isLoadingPage}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border bg-surface font-bold text-sm text-text cursor-pointer disabled:opacity-40"
                   >
@@ -1327,7 +1437,7 @@ export const AdminLibraryManager: React.FC = () => {
 
                   <button
                     type="button"
-                    disabled={safePage >= totalPages}
+                    disabled={safePage >= totalPages || isLoadingPage}
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     className="min-h-[48px] inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-border bg-surface font-bold text-sm text-text cursor-pointer disabled:opacity-40"
                   >
@@ -1361,8 +1471,9 @@ export const AdminLibraryManager: React.FC = () => {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={openBulkDeleteConfirmation}
-                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-danger hover:opacity-90 text-white font-bold text-xs sm:text-sm cursor-pointer"
+                disabled={isLoadingAction}
+                onClick={() => void openBulkDeleteConfirmation()}
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-danger hover:opacity-90 text-white font-bold text-xs sm:text-sm cursor-pointer disabled:opacity-50"
               >
                 <Trash2 className="w-4 h-4" />
                 <span>মুছুন</span>
@@ -1397,8 +1508,9 @@ export const AdminLibraryManager: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => handleExportCsv(true)}
-                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-success hover:opacity-90 text-white font-bold text-xs sm:text-sm cursor-pointer"
+                disabled={isLoadingAction}
+                onClick={() => void handleExportCsv(true)}
+                className="min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-success hover:opacity-90 text-white font-bold text-xs sm:text-sm cursor-pointer disabled:opacity-50"
               >
                 <Download className="w-4 h-4" />
                 <span>CSV রপ্তানি</span>

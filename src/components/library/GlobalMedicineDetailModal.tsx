@@ -1,6 +1,7 @@
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { GlobalMedicine } from '../../types';
 import { findSameGenericAlternatives } from '../../utils/libraryManagement';
+import { fetchSameGenericAlternativesFromSupabase } from '../../supabase/libraryService';
 import { buildGlobalMedicineDetailSpeechText, useBengaliSpeech } from '../../utils/speechUtils';
 import {
   X,
@@ -39,15 +40,37 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
   onAddToMyMedicines,
 }) => {
   const { hasBengaliVoice, isSpeaking, voiceSettings, speak, stop } = useBengaliSpeech();
+  const [remoteAlternatives, setRemoteAlternatives] = useState<GlobalMedicine[]>([]);
 
   useEffect(() => {
     stop();
   }, [medicine?.id, stop]);
 
+  useEffect(() => {
+    if (!medicine || !medicine.genericName || allMedicines.length > 0) {
+      setRemoteAlternatives([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchSameGenericAlternativesFromSupabase(medicine.genericName, medicine.id, 10)
+      .then((alts) => {
+        if (!cancelled) setRemoteAlternatives(alts);
+      })
+      .catch(() => {
+        if (!cancelled) setRemoteAlternatives([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [medicine?.id, medicine?.genericName, allMedicines.length]);
+
   const alternatives = useMemo(() => {
     if (!medicine || !medicine.genericName) return [];
-    return findSameGenericAlternatives(allMedicines, medicine.genericName, medicine.id, 10);
-  }, [allMedicines, medicine]);
+    if (allMedicines.length > 0) {
+      return findSameGenericAlternatives(allMedicines, medicine.genericName, medicine.id, 10);
+    }
+    return remoteAlternatives;
+  }, [allMedicines, remoteAlternatives, medicine]);
 
   if (!medicine) return null;
 

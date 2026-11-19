@@ -1,7 +1,6 @@
 
 import {
   collection,
-  collectionGroup,
   doc,
   setDoc,
   updateDoc,
@@ -65,6 +64,21 @@ import {
   cleanupDemoRecordsFromSupabase,
 } from '../supabase/userDataService';
 import {
+  clearUserDocumentsAndStorage,
+  createDocumentMetaInSupabase,
+  deleteDocumentFileFromStorage,
+  deleteDocumentMetaFromSupabase,
+  fetchDocumentFileFromStorage,
+  fetchUserDocumentsMetaFromSupabase,
+  updateDocumentMetaInSupabase,
+  uploadDocumentFileToStorage,
+} from '../supabase/documentsService';
+import {
+  fetchAdminActivitiesFromSupabase,
+  fetchImportBatchesFromSupabase,
+  recordAdminActivityInSupabase,
+} from '../supabase/libraryService';
+import {
   handleFirestoreError,
   isQuotaExceededError,
   isWriteQuotaPaused,
@@ -73,20 +87,12 @@ import {
   QuotaExceededWriteError,
 } from './errors';
 import {
-  LibraryMetaDoc,
-  LibraryChunkDoc,
-  buildLibraryChunks,
-  estimateUtf8Bytes,
-  hasCatalogChanges,
-} from '../utils/libraryChunks';
-import {
   Medicine,
   PatientProfile,
   DoseLog,
   ReminderSettings,
   HealthRecord,
   DoctorAppointment,
-  GlobalMedicine,
   ImportBatch,
   AdminActivity,
   CaregiverLinkDoc,
@@ -110,10 +116,10 @@ import {
   isValidEmergencyTokenFormat,
 } from '../utils/emergencyQr';
 import { DoctorProfileInput } from '../utils/doctorsManager';
-import { buildCleanMedicalDocumentInput, DocumentFormInput } from '../utils/medicalDocuments';
+import { DocumentFormInput } from '../utils/medicalDocuments';
 import { isValidInviteCode, normalizeInviteCodeInput } from '../utils/caregiverAlerts';
 import { CloudSyncOutbox } from '../utils/cloudSyncOutbox';
-import { recordFirestoreRead, recordFirestoreWrite } from '../utils/firestoreUsageTracker';
+import { recordFirestoreRead } from '../utils/firestoreUsageTracker';
 
 /**
  * Asserts that the currently authenticated user is a verified admin (via Supabase is_admin RPC).
@@ -243,104 +249,36 @@ export async function deletePhonebookEntryFromCloud(userId: string, entryId: str
 }
 
 // ============================================================================
-// Prescriptions & Medical Reports Vault (users/{uid}/documents + documentFiles)
-// Strictly private to owner; ZERO onSnapshot listeners.
+// Prescriptions & Medical Reports Vault (Supabase Postgres + Storage 'medical-docs')
 // ============================================================================
 
 export async function fetchUserDocumentsMetaFromCloud(
   userId: string
 ): Promise<MedicalDocument[]> {
-  if (!userId) return [];
-  const colRef = collection(db, 'users', userId, 'documents');
-  let snap;
-  try {
-    snap = await getDocsFromServer(colRef);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDocs(colRef);
-  }
-  recordFirestoreRead('documents', Math.max(1, snap.size));
-  const items: MedicalDocument[] = [];
-  snap.forEach((docSnap) => {
-    const raw = docSnap.data() as MedicalDocument;
-    items.push({
-      ...raw,
-      id: raw.id || docSnap.id,
-      pages: Array.isArray(raw.pages) ? raw.pages : [],
-    });
-  });
-  return items;
+  return fetchUserDocumentsMetaFromSupabase(userId);
 }
 
 export async function fetchDocumentFileFromCloud(
   userId: string,
-  fileId: string
+  fileId: string,
+  docId?: string
 ): Promise<MedicalDocumentFile | null> {
-  if (!userId || !fileId) return null;
-  const docRef = doc(db, 'users', userId, 'documentFiles', fileId);
-  let snap;
-  try {
-    snap = await getDocFromServer(docRef);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDoc(docRef);
-  }
-  recordFirestoreRead('documentFiles', 1);
-  if (!snap.exists()) return null;
-  const raw = snap.data() as MedicalDocumentFile;
-  return {
-    ...raw,
-    id: raw.id || snap.id,
-  };
+  return fetchDocumentFileFromStorage(userId, fileId, docId);
 }
 
 export async function createDocumentFileInCloud(
   userId: string,
   file: { id: string; docId: string; data: string; bytes: number }
 ): Promise<void> {
-  const path = `users/${userId}/documentFiles/${file.id}`;
-  const payload = stripUndefined({
-    id: file.id,
-    docId: file.docId,
-    data: file.data,
-    bytes: file.bytes,
-    createdAt: serverTimestamp(),
-  });
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'documentFiles', file.id), payload),
-      { collection: 'documentFiles', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.CREATE, path);
-  }
+  return uploadDocumentFileToStorage(userId, file);
 }
 
 export async function deleteDocumentFileFromCloud(
   userId: string,
-  fileId: string
+  fileId: string,
+  docId?: string
 ): Promise<void> {
-  const path = `users/${userId}/documentFiles/${fileId}`;
-  try {
-    await executeGuardedWrite(
-      () => deleteDoc(doc(db, 'users', userId, 'documentFiles', fileId)),
-      { collection: 'documentFiles', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  return deleteDocumentFileFromStorage(userId, docId, fileId);
 }
 
 export async function createDocumentMetaInCloud(
@@ -348,85 +286,23 @@ export async function createDocumentMetaInCloud(
   docId: string,
   docInput: DocumentFormInput
 ): Promise<void> {
-  const path = `users/${userId}/documents/${docId}`;
-  const clean = buildCleanMedicalDocumentInput(docInput);
-  const payload = stripUndefined({
-    id: docId,
-    ...clean,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  try {
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'users', userId, 'documents', docId), payload),
-      { collection: 'documents', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.CREATE, path);
-  }
+  return createDocumentMetaInSupabase(userId, docId, docInput);
 }
 
 export async function updateDocumentMetaInCloud(
   userId: string,
   docId: string,
-  docInput: DocumentFormInput
+  docInput: DocumentFormInput,
+  existingCreatedAt?: unknown
 ): Promise<void> {
-  const path = `users/${userId}/documents/${docId}`;
-  const docRef = doc(db, 'users', userId, 'documents', docId);
-  const clean = buildCleanMedicalDocumentInput(docInput);
-
-  const patch: Record<string, any> = {
-    kind: clean.kind,
-    patientId: clean.patientId,
-    title: clean.title,
-    date: clean.date,
-    pages: clean.pages,
-    doctorId: clean.doctorId !== undefined ? clean.doctorId : deleteField(),
-    note: clean.note !== undefined ? clean.note : deleteField(),
-    reportType: clean.reportType !== undefined ? clean.reportType : deleteField(),
-    updatedAt: serverTimestamp(),
-  };
-
-  try {
-    await executeGuardedWrite(
-      () => updateDoc(docRef, stripUndefined(patch)),
-      { collection: 'documents', count: 1 }
-    );
-  } catch (error: any) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    const code = String(error?.code || error?.message || '').toLowerCase();
-    if (code.includes('not-found')) {
-      await createDocumentMetaInCloud(userId, docId, docInput);
-      return;
-    }
-    handleFirestoreError(error, OperationType.UPDATE, path);
-  }
+  return updateDocumentMetaInSupabase(userId, docId, docInput, existingCreatedAt);
 }
 
 export async function deleteDocumentMetaFromCloud(
   userId: string,
   docId: string
 ): Promise<void> {
-  const path = `users/${userId}/documents/${docId}`;
-  try {
-    await executeGuardedWrite(
-      () => deleteDoc(doc(db, 'users', userId, 'documents', docId)),
-      { collection: 'documents', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.DELETE, path);
-  }
+  return deleteDocumentMetaFromSupabase(userId, docId);
 }
 
 // Safe Migration of Local Data into Supabase Postgres (batched <= 200 rows)
@@ -553,48 +429,13 @@ export async function fetchRecentHealthRecordsFromCloud(
 }
 
 /**
- * Safely clears user's 8 core tables in Supabase Postgres + remaining Firestore documents vault (until Part 2b)
+ * Safely clears user's 8 core tables + medical_documents + Storage 'medical-docs' bucket in Supabase
  */
 export async function clearUserCloudData(userId: string): Promise<void> {
-  await clearCoreUserTablesFromSupabase(userId);
-
-  // Documents vault stays in Firestore until Part 2b
-  try {
-    const docsSnap = await getDocs(collection(db, 'users', userId, 'documents'));
-    recordFirestoreRead('documents', Math.max(1, docsSnap.size));
-    if (!docsSnap.empty) {
-      const fileRefs: Array<ReturnType<typeof doc>> = [];
-      docsSnap.docs.forEach((d) => {
-        const raw = d.data() as Partial<MedicalDocument>;
-        if (Array.isArray(raw.pages)) {
-          raw.pages.forEach((p) => {
-            if (p && typeof p.fileId === 'string' && p.fileId.trim()) {
-              fileRefs.push(doc(db, 'users', userId, 'documentFiles', p.fileId.trim()));
-            }
-          });
-        }
-      });
-      const CHUNK_SIZE = 400;
-      for (let i = 0; i < fileRefs.length; i += CHUNK_SIZE) {
-        const chunk = fileRefs.slice(i, i + CHUNK_SIZE);
-        const batch = writeBatch(db);
-        chunk.forEach((ref) => batch.delete(ref));
-        await executeGuardedWrite(() => batch.commit(), { collection: 'documentFiles', count: chunk.length });
-      }
-      for (let i = 0; i < docsSnap.docs.length; i += CHUNK_SIZE) {
-        const chunk = docsSnap.docs.slice(i, i + CHUNK_SIZE);
-        const batch = writeBatch(db);
-        chunk.forEach((d) => batch.delete(d.ref));
-        await executeGuardedWrite(() => batch.commit(), { collection: 'documents', count: chunk.length });
-      }
-    }
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.DELETE, `users/${userId}/documents`);
-  }
+  await Promise.all([
+    clearCoreUserTablesFromSupabase(userId),
+    clearUserDocumentsAndStorage(userId),
+  ]);
 }
 
 /**
@@ -606,335 +447,15 @@ export async function cleanupDemoRecordsFromCloud(
   return cleanupDemoRecordsFromSupabase(userId);
 }
 
-// Versioned Chunked Global Medicine Catalog Services (library_meta + library_chunks)
-
-/**
- * Fetches the single metadata document library_meta/current (1 Firestore read).
- */
-export async function fetchLibraryMetaFromCloud(): Promise<LibraryMetaDoc | null> {
-  try {
-    const snap = await getDoc(doc(db, 'library_meta', 'current'));
-    recordFirestoreRead('library_meta', 1);
-    if (!snap.exists()) return null;
-    return snap.data() as LibraryMetaDoc;
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      throw error;
-    }
-    console.warn('fetchLibraryMetaFromCloud error:', error);
-    return null;
-  }
-}
-
-/**
- * Fetches all chunks for a given library catalog version (e.g. 25 reads for ~5,000 items at 200/chunk).
- */
-export async function fetchLibraryChunksByVersion(version: number): Promise<GlobalMedicine[]> {
-  if (!version || version <= 0) return [];
-  const q = query(collection(db, 'library_chunks'), where('version', '==', version));
-  let snap;
-  try {
-    snap = await getDocsFromServer(q);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    // Offline/cache fallback
-    snap = await getDocs(q);
-  }
-  recordFirestoreRead('library_chunks', Math.max(1, snap.size));
-
-  const chunkDocs: LibraryChunkDoc[] = [];
-  snap.forEach((docSnap) => {
-    chunkDocs.push(docSnap.data() as LibraryChunkDoc);
-  });
-
-  chunkDocs.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-
-  const items: GlobalMedicine[] = [];
-  for (const chunk of chunkDocs) {
-    if (Array.isArray(chunk.items)) {
-      for (const item of chunk.items) {
-        items.push(item);
-      }
-    }
-  }
-  return items;
-}
-
-/**
- * Publishes an entire updated catalog as versioned library_chunks (<= 200 items & < 1MB each),
- * commits chunk batches safely under Firestore's 10 MiB batch limit,
- * updates library_meta/current LAST, and cleans up older version chunks best-effort.
- */
-export async function publishChunkedLibraryCatalog(
-  medicines: GlobalMedicine[],
-  currentKnownVersion: number = 0,
-  importBatchInfo?: ImportBatch
-): Promise<{
-  newVersion: number;
-  chunkCount: number;
-  totalCount: number;
-  totalWrites: number;
-}> {
-  assertAdminAuth();
-  if (isWriteQuotaPaused()) {
-    throw new QuotaExceededWriteError();
-  }
-
-  let serverVersion = 0;
-  try {
-    let metaSnap;
-    try {
-      metaSnap = await getDocFromServer(doc(db, 'library_meta', 'current'));
-    } catch (err) {
-      if (isQuotaExceededError(err)) throw err;
-      metaSnap = await getDoc(doc(db, 'library_meta', 'current'));
-    }
-    if (metaSnap.exists()) {
-      const data = metaSnap.data() as Partial<LibraryMetaDoc>;
-      if (typeof data.version === 'number') {
-        serverVersion = data.version;
-      }
-    }
-    recordFirestoreRead('library_meta', 1);
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    console.warn('Could not fetch current library_meta before publish, using local version baseline:', err);
-  }
-
-  const newVersion = Math.max(currentKnownVersion, serverVersion, 0) + 1;
-  const cleanMedicines = medicines.map((m) => stripUndefined(m));
-  const chunks = buildLibraryChunks(cleanMedicines, newVersion);
-
-  let totalWrites = 0;
-
-  try {
-    // 1. Write chunk docs in byte-safe batches (max 5 chunks or ~3.5 MB per batch to stay well under 10 MiB Firestore batch limit)
-    const MAX_CHUNKS_PER_BATCH = 5;
-    const MAX_BATCH_BYTES = 3_500_000;
-
-    let currentBatchDocs: LibraryChunkDoc[] = [];
-    let currentBatchBytes = 0;
-
-    const commitChunkBatch = async (docsToWrite: LibraryChunkDoc[]) => {
-      if (docsToWrite.length === 0) return;
-      const batch = writeBatch(db);
-      docsToWrite.forEach((chunkDoc) => {
-        const ref = doc(db, 'library_chunks', `${newVersion}_${chunkDoc.index}`);
-        batch.set(ref, stripUndefined(chunkDoc));
-      });
-      await executeGuardedWrite(() => batch.commit(), {
-        collection: 'library_chunks',
-        count: docsToWrite.length,
-      });
-      totalWrites += docsToWrite.length;
-    };
-
-    for (const chunk of chunks) {
-      const chunkBytes = estimateUtf8Bytes(chunk);
-      if (
-        currentBatchDocs.length >= MAX_CHUNKS_PER_BATCH ||
-        (currentBatchDocs.length > 0 && currentBatchBytes + chunkBytes > MAX_BATCH_BYTES)
-      ) {
-        await commitChunkBatch(currentBatchDocs);
-        currentBatchDocs = [chunk];
-        currentBatchBytes = chunkBytes;
-      } else {
-        currentBatchDocs.push(chunk);
-        currentBatchBytes += chunkBytes;
-      }
-    }
-
-    if (currentBatchDocs.length > 0) {
-      await commitChunkBatch(currentBatchDocs);
-    }
-
-    // 2. Write optional import batch audit doc
-    if (importBatchInfo) {
-      await executeGuardedWrite(
-        () => setDoc(doc(db, 'import_batches', importBatchInfo.id), stripUndefined(importBatchInfo)),
-        { collection: 'import_batches', count: 1 }
-      );
-      totalWrites += 1;
-    }
-
-    // 3. Update library_meta/current LAST so clients only switch after all chunks exist
-    const metaPayload: LibraryMetaDoc = {
-      version: newVersion,
-      chunkCount: chunks.length,
-      totalCount: cleanMedicines.length,
-      updatedAt: new Date().toISOString(),
-    };
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'library_meta', 'current'), metaPayload),
-      { collection: 'library_meta', count: 1 }
-    );
-    totalWrites += 1;
-
-    // 4. Best-effort cleanup of old version chunks (non-fatal if skipped/empty)
-    try {
-      const oldChunksSnap = await getDocs(
-        query(collection(db, 'library_chunks'), where('version', '<', newVersion))
-      );
-      recordFirestoreRead('library_chunks', Math.max(1, oldChunksSnap.size));
-      if (!oldChunksSnap.empty) {
-        const docsToDelete = oldChunksSnap.docs;
-        const DELETE_BATCH_SIZE = 300;
-        for (let i = 0; i < docsToDelete.length; i += DELETE_BATCH_SIZE) {
-          const chunk = docsToDelete.slice(i, i + DELETE_BATCH_SIZE);
-          const delBatch = writeBatch(db);
-          chunk.forEach((d) => delBatch.delete(d.ref));
-          await executeGuardedWrite(() => delBatch.commit(), {
-            collection: 'library_chunks',
-            count: chunk.length,
-          });
-        }
-      }
-    } catch (cleanupErr) {
-      console.warn('Old library_chunks cleanup notice (non-fatal):', cleanupErr);
-    }
-
-    return {
-      newVersion,
-      chunkCount: chunks.length,
-      totalCount: cleanMedicines.length,
-      totalWrites,
-    };
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      throw error;
-    }
-    handleFirestoreError(error, OperationType.WRITE, 'library_chunks/[publish]');
-    return { newVersion, chunkCount: 0, totalCount: 0, totalWrites: 0 };
-  }
-}
-
-/**
- * One-time admin-only legacy migration:
- * Reads legacy global_medicines documents ONCE, merges cleanly with any existing catalog items,
- * writes them as chunked library_chunks + library_meta/current, and logs an activity.
- */
-export async function migrateLegacyGlobalMedicinesToChunks(
-  existingCatalog: GlobalMedicine[] = [],
-  currentKnownVersion: number = 0
-): Promise<{
-  legacyFoundCount: number;
-  mergedTotalCount: number;
-  newVersion: number;
-  chunkCount: number;
-  totalWrites: number;
-  mergedMedicines: GlobalMedicine[];
-}> {
-  assertAdminAuth();
-
-  let snap;
-  try {
-    snap = await getDocsFromServer(collection(db, 'global_medicines'));
-  } catch (err) {
-    if (isQuotaExceededError(err)) {
-      throw err;
-    }
-    snap = await getDocs(collection(db, 'global_medicines'));
-  }
-  recordFirestoreRead('global_medicines', Math.max(1, snap.size));
-
-  const legacyMeds: GlobalMedicine[] = [];
-  snap.forEach((docSnap) => {
-    const data = docSnap.data() as GlobalMedicine;
-    legacyMeds.push({
-      ...data,
-      id: data.id || docSnap.id,
-    });
-  });
-
-  if (legacyMeds.length === 0 && existingCatalog.length === 0) {
-    return {
-      legacyFoundCount: 0,
-      mergedTotalCount: 0,
-      newVersion: currentKnownVersion,
-      chunkCount: 0,
-      totalWrites: 0,
-      mergedMedicines: [],
-    };
-  }
-
-  const diff = hasCatalogChanges(existingCatalog, legacyMeds);
-  const targetList = diff.changed ? diff.mergedList : existingCatalog;
-
-  const publishRes = await publishChunkedLibraryCatalog(targetList, currentKnownVersion);
-
-  recordAdminActivity({
-    type: 'import',
-    title: 'পুরনো লাইব্রেরি নতুন চাঙ্কড ফরম্যাটে মাইগ্রেশন',
-    description: `পুরনো global_medicines থেকে ${legacyMeds.length}টি ওষুধ পড়া হয়েছে এবং ${publishRes.chunkCount}টি চাঙ্কে মোট ${publishRes.totalCount}টি ওষুধ সংরক্ষিত হয়েছে (সংস্করণ ${publishRes.newVersion})।`,
-    adminEmail: getCachedSupabaseUser()?.email || '',
-  }).catch((e) => console.warn('Activity log error:', e));
-
-  return {
-    legacyFoundCount: legacyMeds.length,
-    mergedTotalCount: publishRes.totalCount,
-    newVersion: publishRes.newVersion,
-    chunkCount: publishRes.chunkCount,
-    totalWrites: publishRes.totalWrites,
-    mergedMedicines: targetList,
-  };
-}
+// ============================================================================
+// Admin Import Batches & Activity Logs (Supabase Postgres)
+// ============================================================================
 
 export async function fetchImportBatches(): Promise<ImportBatch[]> {
-  try {
-    assertAdminAuth();
-    const snap = await getDocs(collection(db, 'import_batches'));
-    recordFirestoreRead('import_batches', Math.max(1, snap.size));
-    return snap.docs.map((docSnap) => docSnap.data() as ImportBatch);
-  } catch (error) {
-    console.warn('Could not fetch import batches from firestore:', error);
-    return [];
-  }
+  assertAdminAuth();
+  return fetchImportBatchesFromSupabase();
 }
 
-/**
- * Fetches all registered users from Firestore (Admin only)
- */
-export async function fetchRegisteredUsers(): Promise<{
-  uid: string;
-  email: string;
-  displayName?: string;
-  photoURL?: string;
-  lastLoginAt?: string;
-}[]> {
-  try {
-    assertAdminAuth();
-    const snap = await getDocs(collection(db, 'users'));
-    recordFirestoreRead('users', Math.max(1, snap.size));
-    return snap.docs.map((d) => d.data() as any);
-  } catch (error) {
-    console.warn('Could not fetch registered users:', error);
-    return [];
-  }
-}
-
-/**
- * Fetches total count of patient profiles across all users (Admin only)
- */
-export async function fetchTotalPatientsCount(): Promise<number> {
-  try {
-    assertAdminAuth();
-    const snap = await getDocs(collectionGroup(db, 'patients'));
-    recordFirestoreRead('patients', Math.max(1, snap.size));
-    return snap.size;
-  } catch (error) {
-    console.warn('Could not fetch patient profiles count via collectionGroup:', error);
-    return 0;
-  }
-}
-
-/**
- * Records an admin activity into Firestore
- */
 export async function recordAdminActivity(
   activity: Omit<AdminActivity, 'id' | 'timestamp' | 'adminEmail'> & {
     id?: string;
@@ -942,88 +463,16 @@ export async function recordAdminActivity(
     adminEmail?: string;
   }
 ): Promise<void> {
-  if (isWriteQuotaPaused()) return;
-  try {
-    assertAdminAuth();
-    const activityId = activity.id || `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const act: AdminActivity = {
-      ...activity,
-      id: activityId,
-      timestamp: activity.timestamp || new Date().toISOString(),
-      adminEmail: activity.adminEmail || getCachedSupabaseUser()?.email || '',
-    };
-    await executeGuardedWrite(
-      () => setDoc(doc(db, 'admin_activities', activityId), act),
-      { collection: 'admin_activities', count: 1 }
-    );
-  } catch (error) {
-    if (isQuotaExceededError(error)) {
-      markWriteQuotaExceeded();
-      return;
-    }
-    console.warn('Could not record admin activity:', error);
-  }
+  assertAdminAuth();
+  return recordAdminActivityInSupabase({
+    ...activity,
+    adminEmail: activity.adminEmail || getCachedSupabaseUser()?.email || '',
+  });
 }
 
-/**
- * Fetches recent admin activities from Firestore
- */
 export async function fetchAdminActivities(): Promise<AdminActivity[]> {
-  try {
-    assertAdminAuth();
-    const q = query(collection(db, 'admin_activities'), orderBy('timestamp', 'desc'), limit(50));
-    const snap = await getDocs(q);
-    recordFirestoreRead('admin_activities', Math.max(1, snap.size));
-    return snap.docs.map((d) => d.data() as AdminActivity);
-  } catch (error) {
-    console.warn('Could not fetch admin activities:', error);
-    return [];
-  }
-}
-
-/**
- * Tests Firebase real-time connection health & latency
- */
-export async function testFirebaseDetailedStatus(): Promise<{
-  isConnected: boolean;
-  latencyMs: number;
-  databaseId: string;
-  projectId: string;
-  userEmail: string;
-  online: boolean;
-}> {
-  const start = performance.now();
-  const databaseId = 'ai-studio-shasthobondhu-0ef74fa2-17df-4dc9-87f0-96c012be89de';
-  const projectId = 'ai-studio-shasthobondhu-0ef74fa2-17df-4dc9-87f0-96c012be89de';
-  const online = typeof navigator !== 'undefined' ? navigator.onLine : true;
-
-  try {
-    await getDoc(doc(db, 'library_meta', 'current'));
-    recordFirestoreRead('library_meta', 1);
-    const latencyMs = Math.round(performance.now() - start);
-    return {
-      isConnected: true,
-      latencyMs,
-      databaseId,
-      projectId,
-      userEmail: getCachedSupabaseUser()?.email || 'N/A',
-      online,
-    };
-  } catch (error: any) {
-    const latencyMs = Math.round(performance.now() - start);
-    const isActuallyConnected =
-      !error?.message?.includes('failed-precondition') &&
-      !error?.message?.includes('offline') &&
-      !isQuotaExceededError(error);
-    return {
-      isConnected: isActuallyConnected,
-      latencyMs,
-      databaseId,
-      projectId,
-      userEmail: getCachedSupabaseUser()?.email || 'N/A',
-      online,
-    };
-  }
+  assertAdminAuth();
+  return fetchAdminActivitiesFromSupabase();
 }
 
 // ============================================================================

@@ -1,7 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
-import { Medicine } from '../../types';
+import { GlobalMedicine, Medicine } from '../../types';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
+import {
+  fetchLibraryMedicinesByIds,
+  searchLibraryMedicines,
+} from '../../supabase/libraryService';
 import {
   QuickRangePresetKey,
   calculateMedicineShoppingList,
@@ -41,12 +45,79 @@ export const ShoppingListPage: React.FC = () => {
   const {
     medicines,
     patients,
-    globalMedicines,
     activePatientId,
     setCurrentPage,
     openStockAdjustmentModal,
     updateMedicine,
   } = useMedicine();
+
+  const [catalogMedicines, setCatalogMedicines] = useState<GlobalMedicine[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRelevantCatalog = async () => {
+      if (!medicines || medicines.length === 0) {
+        if (!cancelled) setCatalogMedicines([]);
+        return;
+      }
+
+      const collected = new Map<string, GlobalMedicine>();
+      const idsToFetch = Array.from(
+        new Set(
+          medicines
+            .map((m) => m.catalogMedicineId?.trim())
+            .filter((id): id is string => Boolean(id))
+        )
+      );
+
+      try {
+        if (idsToFetch.length > 0) {
+          const byId = await fetchLibraryMedicinesByIds(idsToFetch);
+          for (const gm of byId) {
+            collected.set(gm.id, gm);
+          }
+        }
+
+        // For medicines lacking catalogMedicineId or missing manual price, fetch top search matches
+        const brandQueries = Array.from(
+          new Set(
+            medicines
+              .filter(
+                (m) =>
+                  (!m.catalogMedicineId || !collected.has(m.catalogMedicineId)) &&
+                  m.brandName.trim().length > 1
+              )
+              .map((m) => m.brandName.trim())
+          )
+        ).slice(0, 15);
+
+        if (brandQueries.length > 0) {
+          const searchLists = await Promise.all(
+            brandQueries.map((q) =>
+              searchLibraryMedicines(q, { limit: 10 }).catch(() => [] as GlobalMedicine[])
+            )
+          );
+          for (const list of searchLists) {
+            for (const gm of list) {
+              collected.set(gm.id, gm);
+            }
+          }
+        }
+
+        if (!cancelled) {
+          setCatalogMedicines(Array.from(collected.values()));
+        }
+      } catch {
+        // Non-fatal: shopping list still computes quantities with personal medicine fields
+      }
+    };
+
+    void loadRelevantCatalog();
+    return () => {
+      cancelled = true;
+    };
+  }, [medicines]);
 
   const activePatients = useMemo(
     () => patients.filter((p) => !p.isArchived),
@@ -85,7 +156,7 @@ export const ShoppingListPage: React.FC = () => {
       calculateMedicineShoppingList({
         medicines,
         patients: activePatients,
-        globalMedicines,
+        globalMedicines: catalogMedicines,
         selectedPatientId,
         startDate: startDateIso,
         targetDate: targetDateIso,
@@ -95,7 +166,7 @@ export const ShoppingListPage: React.FC = () => {
     [
       medicines,
       activePatients,
-      globalMedicines,
+      catalogMedicines,
       selectedPatientId,
       startDateIso,
       targetDateIso,

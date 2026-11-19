@@ -41,13 +41,8 @@ import {
   clearAllNativeReminders,
   isNativeRemindersAvailable,
 } from '../services/nativeReminders';
-import { db, resumeFirestoreNetwork, testFirestoreConnection, stripUndefined, isFirestoreNetworkDisabled } from '../firebase/config';
+import { stripUndefined } from '../firebase/config';
 import { useAuth, type AuthUser } from './AuthContext';
-import {
-  collection,
-  doc,
-  onSnapshot,
-} from 'firebase/firestore';
 import {
   saveMedicineToCloud,
   saveMedicinesBatchToCloud,
@@ -62,10 +57,6 @@ import {
   deleteAppointmentFromCloud,
   migrateLocalDataToCloud,
   flushOutboxToCloud,
-  fetchLibraryMetaFromCloud,
-  fetchLibraryChunksByVersion,
-  publishChunkedLibraryCatalog,
-  migrateLegacyGlobalMedicinesToChunks,
   recordAdminActivity,
   checkUserHasCloudData,
   clearUserCloudData,
@@ -104,13 +95,26 @@ import {
   deleteDocumentMetaFromCloud,
 } from '../firebase/services';
 import { getSupabaseDataErrorMessageBn } from '../supabase/userDataService';
+import {
+  bulkPatchLibraryMedicinesInSupabase,
+  checkDuplicateKeysInSupabase,
+  clearLibrarySearchSessionCache,
+  createImportBatchInSupabase,
+  deleteLibraryMedicinesInBatches,
+  fetchImportBatchesFromSupabase,
+  fetchLibraryMedicineById,
+  fetchLibraryMedicinesByIds,
+  fetchPublishedLibraryCounts,
+  fetchUnpublishedDraftsFromSupabase,
+  upsertLibraryMedicinesInBatches,
+} from '../supabase/libraryService';
+import { clearDocumentSignedUrlCache } from '../supabase/documentsService';
 import { parseAndMergeLocalBackup } from '../utils/backupMerge';
 import {
   getFriendlyErrorMessage,
   isQuotaExceededError,
   isWriteQuotaPaused,
   markWriteQuotaExceeded,
-  clearWriteQuotaPause,
   consumeQuotaExceededNoticeOnce,
   subscribeWriteQuotaExceeded,
   QUOTA_EXCEEDED_BN_MSG,
@@ -137,25 +141,7 @@ import {
   stripDemoEmergencyContact,
   cleanDemoDataSnapshot,
 } from '../utils/demoCleanup';
-import {
-  evaluateGlobalCatalogSnapshot,
-  formatLibrarySyncTime,
-  PublishedBaselineState,
-} from '../utils/libraryRealtime';
-import {
-  loadLibraryFromIndexedDb,
-  saveLibraryToIndexedDb,
-} from '../utils/libraryIndexedDb';
-import {
-  LibraryMetaDoc,
-  hasCatalogChanges,
-  shouldFetchChunksForMeta,
-} from '../utils/libraryChunks';
-import {
-  BulkMedicinePatch,
-  applyBulkMedicinePatch,
-  mergeRestoredMedicines,
-} from '../utils/libraryManagement';
+import { BulkMedicinePatch } from '../utils/libraryManagement';
 import {
   MAX_CAREGIVERS,
   CAREGIVER_INVITE_TTL_MS,
@@ -241,19 +227,6 @@ import {
   getPendingDocIdSet,
   clearDocSyncQueue,
 } from '../utils/documentsIndexedDb';
-import { recordFirestoreRead } from '../utils/firestoreUsageTracker';
-import {
-  ADMIN_QUOTA_SAVED_TOAST,
-  loadAdminPublishQueue,
-  saveAdminPublishQueue,
-  clearAdminPublishQueue,
-  dedupeAndMergeQueueMedicines,
-  dedupeAndMergeQueueBatches,
-  removeIdsFromPublishQueue,
-  mergePendingQueueForAdminDisplay,
-  combineCatalogWithPendingQueueForSingleVersionPublish,
-  shouldAttemptAdminQueueAutoPublish,
-} from '../utils/adminPublishQueue';
 
 
 interface ToastState {
@@ -342,7 +315,7 @@ interface MedicineContextType {
   ) => Promise<{ ok: boolean; docId?: string; savedOffline?: boolean; error?: string }>;
   rotateMedicalDocumentPage: (docId: string, pageIndex: number) => Promise<void>;
   deleteMedicalDocument: (docId: string) => Promise<void>;
-  loadDocumentPageImage: (fileId: string) => Promise<string | null>;
+  loadDocumentPageImage: (fileId: string, docId?: string) => Promise<string | null>;
   unlinkOrDeleteDoctorPrescriptions: (
     doctorId: string,
     mode: 'keep_unlinked' | 'delete_all'
@@ -395,34 +368,25 @@ interface MedicineContextType {
   closeResetConfirmationModal: () => void;
   confirmResetAllData: (deleteFromCloud: boolean) => Promise<void>;
 
-  // Global Medicine Catalog & Admin Import
-  globalMedicines: GlobalMedicine[];
-  libraryVersion: number;
+  // Global Medicine Catalog & Admin Import (Supabase RPC + Server Pagination)
+  libraryMutationVersion: number;
   importBatches: ImportBatch[];
+  refreshImportBatches: () => Promise<void>;
   isAdmin: boolean;
   adminEmail: string;
   lastSyncTime: string;
   isOnline: boolean;
-  isGlobalFromCache: boolean;
-  latestLibraryNotice: { count: number; message: string; timestamp: number } | null;
-  dismissLibraryNotice: () => void;
   cloudStats: { total: number; published: number; draft: number };
   refreshCloudCounts: () => Promise<void>;
-  migrateLegacyLibraryAction: () => Promise<{
-    legacyFoundCount: number;
-    mergedTotalCount: number;
-    newVersion: number;
-    chunkCount: number;
-  } | null>;
   selectedGlobalMedForDetail: GlobalMedicine | null;
   setSelectedGlobalMedForDetail: (med: GlobalMedicine | null) => void;
   isAddToPersonalModalOpen: boolean;
   catalogMedToAddToPersonal: GlobalMedicine | null;
   openAddToPersonalModal: (med: GlobalMedicine) => void;
   closeAddToPersonalModal: () => void;
-  publishGlobalMedicineAction: (medicineId: string) => Promise<boolean>;
+  publishGlobalMedicineAction: (medicineOrId: string | GlobalMedicine) => Promise<boolean>;
   bulkPublishGlobalMedicinesAction: (medicineIds?: string[]) => Promise<number>;
-  deleteGlobalMedicineAction: (medicineId: string) => Promise<boolean>;
+  deleteGlobalMedicineAction: (medicineOrId: string | GlobalMedicine) => Promise<boolean>;
   bulkDeleteGlobalMedicinesAction: (medicineIds: string[]) => Promise<boolean>;
   isManualAddModalOpen: boolean;
   editingGlobalMedicine: GlobalMedicine | null;
@@ -442,13 +406,6 @@ interface MedicineContextType {
     batchInfo: Omit<ImportBatch, 'id' | 'importedAt' | 'importedByUid' | 'importedByEmail'>,
     records: GlobalMedicine[]
   ) => Promise<boolean>;
-  pendingPublishMedicines: GlobalMedicine[];
-  pendingPublishBatches: ImportBatch[];
-  pendingPublishLastRetryAttemptMs: number | null;
-  isRetryingPendingPublish: boolean;
-  retryPendingPublishNow: () => Promise<boolean>;
-  cancelPendingPublishItem: (medicineId: string) => Promise<void>;
-  clearPendingPublishQueue: () => Promise<void>;
   addCatalogMedToPersonal: (
     med: GlobalMedicine,
     config: {
@@ -580,22 +537,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   });
 
-  // Global medicine catalog stored in IndexedDB (avoids localStorage 5MB limit)
-  const [cloudGlobalMedicines, setCloudGlobalMedicines] = useState<GlobalMedicine[]>(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem(STORAGE_KEYS.GLOBAL_MEDS);
-      }
-    } catch {
-      // ignore storage cleanup errors
-    }
-    return [];
-  });
-  const [libraryVersion, setLibraryVersion] = useState<number>(0);
-  const [pendingPublishMedicines, setPendingPublishMedicines] = useState<GlobalMedicine[]>([]);
-  const [pendingPublishBatches, setPendingPublishBatches] = useState<ImportBatch[]>([]);
-  const [pendingPublishLastRetryAttemptMs, setPendingPublishLastRetryAttemptMs] = useState<number | null>(null);
-  const [isRetryingPendingPublish, setIsRetryingPendingPublish] = useState<boolean>(false);
+  // Bumped whenever admin creates/updates/deletes/imports catalog items so paginated views refresh
+  const [libraryMutationVersion, setLibraryMutationVersion] = useState<number>(0);
 
   const [lastSyncTime, setLastSyncTime] = useState<string>(() => {
     try {
@@ -607,13 +550,6 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [isGlobalFromCache, setIsGlobalFromCache] = useState<boolean>(false);
-  const [latestLibraryNotice, setLatestLibraryNotice] = useState<{
-    count: number;
-    message: string;
-    timestamp: number;
-  } | null>(null);
-  const dismissLibraryNotice = () => setLatestLibraryNotice(null);
 
   const [cloudStats, setCloudStats] = useState<{ total: number; published: number; draft: number }>({
     total: 0,
@@ -621,14 +557,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     draft: 0,
   });
 
-  const [importBatches, setImportBatches] = useState<ImportBatch[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.IMPORT_BATCHES);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [importBatches, setImportBatches] = useState<ImportBatch[]>([]);
 
   // Health records & Doctor appointments (ধাপ ১ ও ২)
   const [healthRecords, setHealthRecords] = useState<HealthRecord[]>(() => {
@@ -798,18 +727,6 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   healthRecordsRef.current = healthRecords;
   const appointmentsRef = useRef<DoctorAppointment[]>(appointments);
   appointmentsRef.current = appointments;
-  const pendingPublishMedicinesRef = useRef<GlobalMedicine[]>(pendingPublishMedicines);
-  pendingPublishMedicinesRef.current = pendingPublishMedicines;
-  const pendingPublishBatchesRef = useRef<ImportBatch[]>(pendingPublishBatches);
-  pendingPublishBatchesRef.current = pendingPublishBatches;
-  const pendingPublishLastRetryRef = useRef<number | null>(pendingPublishLastRetryAttemptMs);
-  pendingPublishLastRetryRef.current = pendingPublishLastRetryAttemptMs;
-  const retryPublishInFlightRef = useRef<boolean>(false);
-
-  const globalMedicines = React.useMemo(
-    () => mergePendingQueueForAdminDisplay(cloudGlobalMedicines, pendingPublishMedicines, isAdmin),
-    [cloudGlobalMedicines, pendingPublishMedicines, isAdmin]
-  );
 
 
   // Sync to local storage for resilience
@@ -913,67 +830,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, [activePatientId]);
 
-  // Keep cloudStats derived directly in memory without reading Firestore
-  useEffect(() => {
-    let published = 0;
-    let draft = 0;
-    globalMedicines.forEach((m) => {
-      if (m.status === 'published' && m.verifiedByAdmin) {
-        published++;
-      } else {
-        draft++;
-      }
-    });
-    setCloudStats({
-      total: globalMedicines.length,
-      published,
-      draft,
-    });
-  }, [globalMedicines]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.IMPORT_BATCHES, JSON.stringify(importBatches));
-    } catch (e) {
-      console.warn('Storage sync error', e);
-    }
-  }, [importBatches]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.HEALTH_RECORDS, JSON.stringify(healthRecords));
-    } catch (e) {
-      console.warn('Storage sync error', e);
-    }
-  }, [healthRecords]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.APPOINTMENTS, JSON.stringify(appointments));
-    } catch (e) {
-      console.warn('Storage sync error', e);
-    }
-  }, [appointments]);
-
-  const globalCatalogBaselineRef = useRef<PublishedBaselineState>({
-    hasInitialServerLoad: false,
-    prevPublishedCount: null,
-    skipNextListenerBaseline: false,
-  });
-  const localLibraryVersionRef = useRef<number>(0);
-  const fetchingVersionRef = useRef<number | null>(null);
-  const cloudGlobalMedicinesRef = useRef<GlobalMedicine[]>(cloudGlobalMedicines);
-  cloudGlobalMedicinesRef.current = cloudGlobalMedicines;
-  const globalMedicinesRef = useRef<GlobalMedicine[]>(globalMedicines);
-  globalMedicinesRef.current = globalMedicines;
-  const hasGlobalCatalogRef = useRef<boolean>(cloudGlobalMedicines.length > 0);
-  hasGlobalCatalogRef.current = cloudGlobalMedicines.length > 0;
   const showToastRef = useRef<((message: string, type?: 'success' | 'info' | 'alert') => void) | null>(null);
 
   const applyQuotaUiStateOnce = () => {
     setIsQuotaExceeded(true);
     setSyncStatus('offline');
-    setIsGlobalFromCache(true);
     if (consumeQuotaExceededNoticeOnce()) {
       showToastRef.current?.(QUOTA_EXCEEDED_BN_MSG, 'info');
     }
@@ -1076,13 +937,11 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
   }, []);
 
-  // Auto-clear quota UI state once Pacific midnight (BDT 2:00 PM) passes
+  // Auto-clear quota UI state once Pacific midnight passes (Part 3 Firestore)
   useEffect(() => {
     const checkQuotaReset = () => {
       if (isQuotaExceeded && !isWriteQuotaPaused()) {
         setIsQuotaExceeded(false);
-        setIsGlobalFromCache(isDeviceOffline());
-        resumeFirestoreNetwork().catch(() => {});
         setSyncStatus(isDeviceOffline() ? 'offline' : 'synced');
       }
     };
@@ -1098,249 +957,66 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, [isQuotaExceeded]);
 
-  // Load IndexedDB cache FIRST, then attach a single-document listener to library_meta/current (1 read per check/update)
-  useEffect(() => {
-    let cancelled = false;
-    let unsubMeta: (() => void) | null = null;
-    let hasRecordedMetaRead = false;
-    let lastRecordedMetaVersion: number | null = null;
-
-    const initChunkedLibraryListener = async () => {
-      const cachedCatalog = await loadLibraryFromIndexedDb();
-      if (cancelled) return;
-
-      if (cachedCatalog && cachedCatalog.medicines.length > 0) {
-        localLibraryVersionRef.current = cachedCatalog.version;
-        setLibraryVersion(cachedCatalog.version);
-        setCloudGlobalMedicines(cachedCatalog.medicines);
-        cloudGlobalMedicinesRef.current = cachedCatalog.medicines;
-        hasGlobalCatalogRef.current = true;
-        globalCatalogBaselineRef.current = {
-          hasInitialServerLoad: false,
-          prevPublishedCount: cachedCatalog.medicines.filter((m) => m.status === 'published').length,
-          skipNextListenerBaseline: false,
-        };
-      }
-
-      unsubMeta = onSnapshot(
-        doc(db, 'library_meta', 'current'),
-        { includeMetadataChanges: true },
-        async (snapshot) => {
-          if (cancelled) return;
-          const fromCache = snapshot.metadata.fromCache;
-          setIsGlobalFromCache(fromCache);
-          const metaData = snapshot.exists() ? (snapshot.data() as LibraryMetaDoc) : null;
-          if (!fromCache && (!hasRecordedMetaRead || (metaData && metaData.version !== lastRecordedMetaVersion))) {
-            hasRecordedMetaRead = true;
-            if (metaData && typeof metaData.version === 'number') {
-              lastRecordedMetaVersion = metaData.version;
-            }
-            recordFirestoreRead('library_meta', 1);
-          }
-
-          if (!snapshot.exists()) {
-            // Never clear cached IndexedDB library if server hasn't populated library_meta/current yet
-            return;
-          }
-
-          const meta = metaData as LibraryMetaDoc;
-          const needsFetch = shouldFetchChunksForMeta({
-            meta,
-            localVersion: localLibraryVersionRef.current,
-            hasLocalCatalog: cloudGlobalMedicinesRef.current.length > 0,
-          });
-
-          if (!needsFetch) {
-            if (!fromCache && !isDeviceOffline()) {
-              const timeStr = formatLibrarySyncTime();
-              setLastSyncTime(timeStr);
-              try {
-                localStorage.setItem(STORAGE_KEYS.GLOBAL_LAST_SYNC, timeStr);
-              } catch {
-                // ignore storage write failure
-              }
-              setIsCloudConnected(true);
-              if (!globalCatalogBaselineRef.current.hasInitialServerLoad) {
-                globalCatalogBaselineRef.current = {
-                  hasInitialServerLoad: true,
-                  prevPublishedCount: cloudGlobalMedicinesRef.current.filter((m) => m.status === 'published').length,
-                  skipNextListenerBaseline: false,
-                };
-              }
-            }
-            return;
-          }
-
-          if (fetchingVersionRef.current === meta.version) {
-            return;
-          }
-          fetchingVersionRef.current = meta.version;
-
-          try {
-            const fetchedItems = await fetchLibraryChunksByVersion(meta.version);
-            if (cancelled) return;
-
-            const evaluation = evaluateGlobalCatalogSnapshot({
-              medicines: fetchedItems,
-              fromCache,
-              empty: fetchedItems.length === 0,
-              hasExistingCatalog: hasGlobalCatalogRef.current,
-              state: globalCatalogBaselineRef.current,
-            });
-            globalCatalogBaselineRef.current = evaluation.nextState;
-
-            if (!evaluation.shouldApplyList) {
-              return;
-            }
-
-            localLibraryVersionRef.current = meta.version;
-            setLibraryVersion(meta.version);
-            setCloudGlobalMedicines(fetchedItems);
-            cloudGlobalMedicinesRef.current = fetchedItems;
-
-            await saveLibraryToIndexedDb({
-              version: meta.version,
-              totalCount: meta.totalCount || fetchedItems.length,
-              updatedAt: meta.updatedAt || new Date().toISOString(),
-              medicines: fetchedItems,
-            });
-
-            if (!isDeviceOffline()) {
-              const timeStr = formatLibrarySyncTime();
-              setLastSyncTime(timeStr);
-              try {
-                localStorage.setItem(STORAGE_KEYS.GLOBAL_LAST_SYNC, timeStr);
-              } catch {
-                // ignore storage write failure
-              }
-              setIsCloudConnected(true);
-            }
-
-            if (evaluation.newlyAddedPublishedCount > 0) {
-              const noticeMessage = `লাইব্রেরিতে ${evaluation.newlyAddedPublishedCount} টি নতুন ওষুধ যোগ হয়েছে`;
-              showToastRef.current?.(noticeMessage, 'success');
-              setLatestLibraryNotice({
-                count: evaluation.newlyAddedPublishedCount,
-                message: noticeMessage,
-                timestamp: Date.now(),
-              });
-            }
-          } catch (fetchErr: any) {
-            if (isQuotaExceededError(fetchErr)) {
-              notifyQuotaExceededOnce();
-            } else {
-              console.warn('fetchLibraryChunksByVersion failed:', fetchErr?.message || fetchErr);
-              if (isDeviceOffline()) {
-                setIsGlobalFromCache(true);
-              }
-            }
-          } finally {
-            if (fetchingVersionRef.current === meta.version) {
-              fetchingVersionRef.current = null;
-            }
-          }
-        },
-        (error) => {
-          if (isQuotaExceededError(error)) {
-            notifyQuotaExceededOnce();
-          } else {
-            if (isDeviceOffline()) {
-              setIsGlobalFromCache(true);
-            }
-            console.warn('library_meta snapshot notice:', error.message);
-          }
-        }
-      );
-    };
-
-    initChunkedLibraryListener();
-
-    return () => {
-      cancelled = true;
-      if (unsubMeta) unsubMeta();
-    };
-  }, []);
+  const formatSyncTimeLabel = (): string => {
+    const now = new Date();
+    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  };
 
   const refreshCloudCounts = async () => {
+    if (isDeviceOffline()) return;
     try {
-      const meta = await fetchLibraryMetaFromCloud();
-      if (meta && meta.version > localLibraryVersionRef.current && meta.chunkCount > 0) {
-        const fetchedItems = await fetchLibraryChunksByVersion(meta.version);
-        localLibraryVersionRef.current = meta.version;
-        setLibraryVersion(meta.version);
-        setCloudGlobalMedicines(fetchedItems);
-        cloudGlobalMedicinesRef.current = fetchedItems;
-        await saveLibraryToIndexedDb({
-          version: meta.version,
-          totalCount: meta.totalCount || fetchedItems.length,
-          updatedAt: meta.updatedAt || new Date().toISOString(),
-          medicines: fetchedItems,
-        });
-      }
-      if (!isDeviceOffline()) {
-        const timeStr = formatLibrarySyncTime();
-        setLastSyncTime(timeStr);
-        try {
-          localStorage.setItem(STORAGE_KEYS.GLOBAL_LAST_SYNC, timeStr);
-        } catch (e) {
-          console.warn('Sync time storage error', e);
-        }
+      const counts = await fetchPublishedLibraryCounts();
+      setCloudStats(counts);
+      const timeStr = formatSyncTimeLabel();
+      setLastSyncTime(timeStr);
+      try {
+        localStorage.setItem(STORAGE_KEYS.GLOBAL_LAST_SYNC, timeStr);
+      } catch {
+        // ignore storage error
       }
     } catch (e) {
-      if (isQuotaExceededError(e)) {
-        notifyQuotaExceededOnce();
-      } else {
-        console.warn('refreshCloudCounts error:', e);
-      }
+      console.warn('refreshCloudCounts error:', e);
     }
   };
 
-  // Real-time Firestore Listener for Import Batches (Strictly Admin only)
+  const refreshImportBatches = async () => {
+    if (!isAdmin || isDeviceOffline()) {
+      if (!isAdmin) setImportBatches([]);
+      return;
+    }
+    try {
+      const batches = await fetchImportBatchesFromSupabase();
+      setImportBatches(batches);
+    } catch (err) {
+      console.warn('refreshImportBatches error:', err);
+    }
+  };
+
+  // Load legacy cleanup & lightweight counts / admin import_batches on mount / admin change
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(STORAGE_KEYS.GLOBAL_MEDS);
+        localStorage.removeItem(STORAGE_KEYS.IMPORT_BATCHES);
+      }
+    } catch {
+      // ignore storage cleanup errors
+    }
+    if (!isDeviceOffline()) {
+      void refreshCloudCounts();
+    }
+  }, []);
+
   useEffect(() => {
     if (!isAdmin) {
       setImportBatches([]);
       return;
     }
-    let hasRecordedInitialBatches = false;
-    const unsubBatches = onSnapshot(
-      collection(db, 'import_batches'),
-      (snapshot) => {
-        if (!snapshot.metadata.fromCache) {
-          if (!hasRecordedInitialBatches) {
-            hasRecordedInitialBatches = true;
-            recordFirestoreRead('import_batches', Math.max(1, snapshot.size));
-          } else {
-            const changed = snapshot.docChanges().length;
-            if (changed > 0) recordFirestoreRead('import_batches', changed);
-          }
-        }
-        const list: ImportBatch[] = [];
-        snapshot.forEach((docSnap) => {
-          list.push(docSnap.data() as ImportBatch);
-        });
-        setImportBatches(list);
-      },
-      (error) => {
-        if (isQuotaExceededError(error)) {
-          notifyQuotaExceededOnce();
-          return;
-        }
-        console.warn('Import batches snapshot notice:', error.message);
-      }
-    );
-
-    return () => unsubBatches();
+    void refreshImportBatches();
+    void refreshCloudCounts();
   }, [isAdmin]);
 
-
   const isDeviceOffline = (): boolean => typeof navigator !== 'undefined' && !navigator.onLine;
-
-  // Test Firestore connectivity on boot & track browser online/offline transitions
-  useEffect(() => {
-    testFirestoreConnection().then((connected) => {
-      setIsCloudConnected(connected);
-    });
-  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1373,9 +1049,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         } else {
           setSyncStatus('synced');
         }
-        if (!isWriteQuotaPaused()) {
-          void flushPendingDocumentSyncOps(uid).catch(() => {});
-        }
+        void flushPendingDocumentSyncOps(uid).catch(() => {});
       } else {
         setSyncStatus('synced');
       }
@@ -1945,7 +1619,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  // Lazy-load medical documents (IndexedDB first, cloud max once every 6 hours, ZERO real-time listener)
+  // Lazy-load medical documents from Supabase (IndexedDB cache first, max once every 6 hours)
   const loadMedicalDocuments = async (forceRefresh = false): Promise<void> => {
     const storeUid = currentUser?.uid || 'guest_local';
     if (medicalDocumentsRef.current.length === 0) {
@@ -1966,7 +1640,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!shouldFetchCollectionFromCloud(uid, 'documents', RECORDS_SYNC_TTL_MS, Date.now(), forceRefresh)) {
       return;
     }
-    if (isDeviceOffline() || isFirestoreNetworkDisabled()) return;
+    if (isDeviceOffline()) return;
 
     medicalDocumentsInFlightRef.current = true;
     setIsLoadingMedicalDocuments(true);
@@ -1999,27 +1673,23 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await saveDocumentsMetaToIdb(uid, sorted);
       markCollectionSynced(uid, 'documents');
     } catch (err) {
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        console.warn('loadMedicalDocuments notice:', err);
-      }
+      console.warn('loadMedicalDocuments notice:', err);
     } finally {
       medicalDocumentsInFlightRef.current = false;
       setIsLoadingMedicalDocuments(false);
     }
   };
 
-  // Flush offline / quota-paused prescription & report files & metadata to Firestore
+  // Flush offline prescription & report files & metadata to Supabase Storage + Postgres
   const flushPendingDocumentSyncOps = async (uid: string): Promise<number> => {
-    if (!uid || isDeviceOffline() || isWriteQuotaPaused() || isFirestoreNetworkDisabled()) {
+    if (!uid || isDeviceOffline()) {
       return 0;
     }
     let syncedCount = 0;
     let queue = loadDocSyncQueue(uid);
     if (countPendingDocSyncOps(queue) === 0) return 0;
 
-    // 1. Upload queued full-size files first
+    // 1. Upload queued JPEG files to 'medical-docs' bucket first
     for (const fileEntry of [...queue.uploadFiles]) {
       const cachedFile = await getDocumentFileFromIdb(uid, fileEntry.fileId);
       if (!cachedFile) {
@@ -2028,7 +1698,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       await createDocumentFileInCloud(uid, {
         id: cachedFile.id,
-        docId: cachedFile.docId,
+        docId: cachedFile.docId || fileEntry.docId,
         data: cachedFile.data,
         bytes: cachedFile.bytes,
       });
@@ -2036,14 +1706,17 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       syncedCount += 1;
     }
 
-    // 2. Delete removed file docs
+    // 2. Delete removed file blobs from 'medical-docs' bucket
     for (const delFileId of [...queue.deleteFileIds]) {
-      await deleteDocumentFileFromCloud(uid, delFileId);
+      const ownerDoc = medicalDocumentsRef.current.find((d) =>
+        (d.pages || []).some((p) => p.fileId === delFileId)
+      );
+      await deleteDocumentFileFromCloud(uid, delFileId, ownerDoc?.id);
       queue = markFileDeletedInQueue(uid, delFileId);
       syncedCount += 1;
     }
 
-    // 3. Upsert metadata docs whose files are now all uploaded
+    // 3. Upsert metadata rows whose files are now all uploaded
     const remainingPendingUploadDocIds = new Set(queue.uploadFiles.map((f) => f.docId));
     const currentDocsMap = new Map(medicalDocumentsRef.current.map((d) => [d.id, d]));
     for (const docId of [...queue.upsertDocIds]) {
@@ -2053,22 +1726,27 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         queue = markDocUpsertSyncedInQueue(uid, docId);
         continue;
       }
-      await updateDocumentMetaInCloud(uid, docId, {
-        id: targetDoc.id,
-        kind: targetDoc.kind,
-        patientId: targetDoc.patientId,
-        doctorId: targetDoc.doctorId,
-        title: targetDoc.title,
-        date: targetDoc.date,
-        note: targetDoc.note,
-        reportType: targetDoc.reportType,
-        pages: targetDoc.pages,
-      });
+      await updateDocumentMetaInCloud(
+        uid,
+        docId,
+        {
+          id: targetDoc.id,
+          kind: targetDoc.kind,
+          patientId: targetDoc.patientId,
+          doctorId: targetDoc.doctorId,
+          title: targetDoc.title,
+          date: targetDoc.date,
+          note: targetDoc.note,
+          reportType: targetDoc.reportType,
+          pages: targetDoc.pages,
+        },
+        targetDoc.createdAt
+      );
       queue = markDocUpsertSyncedInQueue(uid, docId);
       syncedCount += 1;
     }
 
-    // 4. Delete queued metadata docs
+    // 4. Delete queued metadata rows
     for (const delDocId of [...queue.deleteDocIds]) {
       await deleteDocumentMetaFromCloud(uid, delDocId);
       queue = markDocDeleteSyncedInQueue(uid, delDocId);
@@ -2116,6 +1794,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       void clearUserDocumentsIdb(prevUid);
       clearDocSyncQueue(prevUid);
     }
+    clearDocumentSignedUrlCache();
+    clearLibrarySearchSessionCache();
     try {
       localStorage.removeItem('shasthobondhu_last_cloud_uid');
     } catch {
@@ -2339,10 +2019,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         clearCloudSyncOutbox(uid);
       }
 
-      if (!isWriteQuotaPaused()) {
-        const docVaultOps = await flushPendingDocumentSyncOps(uid);
-        syncedOpsCount += docVaultOps;
-      }
+      const docVaultOps = await flushPendingDocumentSyncOps(uid);
+      syncedOpsCount += docVaultOps;
 
       await syncCoreCollectionsFromCloud(uid, true);
       setLastSuccessfulSyncMs(uid, Date.now());
@@ -3405,22 +3083,34 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Prescriptions & Medical Reports Vault Actions
   // ============================================================================
 
-  const loadDocumentPageImage = async (fileId: string): Promise<string | null> => {
+  const loadDocumentPageImage = async (
+    fileId: string,
+    docId?: string
+  ): Promise<string | null> => {
     if (!fileId) return null;
     const storeUid = currentUser?.uid || 'guest_local';
     const localFile = await getDocumentFileFromIdb(storeUid, fileId);
     if (localFile?.data) {
       return localFile.data;
     }
-    if (!currentUser || isDeviceOffline() || isFirestoreNetworkDisabled()) {
+    if (!currentUser || isDeviceOffline()) {
       return null;
     }
+    const resolvedDocId =
+      docId ||
+      medicalDocumentsRef.current.find((d) =>
+        (d.pages || []).some((p) => p.fileId === fileId)
+      )?.id;
     try {
-      const cloudFile = await fetchDocumentFileFromCloud(currentUser.uid, fileId);
+      const cloudFile = await fetchDocumentFileFromCloud(
+        currentUser.uid,
+        fileId,
+        resolvedDocId
+      );
       if (cloudFile?.data) {
         await saveDocumentFileToIdb(storeUid, {
           id: cloudFile.id,
-          docId: cloudFile.docId,
+          docId: cloudFile.docId || resolvedDocId || '',
           data: cloudFile.data,
           bytes: cloudFile.bytes,
         });
@@ -3428,11 +3118,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
       return null;
     } catch (err) {
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        console.warn('loadDocumentPageImage error:', err);
-      }
+      console.warn('loadDocumentPageImage error:', err);
       return null;
     }
   };
@@ -3468,7 +3154,6 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const keptFileIdSet = new Set(clean.pages.map((p) => p.fileId));
     const removedFileIds = oldFileIds.filter((fid) => !keptFileIdSet.has(fid));
 
-    // Save new compressed full images to IndexedDB first
     for (const nf of newFileDataList) {
       await saveDocumentFileToIdb(storeUid, {
         id: nf.id,
@@ -3517,8 +3202,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     enqueueDocUpsert(uid, docId, pendingFilesPayload, removedFileIds);
     refreshPendingSyncCount(uid);
 
-    if (isWriteQuotaPaused() || isDeviceOffline() || isFirestoreNetworkDisabled()) {
-      if (isWriteQuotaPaused()) notifyQuotaExceededOnce();
+    if (isDeviceOffline()) {
       showToast('ফোনে সংরক্ষিত, পরে ক্লাউডে যাবে', 'info');
       return { ok: true, docId, savedOffline: true };
     }
@@ -3539,12 +3223,12 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
 
       for (const rf of removedFileIds) {
-        await deleteDocumentFileFromCloud(uid, rf);
+        await deleteDocumentFileFromCloud(uid, rf, docId);
         markFileDeletedInQueue(uid, rf);
       }
 
       if (existingDoc) {
-        await updateDocumentMetaInCloud(uid, docId, clean);
+        await updateDocumentMetaInCloud(uid, docId, clean, existingDoc.createdAt);
       } else {
         await createDocumentMetaInCloud(uid, docId, clean);
       }
@@ -3557,12 +3241,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         'success'
       );
       return { ok: true, docId };
-    } catch (err) {
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        setSyncStatus('failed');
-      }
+    } catch {
+      setSyncStatus('failed');
       refreshPendingSyncCount(uid);
       showToast('ফোনে সংরক্ষিত, পরে ক্লাউডে যাবে', 'info');
       return { ok: true, docId, savedOffline: true };
@@ -3594,33 +3274,33 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     enqueueDocUpsert(uid, docId, [], []);
     refreshPendingSyncCount(uid);
 
-    if (isWriteQuotaPaused() || isDeviceOffline() || isFirestoreNetworkDisabled()) {
-      if (isWriteQuotaPaused()) notifyQuotaExceededOnce();
+    if (isDeviceOffline()) {
       showToast('ফোনে ঘোরানো হয়েছে, পরে ক্লাউডে সিঙ্ক হবে', 'info');
       return;
     }
 
     try {
-      await updateDocumentMetaInCloud(uid, docId, {
-        id: updatedDoc.id,
-        kind: updatedDoc.kind,
-        patientId: updatedDoc.patientId,
-        doctorId: updatedDoc.doctorId,
-        title: updatedDoc.title,
-        date: updatedDoc.date,
-        note: updatedDoc.note,
-        reportType: updatedDoc.reportType,
-        pages: updatedPages,
-      });
+      await updateDocumentMetaInCloud(
+        uid,
+        docId,
+        {
+          id: updatedDoc.id,
+          kind: updatedDoc.kind,
+          patientId: updatedDoc.patientId,
+          doctorId: updatedDoc.doctorId,
+          title: updatedDoc.title,
+          date: updatedDoc.date,
+          note: updatedDoc.note,
+          reportType: updatedDoc.reportType,
+          pages: updatedPages,
+        },
+        target.createdAt
+      );
       markDocUpsertSyncedInQueue(uid, docId);
       refreshPendingSyncCount(uid);
       updateLiveSyncTime(false);
-    } catch (err) {
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        setSyncStatus('failed');
-      }
+    } catch {
+      setSyncStatus('failed');
       refreshPendingSyncCount(uid);
       showToast('ফোনে সংরক্ষিত, পরে ক্লাউডে যাবে', 'info');
     }
@@ -3649,8 +3329,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     enqueueDocDelete(uid, docId, fileIds);
     refreshPendingSyncCount(uid);
 
-    if (isWriteQuotaPaused() || isDeviceOffline() || isFirestoreNetworkDisabled()) {
-      if (isWriteQuotaPaused()) notifyQuotaExceededOnce();
+    if (isDeviceOffline()) {
       showToast('ফোন থেকে মুছে ফেলা হয়েছে, পরে ক্লাউডে সিঙ্ক হবে', 'info');
       return;
     }
@@ -3659,7 +3338,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const queueNow = loadDocSyncQueue(uid);
       for (const fid of [...queueNow.deleteFileIds]) {
         if (fileIds.includes(fid)) {
-          await deleteDocumentFileFromCloud(uid, fid);
+          await deleteDocumentFileFromCloud(uid, fid, docId);
           markFileDeletedInQueue(uid, fid);
         }
       }
@@ -3668,10 +3347,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       refreshPendingSyncCount(uid);
       updateLiveSyncTime(false);
       showToast('ডকুমেন্ট স্থায়ীভাবে মুছে ফেলা হয়েছে', 'info');
-    } catch (err) {
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      }
+    } catch {
       refreshPendingSyncCount(uid);
       showToast('ফোন থেকে মুছে ফেলা হয়েছে, পরে ক্লাউডে সিঙ্ক হবে', 'info');
     }
@@ -3715,30 +3391,31 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     refreshPendingSyncCount(uid);
 
-    if (isWriteQuotaPaused() || isDeviceOffline() || isFirestoreNetworkDisabled()) {
-      if (isWriteQuotaPaused()) notifyQuotaExceededOnce();
+    if (isDeviceOffline()) {
       return;
     }
 
     for (const docItem of affected) {
       try {
-        await updateDocumentMetaInCloud(uid, docItem.id, {
-          id: docItem.id,
-          kind: docItem.kind,
-          patientId: docItem.patientId,
-          doctorId: undefined,
-          title: docItem.title,
-          date: docItem.date,
-          note: docItem.note,
-          reportType: docItem.reportType,
-          pages: docItem.pages,
-        });
+        await updateDocumentMetaInCloud(
+          uid,
+          docItem.id,
+          {
+            id: docItem.id,
+            kind: docItem.kind,
+            patientId: docItem.patientId,
+            doctorId: undefined,
+            title: docItem.title,
+            date: docItem.date,
+            note: docItem.note,
+            reportType: docItem.reportType,
+            pages: docItem.pages,
+          },
+          docItem.createdAt
+        );
         markDocUpsertSyncedInQueue(uid, docItem.id);
-      } catch (err) {
-        if (isQuotaExceededError(err)) {
-          notifyQuotaExceededOnce();
-          break;
-        }
+      } catch {
+        // remain in queue for retry
       }
     }
     refreshPendingSyncCount(uid);
@@ -3754,287 +3431,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setCatalogMedToAddToPersonal(null);
   };
 
-  const postResetRetriedDhakaDayKeyRef = useRef<string | null>(null);
-
-  // Hydrate Admin Offline/Quota Publish Queue from IndexedDB
-  useEffect(() => {
-    if (!isAdmin) {
-      setPendingPublishMedicines([]);
-      setPendingPublishBatches([]);
-      setPendingPublishLastRetryAttemptMs(null);
-      return;
-    }
-    let cancelled = false;
-    loadAdminPublishQueue().then((state) => {
-      if (cancelled) return;
-      setPendingPublishMedicines(state.medicines);
-      setPendingPublishBatches(state.batches);
-      if (state.updatedAtMs > 0) {
-        setPendingPublishLastRetryAttemptMs(state.updatedAtMs);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [isAdmin]);
-
-  const isQueueableAdminWriteFailure = (err?: unknown): boolean => {
-    if (err && isQuotaExceededError(err)) return true;
-    return isWriteQuotaPaused() || isDeviceOffline() || isFirestoreNetworkDisabled();
-  };
-
-  const enqueueMedicinesForOfflineAdminPublish = async (
-    newOrUpdatedMeds: GlobalMedicine[],
-    batchInfo?: ImportBatch
-  ): Promise<void> => {
-    const mergedMeds = dedupeAndMergeQueueMedicines(
-      pendingPublishMedicinesRef.current,
-      newOrUpdatedMeds
-    );
-    const mergedBatches = dedupeAndMergeQueueBatches(
-      pendingPublishBatchesRef.current,
-      batchInfo
-    );
-    pendingPublishMedicinesRef.current = mergedMeds;
-    pendingPublishBatchesRef.current = mergedBatches;
-    setPendingPublishMedicines(mergedMeds);
-    setPendingPublishBatches(mergedBatches);
-    await saveAdminPublishQueue(mergedMeds, mergedBatches);
-  };
-
-  const commitUpdatedCatalogChunks = async (
-    nextList: GlobalMedicine[],
-    batchInfo?: ImportBatch
-  ) => {
-    const res = await publishChunkedLibraryCatalog(
-      nextList,
-      localLibraryVersionRef.current,
-      batchInfo
-    );
-    localLibraryVersionRef.current = res.newVersion;
-    setLibraryVersion(res.newVersion);
-    setCloudGlobalMedicines(nextList);
-    cloudGlobalMedicinesRef.current = nextList;
-    globalCatalogBaselineRef.current = {
-      hasInitialServerLoad: true,
-      prevPublishedCount: nextList.filter((m) => m.status === 'published').length,
-      skipNextListenerBaseline: false,
-    };
-
-    await saveLibraryToIndexedDb({
-      version: res.newVersion,
-      totalCount: res.totalCount,
-      updatedAt: new Date().toISOString(),
-      medicines: nextList,
-    });
-
-    const timeStr = formatLibrarySyncTime();
-    setLastSyncTime(timeStr);
-    try {
-      localStorage.setItem(STORAGE_KEYS.GLOBAL_LAST_SYNC, timeStr);
-    } catch {
-      // ignore storage write error
-    }
-
-    return res;
-  };
-
-  const retryPendingPublishNow = async (isAutoRetry = false): Promise<boolean> => {
-    if (!isAdmin || retryPublishInFlightRef.current) return false;
-
-    const queuedMeds = pendingPublishMedicinesRef.current;
-    const queuedBatches = pendingPublishBatchesRef.current;
-    if (queuedMeds.length === 0) return false;
-
-    if (isDeviceOffline()) {
-      if (!isAutoRetry) {
-        showToast('অফলাইন আছেন — ইন্টারনেট চালু হলে আবার চেষ্টা করুন', 'info');
-      }
-      return false;
-    }
-
-    retryPublishInFlightRef.current = true;
-    setIsRetryingPendingPublish(true);
-    const attemptNow = Date.now();
-    setPendingPublishLastRetryAttemptMs(attemptNow);
-    pendingPublishLastRetryRef.current = attemptNow;
-
-    try {
-      if (!isWriteQuotaPaused()) {
-        clearWriteQuotaPause();
-        setIsQuotaExceeded(false);
-      }
-      await resumeFirestoreNetwork();
-
-      const combinedCatalog = combineCatalogWithPendingQueueForSingleVersionPublish(
-        cloudGlobalMedicinesRef.current,
-        queuedMeds
-      );
-      const latestBatch = queuedBatches.length > 0 ? queuedBatches[queuedBatches.length - 1] : undefined;
-
-      // Single new catalog version for ALL queued medicines combined
-      const res = await commitUpdatedCatalogChunks(combinedCatalog, latestBatch);
-
-      recordAdminActivity({
-        type: 'publish',
-        title: 'অপেক্ষমাণ ওষুধ একসাথে প্রকাশ (Single Version)',
-        description: `সারিতে থাকা ${queuedMeds.length}টি ওষুধ একসাথে সংস্করণ v${res.newVersion}-এ প্রকাশিত হয়েছে (মোট: ${res.totalCount}টি)।`,
-        adminEmail: currentUser?.email || '',
-      }).catch((e) => console.warn('Activity log error:', e));
-
-      pendingPublishMedicinesRef.current = [];
-      pendingPublishBatchesRef.current = [];
-      setPendingPublishMedicines([]);
-      setPendingPublishBatches([]);
-      await clearAdminPublishQueue();
-
-      clearWriteQuotaPause();
-      setIsQuotaExceeded(false);
-      setSyncStatus('synced');
-
-      showToast(
-        `অপেক্ষমাণ ${toBengaliNumber(queuedMeds.length)}টি ওষুধ একসাথে লাইব্রেরিতে প্রকাশিত হয়েছে!`,
-        'success'
-      );
-      return true;
-    } catch (err: any) {
-      console.error('Retry pending admin publish failed:', err);
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-        if (!isAutoRetry) {
-          showToast('আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন', 'alert');
-        }
-      } else if (!isAutoRetry) {
-        showToast(`প্রকাশ ব্যর্থ হয়েছে (ফোনের সারি অক্ষত আছে): ${getFriendlyErrorMessage(err)}`, 'alert');
-      }
-      return false;
-    } finally {
-      retryPublishInFlightRef.current = false;
-      setIsRetryingPendingPublish(false);
-    }
-  };
-
-  const cancelPendingPublishItem = async (medicineId: string): Promise<void> => {
-    if (!isAdmin) return;
-    const nextMeds = removeIdsFromPublishQueue(pendingPublishMedicinesRef.current, [medicineId]);
-    const nextBatches = nextMeds.length === 0 ? [] : pendingPublishBatchesRef.current;
-    pendingPublishMedicinesRef.current = nextMeds;
-    pendingPublishBatchesRef.current = nextBatches;
-    setPendingPublishMedicines(nextMeds);
-    setPendingPublishBatches(nextBatches);
-    await saveAdminPublishQueue(nextMeds, nextBatches);
-    showToast('অপেক্ষমাণ প্রকাশের তালিকা থেকে সরানো হয়েছে', 'info');
-  };
-
-  const clearPendingPublishQueue = async (): Promise<void> => {
-    if (!isAdmin) return;
-    pendingPublishMedicinesRef.current = [];
-    pendingPublishBatchesRef.current = [];
-    setPendingPublishMedicines([]);
-    setPendingPublishBatches([]);
-    await clearAdminPublishQueue();
-    showToast('অপেক্ষমাণ প্রকাশের সারি বাতিল করা হয়েছে', 'info');
-  };
-
-  // Auto-retry once after daily quota reset (after 14:10 Asia/Dhaka) or every 30 min when online & quota not paused
-  useEffect(() => {
-    if (!isAdmin || pendingPublishMedicines.length === 0) return;
-
-    const evaluateAutoRetry = () => {
-      const decision = shouldAttemptAdminQueueAutoPublish({
-        hasPending: pendingPublishMedicinesRef.current.length > 0,
-        isAdmin,
-        isOnline: !isDeviceOffline(),
-        isFlushing: retryPublishInFlightRef.current,
-        isQuotaPausedNow: isWriteQuotaPaused(),
-        lastAttemptMs: pendingPublishLastRetryRef.current || 0,
-        postResetRetriedDhakaDayKey: postResetRetriedDhakaDayKeyRef.current,
-      });
-
-      if (!decision.shouldAttempt) return;
-
-      if (decision.reason === 'post_reset_210pm') {
-        postResetRetriedDhakaDayKeyRef.current = decision.dhakaDayKey;
-        clearWriteQuotaPause();
-        setIsQuotaExceeded(false);
-        resumeFirestoreNetwork().catch(() => {});
-      }
-
-      void retryPendingPublishNow(true);
-    };
-
-    evaluateAutoRetry();
-    const timer = setInterval(evaluateAutoRetry, 60_000);
-    const onOnline = () => evaluateAutoRetry();
-    if (typeof window !== 'undefined') {
-      window.addEventListener('online', onOnline);
-    }
-    return () => {
-      clearInterval(timer);
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('online', onOnline);
-      }
-    };
-  }, [isAdmin, pendingPublishMedicines.length]);
-
-  const migrateLegacyLibraryAction = async (): Promise<{
-    legacyFoundCount: number;
-    mergedTotalCount: number;
-    newVersion: number;
-    chunkCount: number;
-  } | null> => {
-    if (!isAdmin) {
-      showToast('অননুমোদিত অ্যাক্সেস: শুধুমাত্র অ্যাডমিন এই মাইগ্রেশন চালাতে পারবেন।', 'alert');
-      return null;
-    }
-
-    try {
-      const res = await migrateLegacyGlobalMedicinesToChunks(
-        cloudGlobalMedicinesRef.current,
-        localLibraryVersionRef.current
-      );
-
-      if (res.mergedMedicines.length > 0) {
-        localLibraryVersionRef.current = res.newVersion;
-        setLibraryVersion(res.newVersion);
-        setCloudGlobalMedicines(res.mergedMedicines);
-        cloudGlobalMedicinesRef.current = res.mergedMedicines;
-        globalCatalogBaselineRef.current = {
-          hasInitialServerLoad: true,
-          prevPublishedCount: res.mergedMedicines.filter((m) => m.status === 'published').length,
-          skipNextListenerBaseline: false,
-        };
-        await saveLibraryToIndexedDb({
-          version: res.newVersion,
-          totalCount: res.mergedTotalCount,
-          updatedAt: new Date().toISOString(),
-          medicines: res.mergedMedicines,
-        });
-      }
-
-      if (res.legacyFoundCount === 0 && res.mergedTotalCount === 0) {
-        showToast('পুরনো ডাটাবেজে মাইগ্রেট করার মতো কোনো ওষুধ পাওয়া যায়নি।', 'info');
-      } else {
-        showToast(
-          `মাইগ্রেশন সফল! ${res.legacyFoundCount}টি পুরনো রেকর্ড ${res.chunkCount}টি চাঙ্কে (মোট ${res.mergedTotalCount}টি) সংরক্ষিত হয়েছে।`,
-          'success'
-        );
-      }
-
-      return {
-        legacyFoundCount: res.legacyFoundCount,
-        mergedTotalCount: res.mergedTotalCount,
-        newVersion: res.newVersion,
-        chunkCount: res.chunkCount,
-      };
-    } catch (err: any) {
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        showToast(`মাইগ্রেশন ব্যর্থ: ${getFriendlyErrorMessage(err)}`, 'alert');
-      }
-      return null;
-    }
+  const notifyLibraryCatalogChanged = () => {
+    clearLibrarySearchSessionCache();
+    setLibraryMutationVersion((v) => v + 1);
+    void refreshCloudCounts();
   };
 
   const executeAdminBatchImport = async (
@@ -4051,11 +3451,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       ...batchInfo,
       id: batchId,
       importedAt: new Date().toISOString(),
-      importedByUid: currentUser?.uid || 'admin',
       importedByEmail: currentUser?.email || '',
     };
 
-    // Sanitize ID and validate against catalog constraints
     const validRecordsToCommit: GlobalMedicine[] = [];
     const invalidRecords: { brandName: string; reason: string }[] = [];
 
@@ -4114,114 +3512,90 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return false;
     }
 
-    // Compare against combined displayed catalog so already-queued items aren't duplicated
-    const catalogDiff = hasCatalogChanges(globalMedicines, validRecordsToCommit);
-    if (!catalogDiff.changed) {
-      showToast('সব ওষুধ আগেই আছে, নতুন কিছু নেই', 'info');
-      return false;
-    }
-
-    if (isQueueableAdminWriteFailure()) {
-      await enqueueMedicinesForOfflineAdminPublish(validRecordsToCommit, fullBatch);
-      showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-      return true;
-    }
-
     try {
-      const mergedCloudAndPending = combineCatalogWithPendingQueueForSingleVersionPublish(
-        cloudGlobalMedicinesRef.current,
-        [...pendingPublishMedicinesRef.current, ...validRecordsToCommit]
+      // Check existing duplicates in Supabase by duplicate_key (200-key batches)
+      const existingByDupKey = new Map<string, GlobalMedicine>();
+      const dupMatches = await checkDuplicateKeysInSupabase(
+        validRecordsToCommit.map((r) => r.duplicateKey)
       );
-      const res = await commitUpdatedCatalogChunks(mergedCloudAndPending, fullBatch);
-
-      if (pendingPublishMedicinesRef.current.length > 0) {
-        pendingPublishMedicinesRef.current = [];
-        pendingPublishBatchesRef.current = [];
-        setPendingPublishMedicines([]);
-        setPendingPublishBatches([]);
-        await clearAdminPublishQueue();
+      for (const ex of dupMatches) {
+        existingByDupKey.set(ex.duplicateKey, ex);
       }
 
-      const publishedCount = validRecordsToCommit.filter((r) => r.status === 'published').length;
-      const unverifiedCount = validRecordsToCommit.length - publishedCount;
+      // Preserve existing ID when replacing an existing duplicate_key to keep unique constraint clean
+      const upserts = validRecordsToCommit.map((rec) => {
+        const existing = existingByDupKey.get(rec.duplicateKey);
+        return existing ? { ...rec, id: existing.id } : rec;
+      });
+
+      const writtenCount = await upsertLibraryMedicinesInBatches(upserts);
+      await createImportBatchInSupabase(fullBatch);
+      setImportBatches((prev) => [fullBatch, ...prev.filter((b) => b.id !== fullBatch.id)]);
+
+      const publishedCount = upserts.filter((r) => r.status === 'published').length;
+      const unverifiedCount = upserts.length - publishedCount;
 
       recordAdminActivity({
         type: 'import',
         title: `ওষুধ ডাটা ইমপোর্ট (${fullBatch.source})`,
-        description: `${catalogDiff.addedOrUpdatedCount}টি নতুন/হালনাগাদ ওষুধসহ মোট ${res.totalCount}টি ওষুধ ${res.chunkCount}টি চাঙ্কে সংরক্ষিত (${publishedCount}টি প্রকাশিত, ${unverifiedCount}টি খসড়া)।`,
+        description: `${writtenCount}টি ওষুধ সংরক্ষিত (${publishedCount}টি প্রকাশিত, ${unverifiedCount}টি খসড়া)।`,
         adminEmail: fullBatch.importedByEmail,
       }).catch((e) => console.warn('Activity log error:', e));
 
-      let msg = `ক্লাউডে সফলভাবে সংরক্ষিত হয়েছে! মোট ${res.totalCount} টি (${res.chunkCount} চাঙ্ক)`;
+      notifyLibraryCatalogChanged();
+
+      let msg = `ক্লাউডে সফলভাবে সংরক্ষিত হয়েছে! মোট ${writtenCount} টি ওষুধ`;
       if (invalidRecords.length > 0) {
         msg += ` (${invalidRecords.length} টি ত্রুটিপূর্ণ রেকর্ড বাদ দেওয়া হয়েছে)`;
       }
       showToast(msg, 'success');
       return true;
     } catch (err: any) {
-      console.error('Batch import to cloud failed:', err);
-      if (isQueueableAdminWriteFailure(err)) {
-        if (isQuotaExceededError(err)) {
-          notifyQuotaExceededOnce();
-        }
-        await enqueueMedicinesForOfflineAdminPublish(validRecordsToCommit, fullBatch);
-        showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-        return true;
-      }
-      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      console.error('Supabase batch import failed:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return false;
     }
   };
 
-  const publishGlobalMedicineAction = async (medicineId: string): Promise<boolean> => {
+  const publishGlobalMedicineAction = async (
+    medicineOrId: string | GlobalMedicine
+  ): Promise<boolean> => {
     if (!isAdmin) {
       showToast('অননুমোদিত অ্যাক্সেস: আপনার এই অ্যাকাউন্টে ওষুধ অনুমোদন ও প্রকাশ করার অনুমতি নেই।', 'alert');
       return false;
     }
 
-    const targetMed = globalMedicines.find((m) => m.id === medicineId);
-    if (!targetMed) {
-      showToast('ওষুধটি খুঁজে পাওয়া যায়নি।', 'alert');
-      return false;
-    }
-
-    if (targetMed.status === 'published' && targetMed.verifiedByAdmin) {
-      showToast('সব ওষুধ আগেই আছে, নতুন কিছু নেই', 'info');
-      return false;
-    }
-
-    const cleanLicense =
-      targetMed.licenseReference && targetMed.licenseReference.includes('TEST-SYSTEM-ONLY')
-        ? 'DGDA Public Gazette / National Formulary'
-        : (targetMed.licenseReference || 'DGDA Public Gazette Open Data');
-
-    const updatedMed: GlobalMedicine = {
-      ...targetMed,
-      status: 'published',
-      verifiedByAdmin: true,
-      verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
-      licenseReference: cleanLicense,
-    };
-
-    if (isQueueableAdminWriteFailure()) {
-      await enqueueMedicinesForOfflineAdminPublish([updatedMed]);
-      showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-      return true;
-    }
-
-    const nextList = cloudGlobalMedicinesRef.current.some((m) => m.id === medicineId)
-      ? cloudGlobalMedicinesRef.current.map((m) => (m.id === medicineId ? updatedMed : m))
-      : [updatedMed, ...cloudGlobalMedicinesRef.current];
-
     try {
-      await commitUpdatedCatalogChunks(nextList);
+      const targetMed =
+        typeof medicineOrId === 'string'
+          ? await fetchLibraryMedicineById(medicineOrId)
+          : medicineOrId;
 
-      if (pendingPublishMedicinesRef.current.some((m) => m.id === medicineId)) {
-        const remaining = removeIdsFromPublishQueue(pendingPublishMedicinesRef.current, [medicineId]);
-        pendingPublishMedicinesRef.current = remaining;
-        setPendingPublishMedicines(remaining);
-        await saveAdminPublishQueue(remaining, pendingPublishBatchesRef.current);
+      if (!targetMed) {
+        showToast('ওষুধটি খুঁজে পাওয়া যায়নি।', 'alert');
+        return false;
       }
+
+      if (targetMed.status === 'published' && targetMed.verifiedByAdmin) {
+        showToast('সব ওষুধ আগেই আছে, নতুন কিছু নেই', 'info');
+        return false;
+      }
+
+      const cleanLicense =
+        targetMed.licenseReference && targetMed.licenseReference.includes('TEST-SYSTEM-ONLY')
+          ? 'DGDA Public Gazette / National Formulary'
+          : (targetMed.licenseReference || 'DGDA Public Gazette Open Data');
+
+      const updatedMed: GlobalMedicine = {
+        ...targetMed,
+        status: 'published',
+        verifiedByAdmin: true,
+        verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
+        licenseReference: cleanLicense,
+      };
+
+      await upsertLibraryMedicinesInBatches([updatedMed]);
+      notifyLibraryCatalogChanged();
 
       recordAdminActivity({
         type: 'publish',
@@ -4233,16 +3607,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       showToast(`"${updatedMed.brandName}" সফলভাবে অনুমোদিত ও লাইব্রেরিতে প্রকাশিত হয়েছে!`, 'success');
       return true;
     } catch (err: any) {
-      console.error('Firestore publish error:', err);
-      if (isQueueableAdminWriteFailure(err)) {
-        if (isQuotaExceededError(err)) {
-          notifyQuotaExceededOnce();
-        }
-        await enqueueMedicinesForOfflineAdminPublish([updatedMed]);
-        showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-        return true;
-      }
-      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      console.error('Supabase publish error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return false;
     }
   };
@@ -4253,57 +3619,38 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return 0;
     }
 
-    const unpublished = globalMedicines.filter(
-      (m) => m.status !== 'published' || !m.verifiedByAdmin
-    );
-    const targets =
-      medicineIds && medicineIds.length > 0
-        ? unpublished.filter((m) => medicineIds.includes(m.id))
-        : unpublished;
-
-    if (targets.length === 0) {
-      showToast('প্রকাশ করার মতো কোনো খসড়া ওষুধ পাওয়া যায়নি।', 'info');
-      return 0;
-    }
-
-    const publishedUpdates: GlobalMedicine[] = targets.map((med) => {
-      const cleanLicense =
-        med.licenseReference && med.licenseReference.includes('TEST-SYSTEM-ONLY')
-          ? 'DGDA Public Gazette / National Formulary'
-          : (med.licenseReference || 'DGDA Public Gazette Open Data');
-
-      return {
-        ...med,
-        status: 'published',
-        verifiedByAdmin: true,
-        verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
-        licenseReference: cleanLicense,
-      };
-    });
-
-    if (isQueueableAdminWriteFailure()) {
-      await enqueueMedicinesForOfflineAdminPublish(publishedUpdates);
-      showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-      return targets.length;
-    }
-
-    const nextList = combineCatalogWithPendingQueueForSingleVersionPublish(
-      cloudGlobalMedicinesRef.current,
-      publishedUpdates
-    );
-
     try {
-      const res = await commitUpdatedCatalogChunks(nextList);
+      const candidates =
+        medicineIds && medicineIds.length > 0
+          ? await fetchLibraryMedicinesByIds(medicineIds, { includeUnpublished: true })
+          : await fetchUnpublishedDraftsFromSupabase(500);
 
-      const remainingPending = removeIdsFromPublishQueue(
-        pendingPublishMedicinesRef.current,
-        publishedUpdates.map((m) => m.id)
+      const targets = candidates.filter(
+        (m) => m.status !== 'published' || !m.verifiedByAdmin
       );
-      if (remainingPending.length !== pendingPublishMedicinesRef.current.length) {
-        pendingPublishMedicinesRef.current = remainingPending;
-        setPendingPublishMedicines(remainingPending);
-        await saveAdminPublishQueue(remainingPending, pendingPublishBatchesRef.current);
+
+      if (targets.length === 0) {
+        showToast('প্রকাশ করার মতো কোনো খসড়া ওষুধ পাওয়া যায়নি।', 'info');
+        return 0;
       }
+
+      const publishedUpdates: GlobalMedicine[] = targets.map((med) => {
+        const cleanLicense =
+          med.licenseReference && med.licenseReference.includes('TEST-SYSTEM-ONLY')
+            ? 'DGDA Public Gazette / National Formulary'
+            : (med.licenseReference || 'DGDA Public Gazette Open Data');
+
+        return {
+          ...med,
+          status: 'published',
+          verifiedByAdmin: true,
+          verificationNotes: 'প্রশাসক কর্তৃক সরাসরি যাচাইকৃত ও সার্বজনীন প্রকাশিত',
+          licenseReference: cleanLicense,
+        };
+      });
+
+      await upsertLibraryMedicinesInBatches(publishedUpdates);
+      notifyLibraryCatalogChanged();
 
       recordAdminActivity({
         type: 'publish',
@@ -4313,54 +3660,45 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }).catch((e) => console.warn('Activity log error:', e));
 
       showToast(
-        `মোট ${targets.length}টি ওষুধ সফলভাবে লাইব্রেরিতে প্রকাশিত হয়েছে! (মোট: ${res.totalCount} টি)`,
+        `মোট ${targets.length}টি ওষুধ সফলভাবে লাইব্রেরিতে প্রকাশিত হয়েছে!`,
         'success'
       );
       return targets.length;
     } catch (err: any) {
-      console.error('Firestore bulk publish error:', err);
-      if (isQueueableAdminWriteFailure(err)) {
-        if (isQuotaExceededError(err)) {
-          notifyQuotaExceededOnce();
-        }
-        await enqueueMedicinesForOfflineAdminPublish(publishedUpdates);
-        showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-        return targets.length;
-      }
-      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      console.error('Supabase bulk publish error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return 0;
     }
   };
 
-  const deleteGlobalMedicineAction = async (medicineId: string): Promise<boolean> => {
+  const deleteGlobalMedicineAction = async (
+    medicineOrId: string | GlobalMedicine
+  ): Promise<boolean> => {
     if (!isAdmin) {
       showToast('নিরাপত্তা প্রত্যাখ্যান: আপনার এই অ্যাকাউন্টে ডাটা মোছার প্রশাসনিক অনুমতি নেই।', 'alert');
       return false;
     }
 
-    const target = globalMedicines.find((m) => m.id === medicineId);
-    if (!target) {
-      showToast('রেকর্ডটি খুঁজে পাওয়া যায়নি', 'alert');
-      return false;
-    }
-
-    const isTest = isTestMedicine(target);
-    const isUnpublishedDraft = target.status !== 'published' || !target.verifiedByAdmin;
-    if (!isTest && !isUnpublishedDraft) {
-      showToast('নিরাপত্তা বিধিনিষেধ: শুধুমাত্র খসড়া বা টেস্ট ডাটা রেকর্ড মুছে ফেলা যাবে। বাস্তব প্রকাশিত ওষুধ মুছা সম্পূর্ণ নিষিদ্ধ।', 'alert');
-      return false;
-    }
-
-    const inCloud = cloudGlobalMedicinesRef.current.some((m) => m.id === medicineId);
-    if (!inCloud) {
-      await cancelPendingPublishItem(medicineId);
-      return true;
-    }
-
-    const nextList = cloudGlobalMedicinesRef.current.filter((m) => m.id !== medicineId);
-
     try {
-      await commitUpdatedCatalogChunks(nextList);
+      const target =
+        typeof medicineOrId === 'string'
+          ? await fetchLibraryMedicineById(medicineOrId)
+          : medicineOrId;
+
+      if (!target) {
+        showToast('রেকর্ডটি খুঁজে পাওয়া যায়নি', 'alert');
+        return false;
+      }
+
+      const isTest = isTestMedicine(target);
+      const isUnpublishedDraft = target.status !== 'published' || !target.verifiedByAdmin;
+      if (!isTest && !isUnpublishedDraft) {
+        showToast('নিরাপত্তা বিধিনিষেধ: শুধুমাত্র খসড়া বা টেস্ট ডাটা রেকর্ড মুছে ফেলা যাবে। বাস্তব প্রকাশিত ওষুধ মুছা সম্পূর্ণ নিষিদ্ধ।', 'alert');
+        return false;
+      }
+
+      await deleteLibraryMedicinesInBatches([target.id]);
+      notifyLibraryCatalogChanged();
 
       recordAdminActivity({
         type: 'delete',
@@ -4372,12 +3710,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       showToast(`"${target.brandName}" রেকর্ডটি সফলভাবে ক্লাউড থেকে মুছে ফেলা হয়েছে`, 'info');
       return true;
     } catch (err: any) {
-      console.error('Firestore delete error:', err);
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
-      }
+      console.error('Supabase delete error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return false;
     }
   };
@@ -4393,52 +3727,35 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return false;
     }
 
-    const targets = globalMedicines.filter((m) => medicineIds.includes(m.id));
-    const safeToDelete = targets.filter((m) => {
-      const isTest = isTestMedicine(m);
-      const isUnpublishedDraft = m.status !== 'published' || !m.verifiedByAdmin;
-      return isTest || isUnpublishedDraft;
-    });
-
-    if (safeToDelete.length === 0) {
-      showToast('নিরাপত্তা বিধিনিষেধ: নির্বাচিত কোনো রেকর্ড টেস্ট ডাটা বা খসড়া নয়। বাস্তব প্রকাশিত ওষুধ মুছা নিষিদ্ধ।', 'alert');
-      return false;
-    }
-
-    const safeIdSet = new Set(safeToDelete.map((m) => m.id));
-    const nextList = cloudGlobalMedicinesRef.current.filter((m) => !safeIdSet.has(m.id));
-
     try {
-      if (nextList.length !== cloudGlobalMedicinesRef.current.length) {
-        await commitUpdatedCatalogChunks(nextList);
+      const targets = await fetchLibraryMedicinesByIds(medicineIds, { includeUnpublished: true });
+      const safeToDelete = targets.filter((m) => {
+        const isTest = isTestMedicine(m);
+        const isUnpublishedDraft = m.status !== 'published' || !m.verifiedByAdmin;
+        return isTest || isUnpublishedDraft;
+      });
+
+      if (safeToDelete.length === 0) {
+        showToast('নিরাপত্তা বিধিনিষেধ: নির্বাচিত কোনো রেকর্ড টেস্ট ডাটা বা খসড়া নয়। বাস্তব প্রকাশিত ওষুধ মুছা নিষিদ্ধ।', 'alert');
+        return false;
       }
 
-      const remainingPending = removeIdsFromPublishQueue(
-        pendingPublishMedicinesRef.current,
-        Array.from(safeIdSet)
-      );
-      if (remainingPending.length !== pendingPublishMedicinesRef.current.length) {
-        pendingPublishMedicinesRef.current = remainingPending;
-        setPendingPublishMedicines(remainingPending);
-        await saveAdminPublishQueue(remainingPending, pendingPublishBatchesRef.current);
-      }
+      const safeIds = safeToDelete.map((m) => m.id);
+      await deleteLibraryMedicinesInBatches(safeIds);
+      notifyLibraryCatalogChanged();
 
       recordAdminActivity({
         type: 'delete',
         title: 'বাল্ক টেস্ট ডাটা নিরাপদ অপসারণ',
-        description: `খসড়া কিউ থেকে ${safeIdSet.size}টি রেকর্ড মুছে ফেলা হয়েছে।`,
+        description: `খসড়া কিউ থেকে ${safeIds.length}টি রেকর্ড মুছে ফেলা হয়েছে।`,
         adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
-      showToast(`${safeIdSet.size} টি রেকর্ড সফলভাবে ক্লাউড থেকে মুছে ফেলা হয়েছে`, 'info');
+      showToast(`${safeIds.length} টি রেকর্ড সফলভাবে ক্লাউড থেকে মুছে ফেলা হয়েছে`, 'info');
       return true;
     } catch (err: any) {
-      console.error('Firestore bulk delete error:', err);
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
-      }
+      console.error('Supabase bulk delete error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return false;
     }
   };
@@ -4500,30 +3817,20 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       importedAt: new Date().toISOString(),
     });
 
-    const diff = hasCatalogChanges(globalMedicines, [cleanMedicine]);
-    if (!diff.changed) {
-      showToast('সব ওষুধ আগেই আছে, নতুন কিছু নেই', 'info');
-      return false;
-    }
-
-    if (isQueueableAdminWriteFailure()) {
-      await enqueueMedicinesForOfflineAdminPublish([cleanMedicine]);
-      showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-      return true;
-    }
-
-    const mergedCloudList = combineCatalogWithPendingQueueForSingleVersionPublish(
-      cloudGlobalMedicinesRef.current,
-      [cleanMedicine]
-    );
-
     try {
-      await commitUpdatedCatalogChunks(mergedCloudList);
+      const existing = await checkDuplicateKeysInSupabase([cleanMedicine.duplicateKey]);
+      if (existing.length > 0) {
+        showToast('সব ওষুধ আগেই আছে, নতুন কিছু নেই', 'info');
+        return false;
+      }
+
+      await upsertLibraryMedicinesInBatches([cleanMedicine]);
+      notifyLibraryCatalogChanged();
 
       recordAdminActivity({
         type: isPublished ? 'publish' : 'import',
         title: isPublished ? 'ম্যানুয়াল ওষুধ অন্তর্ভুক্তি ও সার্বজনীন প্রকাশ' : 'ম্যানুয়াল ওষুধ খসড়া তৈরি',
-        description: `ওষুধ "${cleanMedicine.brandName}" (${cleanMedicine.strength}, ${cleanMedicine.manufacturer}) সরাসরি ম্যানুয়ালি ক্লাউড লাইব্রেরিতে ${isPublished ? 'প্রকাশ' : 'খসড়া'} করা হয়েছে।`,
+        description: `ওষুধ "${cleanMedicine.brandName}" (${cleanMedicine.strength}, ${cleanMedicine.manufacturer}) সরাসরি ক্লাউড লাইব্রেরিতে ${isPublished ? 'প্রকাশ' : 'খসড়া'} করা হয়েছে।`,
         adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
@@ -4535,16 +3842,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       );
       return true;
     } catch (err: any) {
-      console.error('Firestore manual add chunk error:', err);
-      if (isQueueableAdminWriteFailure(err)) {
-        if (isQuotaExceededError(err)) {
-          notifyQuotaExceededOnce();
-        }
-        await enqueueMedicinesForOfflineAdminPublish([cleanMedicine]);
-        showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-        return true;
-      }
-      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getFriendlyErrorMessage(err)}`, 'alert');
+      console.error('Supabase manual add error:', err);
+      showToast(`ক্লাউডে সংরক্ষণ হয়নি: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return false;
     }
   };
@@ -4563,12 +3862,6 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     if (!brandName || !genericName || !strength || !dosageForm || !manufacturer) {
       showToast('ত্রুটি: ব্র্যান্ড নাম, জেনেরিক নাম, শক্তি, ধরন এবং কোম্পানি পূরণ করা আবশ্যক।', 'alert');
-      return false;
-    }
-
-    const exists = globalMedicines.some((m) => m.id === updatedMed.id);
-    if (!exists) {
-      showToast('সংশ্লিষ্ট ওষুধটি লাইব্রেরিতে খুঁজে পাওয়া যায়নি।', 'alert');
       return false;
     }
 
@@ -4595,25 +3888,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       duplicateKey: generateDuplicateKey(brandName, genericName, strength, dosageForm, manufacturer).substring(0, 256),
     });
 
-    if (isQueueableAdminWriteFailure()) {
-      await enqueueMedicinesForOfflineAdminPublish([cleanMed]);
-      showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-      return true;
-    }
-
-    const nextList = cloudGlobalMedicinesRef.current.some((m) => m.id === cleanMed.id)
-      ? cloudGlobalMedicinesRef.current.map((m) => (m.id === cleanMed.id ? cleanMed : m))
-      : [cleanMed, ...cloudGlobalMedicinesRef.current];
-
     try {
-      await commitUpdatedCatalogChunks(nextList);
-
-      if (pendingPublishMedicinesRef.current.some((m) => m.id === cleanMed.id)) {
-        const remaining = removeIdsFromPublishQueue(pendingPublishMedicinesRef.current, [cleanMed.id]);
-        pendingPublishMedicinesRef.current = remaining;
-        setPendingPublishMedicines(remaining);
-        await saveAdminPublishQueue(remaining, pendingPublishBatchesRef.current);
-      }
+      await upsertLibraryMedicinesInBatches([cleanMed]);
+      notifyLibraryCatalogChanged();
 
       recordAdminActivity({
         type: 'publish',
@@ -4625,16 +3902,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       showToast(`"${cleanMed.brandName}" সফলভাবে হালনাগাদ হয়েছে`, 'success');
       return true;
     } catch (err: any) {
-      console.error('Firestore single edit chunk error:', err);
-      if (isQueueableAdminWriteFailure(err)) {
-        if (isQuotaExceededError(err)) {
-          notifyQuotaExceededOnce();
-        }
-        await enqueueMedicinesForOfflineAdminPublish([cleanMed]);
-        showToast(ADMIN_QUOTA_SAVED_TOAST, 'info');
-        return true;
-      }
-      showToast(`সম্পাদনা সংরক্ষণ হয়নি (আগের তালিকা অক্ষত আছে): ${getFriendlyErrorMessage(err)}`, 'alert');
+      console.error('Supabase single edit error:', err);
+      showToast(`সম্পাদনা সংরক্ষণ হয়নি: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return false;
     }
   };
@@ -4652,14 +3921,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return 0;
     }
 
-    const idSet = new Set(ids);
-    const targetCount = cloudGlobalMedicinesRef.current.filter((m) => idSet.has(m.id)).length;
-    if (targetCount === 0) return 0;
-
-    const nextList = applyBulkMedicinePatch(cloudGlobalMedicinesRef.current, idSet, patch);
-
     try {
-      await commitUpdatedCatalogChunks(nextList);
+      const updatedCount = await bulkPatchLibraryMedicinesInSupabase(ids, patch);
+      if (updatedCount === 0) return 0;
+      notifyLibraryCatalogChanged();
 
       const changedFields: string[] = [];
       if (patch.manufacturer?.trim()) changedFields.push(`কোম্পানি: ${patch.manufacturer.trim()}`);
@@ -4672,19 +3937,15 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       recordAdminActivity({
         type: 'publish',
         title: 'বাল্ক ওষুধ তথ্য হালনাগাদ',
-        description: `${targetCount}টি ওষুধের তথ্য (${changedFields.join(', ')}) হালনাগাদ করা হয়েছে।`,
+        description: `${updatedCount}টি ওষুধের তথ্য (${changedFields.join(', ')}) হালনাগাদ করা হয়েছে।`,
         adminEmail: currentUser?.email || '',
       }).catch((e) => console.warn('Activity log error:', e));
 
-      showToast(`${targetCount}টি ওষুধের তথ্য সফলভাবে হালনাগাদ হয়েছে`, 'success');
-      return targetCount;
+      showToast(`${updatedCount}টি ওষুধের তথ্য সফলভাবে হালনাগাদ হয়েছে`, 'success');
+      return updatedCount;
     } catch (err: any) {
-      console.error('Firestore bulk edit chunk error:', err);
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        showToast(`বাল্ক হালনাগাদ ব্যর্থ (আগের তালিকা অক্ষত আছে): ${getFriendlyErrorMessage(err)}`, 'alert');
-      }
+      console.error('Supabase bulk edit error:', err);
+      showToast(`বাল্ক হালনাগাদ ব্যর্থ: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return -1;
     }
   };
@@ -4704,18 +3965,16 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return { success: false, deletedItems: [], errorMessage: msg };
     }
 
-    const idSet = new Set(ids);
-    const deletedItems = cloudGlobalMedicinesRef.current.filter((m) => idSet.has(m.id));
-    if (deletedItems.length === 0) {
-      const msg = 'নির্বাচিত ওষুধগুলো খুঁজে পাওয়া যায়নি।';
-      showToast(msg, 'alert');
-      return { success: false, deletedItems: [], errorMessage: msg };
-    }
-
-    const nextList = cloudGlobalMedicinesRef.current.filter((m) => !idSet.has(m.id));
-
     try {
-      await commitUpdatedCatalogChunks(nextList);
+      const deletedItems = await fetchLibraryMedicinesByIds(ids, { includeUnpublished: true });
+      if (deletedItems.length === 0) {
+        const msg = 'নির্বাচিত ওষুধগুলো খুঁজে পাওয়া যায়নি।';
+        showToast(msg, 'alert');
+        return { success: false, deletedItems: [], errorMessage: msg };
+      }
+
+      await deleteLibraryMedicinesInBatches(deletedItems.map((m) => m.id));
+      notifyLibraryCatalogChanged();
 
       recordAdminActivity({
         type: 'delete',
@@ -4734,13 +3993,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       showToast(`${deletedItems.length}টি ওষুধ লাইব্রেরি থেকে মুছে ফেলা হয়েছে`, 'info');
       return { success: true, deletedItems };
     } catch (err: any) {
-      console.error('Firestore admin delete chunk error:', err);
-      const friendly = isQuotaExceededError(err) ? QUOTA_EXCEEDED_BN_MSG : getFriendlyErrorMessage(err);
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        showToast(`মুছে ফেলা ব্যর্থ হয়েছে (পুরনো তালিকা সম্পূর্ণ অক্ষত আছে): ${friendly}`, 'alert');
-      }
+      console.error('Supabase admin delete error:', err);
+      const friendly = getSupabaseDataErrorMessageBn(err);
+      showToast(`মুছে ফেলা ব্যর্থ হয়েছে (পুরনো তালিকা সম্পূর্ণ অক্ষত আছে): ${friendly}`, 'alert');
       return {
         success: false,
         deletedItems: [],
@@ -4758,10 +4013,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     if (!itemsToRestore || itemsToRestore.length === 0) return false;
 
-    const nextList = mergeRestoredMedicines(cloudGlobalMedicinesRef.current, itemsToRestore);
-
     try {
-      await commitUpdatedCatalogChunks(nextList);
+      await upsertLibraryMedicinesInBatches(itemsToRestore);
+      notifyLibraryCatalogChanged();
 
       recordAdminActivity({
         type: 'publish',
@@ -4773,12 +4027,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       showToast(`${itemsToRestore.length}টি ওষুধ সফলভাবে ফিরিয়ে আনা হয়েছে!`, 'success');
       return true;
     } catch (err: any) {
-      console.error('Firestore undo restore chunk error:', err);
-      if (isQuotaExceededError(err)) {
-        notifyQuotaExceededOnce();
-      } else {
-        showToast(`ফিরিয়ে আনা ব্যর্থ হয়েছে: ${getFriendlyErrorMessage(err)}`, 'alert');
-      }
+      console.error('Supabase undo restore error:', err);
+      showToast(`ফিরিয়ে আনা ব্যর্থ হয়েছে: ${getSupabaseDataErrorMessageBn(err)}`, 'alert');
       return false;
     }
   };
@@ -5705,19 +4955,15 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         openResetConfirmationModal,
         closeResetConfirmationModal,
         confirmResetAllData,
-        globalMedicines,
-        libraryVersion,
+        libraryMutationVersion,
         importBatches,
+        refreshImportBatches,
         isAdmin,
         adminEmail: currentUser?.email || '',
         lastSyncTime,
         isOnline,
-        isGlobalFromCache,
-        latestLibraryNotice,
-        dismissLibraryNotice,
         cloudStats,
         refreshCloudCounts,
-        migrateLegacyLibraryAction,
         selectedGlobalMedForDetail,
         setSelectedGlobalMedForDetail,
         isAddToPersonalModalOpen,
@@ -5739,13 +4985,6 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         adminDeleteGlobalMedicinesAction,
         restoreDeletedGlobalMedicinesAction,
         executeAdminBatchImport,
-        pendingPublishMedicines,
-        pendingPublishBatches,
-        pendingPublishLastRetryAttemptMs,
-        isRetryingPendingPublish,
-        retryPendingPublishNow,
-        cancelPendingPublishItem,
-        clearPendingPublishQueue,
         addCatalogMedToPersonal,
         stockPredictions,
         adjustMedicineStock,

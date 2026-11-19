@@ -84,7 +84,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
 
     let cancelled = false;
     setIsLoadingImage(true);
-    void loadDocumentPageImage(currentPage.fileId)
+    void loadDocumentPageImage(currentPage.fileId, docRecord.id)
       .then((dataUrl) => {
         if (!cancelled && dataUrl) {
           setFullImages((prev) => ({ ...prev, [currentPage.fileId]: dataUrl }));
@@ -97,7 +97,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [currentPage?.fileId]);
+  }, [currentPage?.fileId, docRecord.id]);
 
   const resetZoom = () => {
     setScale(1);
@@ -207,7 +207,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
     if (!currentPage || !onScanPrescription) return;
     let img = fullImages[currentPage.fileId];
     if (!img) {
-      img = (await loadDocumentPageImage(currentPage.fileId)) || '';
+      img = (await loadDocumentPageImage(currentPage.fileId, docRecord.id)) || '';
     }
     if (!img) {
       showToast('মূল ছবিটি এখনো লোড হয়নি। ইন্টারনেট সংযোগ দেখে আবার চেষ্টা করুন।', 'alert');
