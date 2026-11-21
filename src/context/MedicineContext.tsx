@@ -17,10 +17,12 @@ import {
   CaregiverLinkDoc,
   CaregiverSuggestionDoc,
   CaregiverSuggestedMedicinePayload,
+  CycleLog,
   FamilyAlertDoc,
   DoctorProfile,
   MedicalDocument,
   PhonebookEntry,
+  RealtimeSyncStatus,
 } from '../types';
 import {
   initialPatients,
@@ -75,6 +77,9 @@ import {
   deletePhonebookEntryFromSupabase,
   clearCoreUserTablesFromSupabase,
   cleanupDemoRecordsFromSupabase as cleanupDemoRecordsFromCloud,
+  fetchCycleLogsFromSupabase,
+  saveCycleLogToSupabase,
+  deleteCycleLogFromSupabase,
   getSupabaseDataErrorMessageBn,
 } from '../supabase/userDataService';
 import {
@@ -99,9 +104,24 @@ import {
   fetchLibraryMedicinesByIds,
   fetchPublishedLibraryCounts,
   fetchUnpublishedDraftsFromSupabase,
+  mapGlobalMedicineToAddFormPrefill,
   recordAdminActivity,
   upsertLibraryMedicinesInBatches,
 } from '../supabase/libraryService';
+import {
+  mergeRealtimeRow,
+  RecentWriteTracker,
+  removeRealtimeRowById,
+  subscribeUserRealtimeSync,
+} from '../supabase/realtimeSync';
+import {
+  analyzeCycles,
+  hasCycleReminderFiredForDate,
+  isCycleReminderDueToday,
+  isCycleTrackerEnabledForProfile,
+  markCycleReminderFiredForDate,
+  setCycleTrackerEnabledForProfile,
+} from '../utils/cycleTracker';
 import {
   cleanupOldFamilyAlertsInSupabase as cleanupOldFamilyAlertsInCloud,
   createCaregiverInviteInSupabase as createCaregiverInviteInCloud,
@@ -473,6 +493,23 @@ interface MedicineContextType {
   ) => Promise<boolean>;
   rejectCaregiverSuggestion: (suggestionId: string) => Promise<boolean>;
   cancelCaregiverSuggestion: (suggestionId: string) => Promise<boolean>;
+
+  // Supabase Realtime Live Sync
+  realtimeStatus: RealtimeSyncStatus;
+
+  // Generic Brand Selection Prefill -> AddMedicine
+  openAddMedicineFromCatalogBrand: (med: GlobalMedicine) => void;
+
+  // নারীর স্বাস্থ্য (চক্র ট্র্যাকার - শুধু মালিকের ডেটা)
+  cycleLogs: CycleLog[];
+  isLoadingCycleLogs: boolean;
+  loadCycleLogs: (forceRefresh?: boolean) => Promise<void>;
+  addOrUpdateCycleLog: (
+    input: Omit<CycleLog, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }
+  ) => Promise<CycleLog | null>;
+  deleteCycleLog: (logId: string) => Promise<void>;
+  isCycleTrackerEnabledForPatient: (patientId?: string | null) => boolean;
+  setCycleTrackerEnabledForPatient: (patientId: string, enabled: boolean) => void;
 }
 
 
@@ -490,6 +527,7 @@ const STORAGE_KEYS = {
   HEALTH_RECORDS: 'shasthobondhu_health_records_v2',
   APPOINTMENTS: 'shasthobondhu_appointments_v2',
   PHONEBOOK: 'shasthobondhu_phonebook_v1',
+  CYCLE_LOGS: 'shasthobondhu_cycle_logs_v1',
 };
 
 const clearUserCloudData = async (userId: string): Promise<void> => {
@@ -659,6 +697,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     breakdownLabels: string[];
   } | null>(null);
   const pendingSyncPlanRef = useRef<DirtySyncPlan | null>(null);
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeSyncStatus>('disconnected');
+  const recentRealtimeWritesRef = useRef<RecentWriteTracker>(new RecentWriteTracker());
 
   // Migration Gate & Conflict Resolution State
   // Ensures listeners attach ONLY AFTER one-time demo cleanup & migration/conflict resolution completes (Req গ)
@@ -737,6 +777,20 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const phonebookRef = useRef<PhonebookEntry[]>(phonebook);
   phonebookRef.current = phonebook;
 
+  // নারীর স্বাস্থ্য (Cycle Tracker Logs — strict owner isolation)
+  const [cycleLogs, setCycleLogs] = useState<CycleLog[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CYCLE_LOGS);
+      return saved ? (JSON.parse(saved) as CycleLog[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isLoadingCycleLogs, setIsLoadingCycleLogs] = useState(false);
+  const cycleLogsInFlightRef = useRef(false);
+  const cycleLogsLoadedUidRef = useRef<string | null>(null);
+  const [cyclePrefsVersion, setCyclePrefsVersion] = useState(0);
+
   // Prescriptions & Reports Vault (IndexedDB first, zero real-time listener)
   const [medicalDocuments, setMedicalDocuments] = useState<MedicalDocument[]>([]);
   const [isLoadingMedicalDocuments, setIsLoadingMedicalDocuments] = useState(false);
@@ -804,6 +858,14 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       console.warn('Storage sync error', e);
     }
   }, [phonebook]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.CYCLE_LOGS, JSON.stringify(cycleLogs));
+    } catch (e) {
+      console.warn('Storage sync error', e);
+    }
+  }, [cycleLogs]);
 
   // Apply Dark Mode and Listen to System Preferences
   useEffect(() => {
@@ -1432,6 +1494,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setAppointments([]);
         setDoctors([]);
         setPhonebook([]);
+        setCycleLogs([]);
+        cycleLogsLoadedUidRef.current = null;
         setMedicalDocuments([]);
         setPendingDocIds([]);
       }
@@ -2268,6 +2332,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       notes,
     };
 
+    recentRealtimeWritesRef.current.mark('dose_logs', newLog.id, nowMs);
+
     if (existingIndex >= 0) {
       const updated = [...doseLogs];
       updated[existingIndex] = newLog;
@@ -2289,6 +2355,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           lastStockUpdated: new Date().toISOString(),
           updatedAtMs: nowMs,
         };
+        recentRealtimeWritesRef.current.mark('medicines', updatedMed.id, nowMs);
         setMedicines((prev) =>
           prev.map((item) => (item.id === medicineId ? (updatedMed as Medicine) : item))
         );
@@ -2308,6 +2375,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           lastStockUpdated: new Date().toISOString(),
           updatedAtMs: nowMs,
         };
+        recentRealtimeWritesRef.current.mark('medicines', updatedMed.id, nowMs);
         setMedicines((prev) =>
           prev.map((item) => (item.id === medicineId ? (updatedMed as Medicine) : item))
         );
@@ -2366,6 +2434,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       id: newId,
       updatedAtMs: nowMs,
     });
+    recentRealtimeWritesRef.current.mark('medicines', newId, nowMs);
     setMedicines((prev) => [newMedicine, ...prev]);
 
     if (currentUser) {
@@ -2409,6 +2478,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       })
     );
     const addedIds = newMeds.map((m) => m.id);
+    addedIds.forEach((id) => recentRealtimeWritesRef.current.mark('medicines', id, baseTs));
 
     setMedicines((prev) => [...newMeds, ...prev]);
 
@@ -2442,11 +2512,13 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const updateMedicine = (id: string, updates: Partial<Medicine>) => {
     const target = medicines.find((m) => m.id === id);
     if (!target) return;
+    const nowMs = Date.now();
     const updatedObj: Medicine = stripUndefined({
       ...target,
       ...updates,
-      updatedAtMs: Date.now(),
+      updatedAtMs: nowMs,
     });
+    recentRealtimeWritesRef.current.mark('medicines', id, nowMs);
     setMedicines((prev) => prev.map((m) => (m.id === id ? updatedObj : m)));
 
     if (currentUser) {
@@ -2477,6 +2549,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const deleteMedicine = (id: string) => {
     const med = medicines.find((m) => m.id === id);
+    recentRealtimeWritesRef.current.mark('medicines', id, Date.now());
     setMedicines((prev) => prev.filter((m) => m.id !== id));
 
     if (currentUser) {
@@ -2536,6 +2609,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       updatedAtMs: nowMs,
       stockAdjustments: [adjustmentRecord, ...(med.stockAdjustments || [])],
     };
+    recentRealtimeWritesRef.current.mark('medicines', medicineId, nowMs);
 
     setMedicines((prev) =>
       prev.map((m) => (m.id === medicineId ? updatedMed : m))
@@ -2583,11 +2657,13 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const assignMedicineToPatient = (medicineId: string, patientId?: string) => {
     const target = medicines.find((m) => m.id === medicineId);
     if (!target) return;
+    const nowMs = Date.now();
     const updatedMed: Medicine = {
       ...target,
       assignedPatientId: patientId || undefined,
-      updatedAtMs: Date.now(),
+      updatedAtMs: nowMs,
     };
+    recentRealtimeWritesRef.current.mark('medicines', medicineId, nowMs);
     setMedicines((prev) => prev.map((m) => (m.id === medicineId ? updatedMed : m)));
 
     const patient = patients.find((p) => p.id === patientId);
@@ -2858,6 +2934,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setAppointments(initialAppointments);
     setDoctors([]);
     setPhonebook([]);
+    setCycleLogs([]);
+    cycleLogsLoadedUidRef.current = null;
     setMedicalDocuments([]);
     setPendingDocIds([]);
 
@@ -2882,6 +2960,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       localStorage.removeItem(STORAGE_KEYS.HEALTH_RECORDS);
       localStorage.removeItem(STORAGE_KEYS.APPOINTMENTS);
       localStorage.removeItem(STORAGE_KEYS.PHONEBOOK);
+      localStorage.removeItem(STORAGE_KEYS.CYCLE_LOGS);
     } catch (e) {
       console.warn('Storage clear notice', e);
     }
@@ -5092,6 +5171,294 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setFailedCaregiverAlerts(remaining);
   };
 
+  // =========================================================================
+  // Generic Brand Selection Prefill -> AddMedicine
+  // =========================================================================
+  const openAddMedicineFromCatalogBrand = (med: GlobalMedicine) => {
+    const prefill = mapGlobalMedicineToAddFormPrefill(med);
+    try {
+      localStorage.setItem('shasthobondhu_pending_library_prefill', JSON.stringify(prefill));
+    } catch {
+      // ignore storage errors
+    }
+    setCurrentPage('add-medicine');
+  };
+
+  // =========================================================================
+  // নারীর স্বাস্থ্য (চক্র ট্র্যাকার) — শুধুই মালিকের নিজস্ব ডেটা
+  // =========================================================================
+  const loadCycleLogs = async (forceRefresh = false): Promise<void> => {
+    if (!currentUser || migrationReadyUid !== currentUser.uid) return;
+    const uid = currentUser.uid;
+    if (!forceRefresh && cycleLogsLoadedUidRef.current === uid) return;
+    if (cycleLogsInFlightRef.current || isDeviceOffline()) return;
+
+    cycleLogsInFlightRef.current = true;
+    setIsLoadingCycleLogs(true);
+    try {
+      const logs = await fetchCycleLogsFromSupabase(uid);
+      setCycleLogs(logs);
+      cycleLogsLoadedUidRef.current = uid;
+    } catch (err) {
+      console.warn('loadCycleLogs notice:', err);
+    } finally {
+      cycleLogsInFlightRef.current = false;
+      setIsLoadingCycleLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser || migrationReadyUid !== currentUser.uid) {
+      cycleLogsLoadedUidRef.current = null;
+      return;
+    }
+    void loadCycleLogs(false);
+  }, [currentUser, migrationReadyUid]);
+
+  const addOrUpdateCycleLog = async (
+    input: Omit<CycleLog, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }
+  ): Promise<CycleLog | null> => {
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const existing = input.id ? cycleLogs.find((l) => l.id === input.id) : undefined;
+    const logId = input.id || `cyc-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
+
+    const nextLog: CycleLog = {
+      id: logId,
+      patientId: input.patientId,
+      startDate: input.startDate,
+      ...(input.endDate ? { endDate: input.endDate } : {}),
+      ...(input.flow ? { flow: input.flow } : {}),
+      ...(typeof input.painLevel === 'number' ? { painLevel: input.painLevel } : {}),
+      ...(Array.isArray(input.symptoms) ? { symptoms: input.symptoms } : { symptoms: [] }),
+      ...(input.notes ? { notes: input.notes } : {}),
+      createdAt: existing?.createdAt || nowIso,
+      updatedAt: nowIso,
+      updatedAtMs: nowMs,
+    };
+
+    setCycleLogs((prev) => {
+      const filtered = prev.filter((l) => l.id !== logId);
+      return [nextLog, ...filtered].sort((a, b) => b.startDate.localeCompare(a.startDate));
+    });
+
+    if (currentUser && !isDeviceOffline()) {
+      try {
+        await saveCycleLogToSupabase(currentUser.uid, nextLog);
+        showToast('চক্রের তথ্য সংরক্ষিত হয়েছে', 'success');
+      } catch (err) {
+        showToast(getSupabaseDataErrorMessageBn(err, 'ফোনে সংরক্ষিত হয়েছে; ক্লাউড সিঙ্ক ব্যর্থ'), 'alert');
+      }
+    } else {
+      showToast('চক্রের তথ্য ফোনে সংরক্ষিত হয়েছে', 'success');
+    }
+    return nextLog;
+  };
+
+  const deleteCycleLog = async (logId: string): Promise<void> => {
+    setCycleLogs((prev) => prev.filter((l) => l.id !== logId));
+    if (currentUser && !isDeviceOffline()) {
+      try {
+        await deleteCycleLogFromSupabase(currentUser.uid, logId);
+        showToast('চক্রের রেকর্ড মুছে ফেলা হয়েছে', 'info');
+      } catch (err) {
+        showToast(getSupabaseDataErrorMessageBn(err, 'ক্লাউড থেকে মুছে ফেলা যায়নি'), 'alert');
+      }
+    } else {
+      showToast('চক্রের রেকর্ড মুছে ফেলা হয়েছে', 'info');
+    }
+  };
+
+  const isCycleTrackerEnabledForPatient = (patientId?: string | null): boolean => {
+    void cyclePrefsVersion;
+    return isCycleTrackerEnabledForProfile(currentUser?.uid, patientId);
+  };
+
+  const setCycleTrackerEnabledForPatient = (patientId: string, enabled: boolean): void => {
+    setCycleTrackerEnabledForProfile(currentUser?.uid, patientId, enabled);
+    setCyclePrefsVersion((v) => v + 1);
+    showToast(
+      enabled ? 'নারীর স্বাস্থ্য (চক্র ট্র্যাকার) চালু হয়েছে' : 'নারীর স্বাস্থ্য (চক্র ট্র্যাকার) বন্ধ হয়েছে',
+      'info'
+    );
+  };
+
+  // 1-day-before local cycle reminder check
+  useEffect(() => {
+    if (!activePatient) return;
+    if (!isCycleTrackerEnabledForProfile(currentUser?.uid, activePatient.id)) return;
+    const analysis = analyzeCycles(cycleLogs, activePatient.id);
+    if (!analysis.predictedNextStartDate) return;
+    if (!isCycleReminderDueToday(analysis.predictedNextStartDate)) return;
+    if (hasCycleReminderFiredForDate(currentUser?.uid, activePatient.id, analysis.predictedNextStartDate)) {
+      return;
+    }
+
+    markCycleReminderFiredForDate(currentUser?.uid, activePatient.id, analysis.predictedNextStartDate);
+    const bodyMsg = `আগামীকাল (${analysis.predictedNextStartDate}) সম্ভাব্য মাসিক শুরু হতে পারে — প্রস্তুতি রাখুন।`;
+    showToast(bodyMsg, 'info');
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification('স্বাস্থ্যবন্ধু — নারীর স্বাস্থ্য রিমাইন্ডার', {
+          body: bodyMsg,
+          icon: '/favicon.ico',
+        });
+      } catch {
+        // ignore sandbox notification error
+      }
+    }
+  }, [activePatient?.id, cycleLogs, currentUser?.uid, cyclePrefsVersion]);
+
+  // =========================================================================
+  // Supabase Realtime Live Sync ('user-sync' + per-patient channels)
+  // =========================================================================
+  const activeCaregiverPatientUidsKey = React.useMemo(
+    () =>
+      Array.from(
+        new Set(
+          caringForLinks
+            .filter((l) => l.status === 'active' && l.patientUid && l.patientUid !== currentUser?.uid)
+            .map((l) => l.patientUid)
+        )
+      )
+        .sort()
+        .join(','),
+    [caringForLinks, currentUser?.uid]
+  );
+
+  useEffect(() => {
+    if (!currentUser || migrationReadyUid !== currentUser.uid) {
+      setRealtimeStatus('disconnected');
+      recentRealtimeWritesRef.current.clear();
+      return;
+    }
+
+    const uid = currentUser.uid;
+    const caregiverPatientUids = activeCaregiverPatientUidsKey
+      ? activeCaregiverPatientUidsKey.split(',').filter(Boolean)
+      : [];
+
+    const unsubscribe = subscribeUserRealtimeSync({
+      userId: uid,
+      caregiverPatientUids,
+      callbacks: {
+        onStatusChange: (status) => {
+          setRealtimeStatus(status);
+        },
+        onDoseLogChange: (change) => {
+          if (change.eventType === 'DELETE' && change.oldId) {
+            if (recentRealtimeWritesRef.current.shouldIgnoreEcho('dose_logs', change.oldId)) return;
+            setDoseLogs((prev) => removeRealtimeRowById(prev, change.oldId).items);
+            return;
+          }
+          if (change.row) {
+            if (
+              recentRealtimeWritesRef.current.shouldIgnoreEcho(
+                'dose_logs',
+                change.row.id,
+                change.row.updatedAtMs
+              )
+            ) {
+              return;
+            }
+            setDoseLogs((prev) => mergeRealtimeRow(prev, change.row!).items);
+          }
+        },
+        onMedicineChange: (change) => {
+          if (change.eventType === 'DELETE' && change.oldId) {
+            if (recentRealtimeWritesRef.current.shouldIgnoreEcho('medicines', change.oldId)) return;
+            setMedicines((prev) => removeRealtimeRowById(prev, change.oldId).items);
+            return;
+          }
+          if (change.row) {
+            if (
+              recentRealtimeWritesRef.current.shouldIgnoreEcho(
+                'medicines',
+                change.row.id,
+                change.row.updatedAtMs
+              )
+            ) {
+              return;
+            }
+            setMedicines((prev) => mergeRealtimeRow(prev, change.row!).items);
+          }
+        },
+        onFamilyAlertChange: (change) => {
+          if (change.eventType === 'DELETE' && change.oldId) {
+            setCaregiverAlerts((prev) => removeRealtimeRowById(prev, change.oldId).items);
+            return;
+          }
+          if (change.row) {
+            const incomingAlert = change.row;
+            setCaregiverAlerts((prev) => {
+              const res = mergeRealtimeRow(prev, incomingAlert);
+              return res.items.slice().sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+            });
+            if (
+              !incomingAlert.seenBy?.includes(uid) &&
+              !playedAlertSoundIdsRef.current.has(incomingAlert.id)
+            ) {
+              playedAlertSoundIdsRef.current.add(incomingAlert.id);
+              if (settingsRef.current.soundEnabled !== false) {
+                playAlertTone('gentle-pulse');
+              }
+            }
+          }
+        },
+        onCaregiverSuggestionChange: (change) => {
+          if (change.eventType === 'DELETE' && change.oldId) {
+            setPendingPatientSuggestions((prev) => removeRealtimeRowById(prev, change.oldId).items);
+            setSentCaregiverSuggestions((prev) => removeRealtimeRowById(prev, change.oldId).items);
+            return;
+          }
+          if (change.row) {
+            const sug = change.row;
+            if (sug.patientUid === uid) {
+              setPendingPatientSuggestions((prev) => {
+                if (sug.status !== 'pending') {
+                  return removeRealtimeRowById(prev, sug.id).items;
+                }
+                const merged = mergeRealtimeRow(prev, sug).items;
+                return filterVisiblePendingSuggestions(merged, Date.now());
+              });
+            }
+            if (sug.caregiverUid === uid) {
+              setSentCaregiverSuggestions((prev) => mergeRealtimeRow(prev, sug).items);
+            }
+          }
+        },
+        onCaregiverLinkChange: (change) => {
+          if (change.eventType === 'DELETE' && change.oldId) {
+            setPatientCaregiverLinks((prev) => removeRealtimeRowById(prev, change.oldId).items);
+            setCaringForLinks((prev) => removeRealtimeRowById(prev, change.oldId).items);
+            return;
+          }
+          if (change.row) {
+            const link = change.row;
+            if (link.patientUid === uid) {
+              setPatientCaregiverLinks((prev) =>
+                filterAndCleanPatientCaregiverLinks(mergeRealtimeRow(prev, link).items)
+              );
+            }
+            if (link.caregiverUid === uid) {
+              setCaringForLinks((prev) => mergeRealtimeRow(prev, link).items);
+            }
+          }
+        },
+        onResumeFromBackground: () => {
+          if (isDeviceOffline()) return;
+          void syncCoreCollectionsFromCloud(uid, false);
+          void loadCaregiverAlertsAndSuggestionsOnce(uid).catch(() => {});
+        },
+      },
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [currentUser?.uid, migrationReadyUid, activeCaregiverPatientUidsKey]);
+
   return (
     <MedicineContext.Provider
       value={{
@@ -5249,6 +5616,15 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         acceptCaregiverSuggestion,
         rejectCaregiverSuggestion,
         cancelCaregiverSuggestion,
+        realtimeStatus,
+        openAddMedicineFromCatalogBrand,
+        cycleLogs,
+        isLoadingCycleLogs,
+        loadCycleLogs,
+        addOrUpdateCycleLog,
+        deleteCycleLog,
+        isCycleTrackerEnabledForPatient,
+        setCycleTrackerEnabledForPatient,
       }}
     >
       {children}

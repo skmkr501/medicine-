@@ -119,6 +119,7 @@ export const Dashboard: React.FC = () => {
     appointments,
     settings,
     showToast,
+    realtimeStatus,
   } = useMedicine();
 
   const todayStr = '2026-11-02';
@@ -315,6 +316,27 @@ export const Dashboard: React.FC = () => {
 
     return (
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-5">
+        {currentUser && (
+          <div className="flex items-center justify-between gap-2 px-1">
+            <span className="text-sm font-semibold text-text-muted">
+              {activePatient ? `${activePatient.name} (${activePatient.relation})` : 'স্বাস্থ্যবন্ধু'}
+            </span>
+            <span
+              role="status"
+              aria-label={realtimeStatus === 'connected' ? 'লাইভ সংযুক্ত' : 'লাইভ সংযুক্ত নয়'}
+              title={realtimeStatus === 'connected' ? 'তাৎক্ষণিক লাইভ সিঙ্ক চালু আছে' : 'লাইভ সিঙ্ক সংযুক্ত নয়'}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-semibold border border-border bg-surface text-text"
+            >
+              <span
+                aria-hidden="true"
+                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  realtimeStatus === 'connected' ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-slate-500'
+                }`}
+              />
+              <span>লাইভ</span>
+            </span>
+          </div>
+        )}
         <CaregiverAlertBanners />
         <PatientSuggestionsSection />
         <div className="grid grid-cols-1 gap-5">
@@ -602,47 +624,70 @@ export const Dashboard: React.FC = () => {
           )}
 
           {currentUser ? (
-            <button
-              type="button"
-              onClick={triggerManualSync}
-              disabled={syncStatus === 'syncing' || isSyncing}
-              className={`min-h-[48px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
-                syncStatus === 'synced'
-                  ? 'bg-success-soft text-success-text border-success/30'
-                  : syncStatus === 'syncing' || isSyncing
-                  ? 'bg-primary-soft text-primary border-primary/30'
-                  : syncStatus === 'offline'
-                  ? 'bg-warning-soft text-warning-text border-warning/30'
-                  : 'bg-danger-soft text-danger-text border-danger/30'
-              }`}
-              title={
-                lastSyncedAt
-                  ? `শেষ সিঙ্ক: ${lastSyncedAt}`
-                  : 'সিঙ্ক অবস্থা'
-              }
-            >
-              {syncStatus === 'synced' ? (
-                <>
-                  <CheckCircle2 className="w-4 h-4 text-success-text" />
-                  <span>সিঙ্ক করা</span>
-                </>
-              ) : syncStatus === 'syncing' || isSyncing ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin text-primary" />
-                  <span>সিঙ্ক হচ্ছে</span>
-                </>
-              ) : syncStatus === 'offline' ? (
-                <>
-                  <CloudOff className="w-4 h-4 text-warning-text" />
-                  <span>অফলাইন</span>
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="w-4 h-4 text-danger-text" />
-                  <span>আবার চেষ্টা</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              <span
+                role="status"
+                aria-label={realtimeStatus === 'connected' ? 'লাইভ সংযুক্ত' : 'লাইভ সংযুক্ত নয়'}
+                title={
+                  realtimeStatus === 'connected'
+                    ? 'তাৎক্ষণিক লাইভ সিঙ্ক চালু আছে'
+                    : 'লাইভ সিঙ্ক সংযুক্ত নয়'
+                }
+                className="min-h-[48px] inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold border border-border bg-surface text-text"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                    realtimeStatus === 'connected'
+                      ? 'bg-emerald-500'
+                      : 'bg-slate-400 dark:bg-slate-500'
+                  }`}
+                />
+                <span>লাইভ</span>
+              </span>
+
+              <button
+                type="button"
+                onClick={triggerManualSync}
+                disabled={syncStatus === 'syncing' || isSyncing}
+                className={`min-h-[48px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                  syncStatus === 'synced'
+                    ? 'bg-success-soft text-success-text border-success/30'
+                    : syncStatus === 'syncing' || isSyncing
+                    ? 'bg-primary-soft text-primary border-primary/30'
+                    : syncStatus === 'offline'
+                    ? 'bg-warning-soft text-warning-text border-warning/30'
+                    : 'bg-danger-soft text-danger-text border-danger/30'
+                }`}
+                title={
+                  lastSyncedAt
+                    ? `শেষ সিঙ্ক: ${lastSyncedAt}`
+                    : 'সিঙ্ক অবস্থা'
+                }
+              >
+                {syncStatus === 'synced' ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-success-text" />
+                    <span>সিঙ্ক করা</span>
+                  </>
+                ) : syncStatus === 'syncing' || isSyncing ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+                    <span>সিঙ্ক হচ্ছে</span>
+                  </>
+                ) : syncStatus === 'offline' ? (
+                  <>
+                    <CloudOff className="w-4 h-4 text-warning-text" />
+                    <span>অফলাইন</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-4 h-4 text-danger-text" />
+                    <span>আবার চেষ্টা</span>
+                  </>
+                )}
+              </button>
+            </div>
           ) : (
             <button
               type="button"

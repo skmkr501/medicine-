@@ -19,6 +19,8 @@ import {
   FeedbackEntry,
   GlobalMedicine,
   ImportBatch,
+  MealTiming,
+  MedicineType,
 } from '../types';
 import {
   AdminLibraryFilters,
@@ -57,10 +59,12 @@ export function chunkItems<T>(items: T[], size: number): T[][] {
 
 const searchSessionCache = new Map<string, GlobalMedicine[]>();
 const filterOptionsSessionCache = new Map<string, LibraryFilterOptionsResult>();
+const brandsByGenericSessionCache = new Map<string, GlobalMedicine[]>();
 
 export function clearLibrarySearchSessionCache(): void {
   searchSessionCache.clear();
   filterOptionsSessionCache.clear();
+  brandsByGenericSessionCache.clear();
 }
 
 function getSearchCacheKey(query: string, includeUnpublished: boolean): string {
@@ -1060,3 +1064,166 @@ export async function fetchAdminActivities(): Promise<AdminActivity[]> {
   assertAdminAuth();
   return fetchAdminActivitiesFromSupabase();
 }
+
+// ============================================================================
+// জেনেরিক ধরে ব্র্যান্ড তালিকা (Generic Brands Bottom Sheet + Cache)
+// ============================================================================
+
+export function formatBrandPriceBn(med: Pick<GlobalMedicine, 'pricePerUnit' | 'priceUnit'>): string {
+  if (typeof med.pricePerUnit !== 'number' || !Number.isFinite(med.pricePerUnit) || med.pricePerUnit <= 0) {
+    return 'দাম নেই';
+  }
+  const formattedPrice = med.pricePerUnit.toFixed(2);
+  return med.priceUnit && med.priceUnit.trim()
+    ? `৳ ${formattedPrice} / ${med.priceUnit.trim()}`
+    : `৳ ${formattedPrice}`;
+}
+
+export function filterAndSortGenericBrands(
+  brands: GlobalMedicine[],
+  options: {
+    strength?: string;
+    form?: string;
+    cheapestFirst?: boolean;
+  } = {}
+): GlobalMedicine[] {
+  const selectedStrength = (options.strength || 'all').trim();
+  const selectedForm = (options.form || 'all').trim();
+  const cheapestFirst = Boolean(options.cheapestFirst);
+
+  const filtered = (brands || []).filter((m) => {
+    if (selectedStrength !== 'all' && (m.strength || '').trim() !== selectedStrength) {
+      return false;
+    }
+    if (selectedForm !== 'all' && (m.dosageForm || '').trim() !== selectedForm) {
+      return false;
+    }
+    return true;
+  });
+
+  if (!cheapestFirst) {
+    return [...filtered].sort((a, b) => a.brandName.localeCompare(b.brandName, 'bn'));
+  }
+
+  return [...filtered].sort((a, b) => {
+    const aHas = typeof a.pricePerUnit === 'number' && Number.isFinite(a.pricePerUnit) && a.pricePerUnit > 0;
+    const bHas = typeof b.pricePerUnit === 'number' && Number.isFinite(b.pricePerUnit) && b.pricePerUnit > 0;
+    if (aHas && bHas) {
+      if (a.pricePerUnit! !== b.pricePerUnit!) return a.pricePerUnit! - b.pricePerUnit!;
+      return a.brandName.localeCompare(b.brandName, 'bn');
+    }
+    if (aHas) return -1;
+    if (bHas) return 1;
+    return a.brandName.localeCompare(b.brandName, 'bn');
+  });
+}
+
+export interface AddMedicineLibraryPrefill {
+  brandName: string;
+  genericName: string;
+  strength: string;
+  type: MedicineType;
+  mealTiming: MealTiming;
+  purpose: string;
+  catalogMedicineId: string;
+  packageDescription?: string;
+  pricePerUnit?: number;
+}
+
+export function mapDosageFormToMedicineType(dosageForm: string | undefined): MedicineType {
+  const formLower = (dosageForm || '').toLowerCase();
+  if (formLower.includes('ক্যাপসুল') || formLower.includes('capsule')) {
+    return 'ক্যাপসুল';
+  }
+  if (
+    formLower.includes('সিরাপ') ||
+    formLower.includes('syrup') ||
+    formLower.includes('suspension') ||
+    formLower.includes('solution')
+  ) {
+    return 'সিরাপ';
+  }
+  if (
+    formLower.includes('ইনজেকশন') ||
+    formLower.includes('ইনসুলিন') ||
+    formLower.includes('injection') ||
+    formLower.includes('insulin')
+  ) {
+    return 'ইনসুলিন/ইনজেকশন';
+  }
+  if (formLower.includes('ড্রপ') || formLower.includes('drop')) {
+    return 'চোখের ড্রপ';
+  }
+  if (formLower.includes('ইনহেলার') || formLower.includes('inhaler') || formLower.includes('spray')) {
+    return 'ইনহেলার';
+  }
+  if (
+    formLower.includes('মলম') ||
+    formLower.includes('জেল') ||
+    formLower.includes('cream') ||
+    formLower.includes('ointment') ||
+    formLower.includes('gel')
+  ) {
+    return 'মলম/জেল';
+  }
+  return 'ট্যাবলেট';
+}
+
+export function mapGlobalMedicineToAddFormPrefill(med: GlobalMedicine): AddMedicineLibraryPrefill {
+  return {
+    brandName: med.brandName,
+    genericName: med.genericName || '',
+    strength: med.strength || '',
+    type: mapDosageFormToMedicineType(med.dosageForm),
+    mealTiming: 'খাওয়ার পরে',
+    purpose: med.indication || med.therapeuticClass || '',
+    catalogMedicineId: med.id,
+    ...(med.packageDescription ? { packageDescription: med.packageDescription } : {}),
+    ...(typeof med.pricePerUnit === 'number' && Number.isFinite(med.pricePerUnit)
+      ? { pricePerUnit: med.pricePerUnit }
+      : {}),
+  };
+}
+
+export async function fetchLibraryBrandsByGeneric(
+  genericName: string,
+  options: {
+    limit?: number;
+    client?: SearchLibraryRpcClient;
+    bypassCache?: boolean;
+  } = {}
+): Promise<GlobalMedicine[]> {
+  const cleanGeneric = genericName.trim();
+  if (!cleanGeneric) return [];
+
+  if (!options.client && !getCachedSupabaseUser()) {
+    throw new Error('একই জেনেরিকের সব ব্র্যান্ড দেখতে অনুগ্রহ করে প্রথমে লগইন করুন।');
+  }
+
+  const lim = Math.min(200, Math.max(1, options.limit ?? 200));
+  const cacheKey = `${normalizeGenericForCompare(cleanGeneric) || cleanGeneric.toLowerCase()}:${lim}`;
+
+  if (!options.bypassCache) {
+    const cached = brandsByGenericSessionCache.get(cacheKey);
+    if (cached) return cached;
+  }
+
+  const client: SearchLibraryRpcClient = options.client ?? supabase;
+  const { data, error } = await client.rpc('library_brands_by_generic', {
+    p_generic: cleanGeneric,
+    lim,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  const rows = Array.isArray(data) ? (data as LibraryMedicineRow[]) : [];
+  const mapped = rows
+    .filter((row) => row && typeof row.id === 'string')
+    .map((row) => libraryMedicineFromRow(row));
+
+  brandsByGenericSessionCache.set(cacheKey, mapped);
+  return mapped;
+}
+

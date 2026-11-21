@@ -374,6 +374,27 @@ import {
   encryptAndCompressTransferPayload,
   parseTransferInput,
 } from '../src/utils/phoneTransfer';
+import { CycleLog } from '../src/types';
+import { cycleLogToRow, cycleLogFromRow } from '../src/supabase/mappers';
+import {
+  fetchLibraryBrandsByGeneric,
+  filterAndSortGenericBrands,
+  formatBrandPriceBn,
+  mapGlobalMedicineToAddFormPrefill,
+} from '../src/supabase/libraryService';
+import {
+  RecentWriteTracker,
+  mergeRealtimeRow,
+  removeRealtimeRowById,
+} from '../src/supabase/realtimeSync';
+import {
+  CYCLE_DISCLAIMER_BN,
+  CYCLE_INSUFFICIENT_DATA_BN,
+  analyzeCycles,
+  buildCycleCalendarMonth,
+  getCycleReminderTargetDate,
+  isCycleReminderDueToday,
+} from '../src/utils/cycleTracker';
 
 console.log('\n================================================================');
 console.log('  স্বাস্থ্যবন্ধু (Shasthobondhu) - New Features Verification Tests');
@@ -2155,6 +2176,7 @@ describe('ডাক্তার/পরিবারের জন্য নির�
       allergiesEmergency: true,
       recentReadings: false,
       appointments: false,
+      cycleSummary: false,
     });
 
     const patient: PatientProfile = {
@@ -5266,6 +5288,281 @@ describe('ধাপ ৩৪: Supabase অংশ ৩/৩ — শেয়ারি
       keyB64: encrypted.keyB64,
     });
     assert.strictEqual(parseTransferInput('invalid-code'), null);
+  });
+});
+
+describe('নতুন ৩টি Supabase ফিচার: জেনেরিক ব্র্যান্ড, লাইভ সিঙ্ক, এবং নারীর স্বাস্থ্য', () => {
+  it('১) জেনেরিক ধরে ব্র্যান্ড তালিকা: দাম ফরম্যাট, ফিল্টার/সাজানো, প্রিফিল এবং RPC + ক্যাশ কাজ করে', async () => {
+    clearLibrarySearchSessionCache();
+
+    assert.strictEqual(formatBrandPriceBn({ pricePerUnit: 0.8, priceUnit: 'পিস' }), '৳ 0.80 / পিস');
+    assert.strictEqual(formatBrandPriceBn({ pricePerUnit: undefined }), 'দাম নেই');
+    assert.strictEqual(formatBrandPriceBn({ pricePerUnit: 0 }), 'দাম নেই');
+
+    const sampleBrands: GlobalMedicine[] = [
+      {
+        id: 'lib-1',
+        brandName: 'Napa',
+        genericName: 'Paracetamol',
+        strength: '500 mg',
+        dosageForm: 'Tablet',
+        manufacturer: 'Beximco',
+        pricePerUnit: 0.8,
+        priceUnit: 'পিস',
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA-1',
+        importedAt: '2026-11-01T00:00:00.000Z',
+        duplicateKey: 'napa|paracetamol|500mg|tablet|beximco',
+        verifiedByAdmin: true,
+        status: 'published',
+      },
+      {
+        id: 'lib-2',
+        brandName: 'Ace',
+        genericName: 'Paracetamol',
+        strength: '500 mg',
+        dosageForm: 'Tablet',
+        manufacturer: 'Square',
+        pricePerUnit: 0.75,
+        priceUnit: 'পিস',
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA-2',
+        importedAt: '2026-11-01T00:00:00.000Z',
+        duplicateKey: 'ace|paracetamol|500mg|tablet|square',
+        verifiedByAdmin: true,
+        status: 'published',
+      },
+      {
+        id: 'lib-3',
+        brandName: 'Napa Syrup',
+        genericName: 'Paracetamol',
+        strength: '120 mg/5 ml',
+        dosageForm: 'Syrup',
+        manufacturer: 'Beximco',
+        pricePerUnit: undefined,
+        source: 'DGDA_GOV',
+        sourceType: 'government',
+        sourceName: 'DGDA',
+        licenseReference: 'DGDA-3',
+        importedAt: '2026-11-01T00:00:00.000Z',
+        duplicateKey: 'napa-syrup|paracetamol|120mg|syrup|beximco',
+        verifiedByAdmin: true,
+        status: 'published',
+      },
+    ];
+
+    const sortedCheapest = filterAndSortGenericBrands(sampleBrands, { cheapestFirst: true });
+    assert.strictEqual(sortedCheapest[0].id, 'lib-2');
+    assert.strictEqual(sortedCheapest[1].id, 'lib-1');
+    assert.strictEqual(sortedCheapest[2].id, 'lib-3');
+
+    const filteredTablet = filterAndSortGenericBrands(sampleBrands, {
+      strength: '500 mg',
+      form: 'Tablet',
+      cheapestFirst: true,
+    });
+    assert.strictEqual(filteredTablet.length, 2);
+    assert.strictEqual(filteredTablet[0].brandName, 'Ace');
+
+    const prefill = mapGlobalMedicineToAddFormPrefill(sampleBrands[2]);
+    assert.strictEqual(prefill.brandName, 'Napa Syrup');
+    assert.strictEqual(prefill.genericName, 'Paracetamol');
+    assert.strictEqual(prefill.type, 'সিরাপ');
+    assert.strictEqual(prefill.catalogMedicineId, 'lib-3');
+
+    let rpcCallCount = 0;
+    const mockClient = {
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        rpcCallCount += 1;
+        assert.strictEqual(fn, 'library_brands_by_generic');
+        assert.strictEqual(args.p_generic, 'Paracetamol');
+        assert.strictEqual(args.lim, 200);
+        return {
+          data: sampleBrands.map((b) => libraryMedicineToRow(b)),
+          error: null,
+        };
+      },
+    };
+
+    const first = await fetchLibraryBrandsByGeneric('Paracetamol', {
+      limit: 200,
+      client: mockClient as any,
+    });
+    assert.strictEqual(first.length, 3);
+    assert.strictEqual(rpcCallCount, 1);
+
+    const second = await fetchLibraryBrandsByGeneric('paracetamol', {
+      limit: 200,
+      client: mockClient as any,
+    });
+    assert.strictEqual(second.length, 3);
+    assert.strictEqual(rpcCallCount, 1);
+  });
+
+  it('২) লাইভ সিঙ্ক (Supabase Realtime): একক সারি মার্জ, ডিলিট ও ইকো ডিডুপ্লিকেশন কাজ করে', () => {
+    const initial: Medicine[] = [
+      {
+        id: 'm-1',
+        brandName: 'Napa',
+        genericName: 'Paracetamol',
+        type: 'ট্যাবলেট',
+        strength: '500 mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [],
+        stock: 10,
+        minStockAlert: 5,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: false,
+        status: 'active',
+        colorTag: 'teal',
+        updatedAtMs: 2000,
+      },
+    ];
+
+    const stale = mergeRealtimeRow(initial, { ...initial[0], stock: 9, updatedAtMs: 1500 });
+    assert.strictEqual(stale.applied, false);
+    assert.strictEqual(stale.items[0].stock, 10);
+
+    const duplicate = mergeRealtimeRow(initial, { ...initial[0], updatedAtMs: 2000 });
+    assert.strictEqual(duplicate.applied, false);
+
+    const updated = mergeRealtimeRow(initial, { ...initial[0], stock: 8, updatedAtMs: 3000 });
+    assert.strictEqual(updated.applied, true);
+    assert.strictEqual(updated.items[0].stock, 8);
+
+    const inserted = mergeRealtimeRow(updated.items, {
+      ...initial[0],
+      id: 'm-2',
+      brandName: 'Seclo',
+      updatedAtMs: 3500,
+    });
+    assert.strictEqual(inserted.applied, true);
+    assert.strictEqual(inserted.items.length, 2);
+    assert.strictEqual(inserted.items[0].id, 'm-2');
+
+    const afterDelete = removeRealtimeRowById(inserted.items, 'm-2');
+    assert.strictEqual(afterDelete.removed, true);
+    assert.strictEqual(afterDelete.items.length, 1);
+    assert.strictEqual(afterDelete.items[0].id, 'm-1');
+
+    const tracker = new RecentWriteTracker();
+    tracker.mark('medicines', 'm-1', 5000, 10_000);
+    assert.strictEqual(tracker.shouldIgnoreEcho('medicines', 'm-1', 5200), true);
+    assert.strictEqual(tracker.shouldIgnoreEcho('medicines', 'm-1', 9000), false);
+    assert.strictEqual(tracker.shouldIgnoreEcho('medicines', 'm-other', 5200), false);
+  });
+
+  it('৩) নারীর স্বাস্থ্য (চক্র ট্র্যাকার): ম্যাপার, গড় হিসাব, ক্যালেন্ডার, রিমাইন্ডার ও প্রাইভেসি আইসোলেশন কাজ করে', () => {
+    const rawLog: CycleLog = {
+      id: 'cyc-1',
+      patientId: 'p-woman',
+      startDate: '2026-10-01',
+      endDate: '2026-10-05',
+      flow: 'মাঝারি',
+      painLevel: 15, // should clamp to 10
+      symptoms: ['পেটব্যথা', 'ক্লান্তি'],
+      notes: 'হালকা বিশ্রাম',
+      createdAt: '2026-10-01T08:00:00.000Z',
+      updatedAt: '2026-10-01T08:00:00.000Z',
+    };
+
+    const row = cycleLogToRow(rawLog);
+    assert.strictEqual('user_id' in row, false);
+    assert.strictEqual(row.pain_level, 10);
+    assert.strictEqual(row.flow, 'মাঝারি');
+    const roundTrip = cycleLogFromRow({ ...row, user_id: 'u-1' });
+    assert.strictEqual(roundTrip.painLevel, 10);
+    assert.deepStrictEqual(roundTrip.symptoms, ['পেটব্যথা', 'ক্লান্তি']);
+
+    // < 2 cycles -> পর্যাপ্ত তথ্য নেই
+    const singleAnalysis = analyzeCycles([rawLog], 'p-woman', '2026-10-15');
+    assert.strictEqual(singleAnalysis.hasEnoughData, false);
+    assert.strictEqual(singleAnalysis.insufficientDataMessage, CYCLE_INSUFFICIENT_DATA_BN);
+    assert.strictEqual(singleAnalysis.predictedNextStartDate, null);
+
+    // 3 cycles (28d & 30d -> avg 29d)
+    const multiLogs: CycleLog[] = [
+      { ...rawLog, id: 'cyc-1', startDate: '2026-08-05', endDate: '2026-08-09' },
+      { ...rawLog, id: 'cyc-2', startDate: '2026-09-02', endDate: '2026-09-06' },
+      { ...rawLog, id: 'cyc-3', startDate: '2026-10-02', endDate: '2026-10-06' },
+    ];
+    const multiAnalysis = analyzeCycles(multiLogs, 'p-woman', '2026-10-20');
+    assert.strictEqual(multiAnalysis.hasEnoughData, true);
+    assert.strictEqual(multiAnalysis.averageCycleLength, 29);
+    assert.strictEqual(multiAnalysis.predictedNextStartDate, '2026-10-31');
+    assert.strictEqual(getCycleReminderTargetDate(multiAnalysis.predictedNextStartDate), '2026-10-30');
+    assert.strictEqual(isCycleReminderDueToday(multiAnalysis.predictedNextStartDate, '2026-10-30'), true);
+    assert.strictEqual(isCycleReminderDueToday(multiAnalysis.predictedNextStartDate, '2026-10-29'), false);
+
+    // Irregularity alert (> 35 days or heavy flow)
+    const irregular = analyzeCycles(
+      [
+        { ...rawLog, id: 'c1', startDate: '2026-08-01', flow: 'মাঝারি' },
+        { ...rawLog, id: 'c2', startDate: '2026-09-12', flow: 'ভারী' },
+      ],
+      'p-woman',
+      '2026-09-15'
+    );
+    assert.strictEqual(irregular.hasIrregularityAlert, true);
+    assert.ok(irregular.irregularityReasons.length >= 2);
+    assert.ok(CYCLE_DISCLAIMER_BN.includes('ডাক্তার দেখান'));
+
+    // Calendar month highlights
+    const cells = buildCycleCalendarMonth(2026, 9, multiLogs, 'p-woman', multiAnalysis, '2026-10-20');
+    const oct2 = cells.find((c) => c.isoDate === '2026-10-02');
+    const oct31 = cells.find((c) => c.isoDate === '2026-10-31');
+    assert.strictEqual(oct2?.isPeriodDay, true);
+    assert.strictEqual(oct31?.isPredictedDay, true);
+
+    // Privacy isolation: NEVER in Guest View or Caregiver alerts; ShareReport OFF by default
+    const patient: PatientProfile = {
+      id: 'p-woman',
+      name: 'সাদিয়া',
+      relation: 'নিজ',
+      age: 29,
+      gender: 'মহিলা',
+      bloodGroup: 'B+',
+      chronicConditions: [],
+      allergies: [],
+      emergencyContact: '01700000000',
+    };
+    const guestSnap = buildGuestViewSnapshot(patient, [], new Date('2026-10-20T10:00:00.000Z'));
+    assert.strictEqual('cycleSummary' in guestSnap, false);
+    assert.strictEqual('cycleLogs' in guestSnap, false);
+
+    assert.strictEqual(DEFAULT_SHARED_REPORT_SECTIONS.cycleSummary, false);
+    const defaultReport = buildSharedReportSnapshot({
+      ownerUid: 'u-1',
+      token: 'tok-abc12345678901234',
+      patient,
+      medicines: [],
+      healthRecords: [],
+      appointments: [],
+      selection: DEFAULT_SHARED_REPORT_SECTIONS,
+      expiryHours: 168,
+      cycleLogs: multiLogs,
+    });
+    assert.strictEqual(defaultReport.sections.cycleSummary, undefined);
+
+    const optInReport = buildSharedReportSnapshot({
+      ownerUid: 'u-1',
+      token: 'tok-xyz12345678901234',
+      patient,
+      medicines: [],
+      healthRecords: [],
+      appointments: [],
+      selection: { ...DEFAULT_SHARED_REPORT_SECTIONS, cycleSummary: true },
+      expiryHours: 168,
+      cycleLogs: multiLogs,
+    });
+    assert.ok(optInReport.sections.cycleSummary);
+    assert.strictEqual(optInReport.sections.cycleSummary?.averageCycleLength, 29);
+    assert.strictEqual(optInReport.sections.cycleSummary?.predictedNextStartDate, '2026-10-31');
   });
 });
 

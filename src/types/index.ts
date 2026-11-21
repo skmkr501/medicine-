@@ -334,6 +334,7 @@ export type NavigationPage =
   | 'ai-assistant'
   | 'settings'
   | 'library'
+  | 'womens-health'
   | 'admin-import'
   | 'admin-dashboard'
   | 'admin-library';
@@ -419,6 +420,7 @@ export interface SharedReportSectionSelection {
   allergiesEmergency: boolean;
   recentReadings: boolean;
   appointments: boolean;
+  cycleSummary?: boolean;
 }
 
 export interface SharedReportMedicineItem {
@@ -464,12 +466,28 @@ export interface SharedReportDoctorInfo {
   hospital?: string;
 }
 
+export interface SharedReportCycleSummary {
+  averageCycleLength: number | null;
+  lastPeriodStartDate?: string;
+  lastPeriodEndDate?: string;
+  predictedNextStartDate?: string;
+  cycleCount: number;
+  recentCycles: Array<{
+    startDate: string;
+    endDate?: string;
+    flow?: string;
+    cycleLengthDays?: number;
+  }>;
+  note?: string;
+}
+
 export interface SharedReportSections {
   doctor?: SharedReportDoctorInfo;
   medicines?: SharedReportMedicineItem[];
   allergiesEmergency?: SharedReportAllergiesEmergency;
   recentReadings?: SharedReportReadingItem[];
   appointments?: SharedReportAppointmentItem[];
+  cycleSummary?: SharedReportCycleSummary;
 }
 
 export interface SharedReportDoc {
@@ -624,5 +642,23 @@ export interface FeedbackEntry {
   appVersion?: string;
   createdAt: string;
 }
+
+export type CycleFlow = 'হালকা' | 'মাঝারি' | 'ভারী';
+
+export interface CycleLog {
+  id: string;
+  patientId: string;
+  startDate: string; // YYYY-MM-DD
+  endDate?: string; // YYYY-MM-DD
+  flow?: CycleFlow;
+  painLevel?: number; // 0-10
+  symptoms?: string[];
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  updatedAtMs?: number;
+}
+
+export type RealtimeSyncStatus = 'connected' | 'connecting' | 'disconnected';
 
 

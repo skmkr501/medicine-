@@ -36,6 +36,7 @@ import {
   CheckCircle2,
   Loader2,
   Stethoscope,
+  Heart,
 } from 'lucide-react';
 
 export const ShareReportPage: React.FC = () => {
@@ -54,6 +55,8 @@ export const ShareReportPage: React.FC = () => {
     loadPastAppointments,
     doctors,
     loadDoctors,
+    cycleLogs,
+    isCycleTrackerEnabledForPatient,
   } = useMedicine();
 
   useEffect(() => {
@@ -94,7 +97,7 @@ export const ShareReportPage: React.FC = () => {
   // Live preview counts of what will enter the snapshot
   const snapshotCounts = useMemo(() => {
     if (!selectedPatient) {
-      return { meds: 0, allergies: 0, readings: 0, appointments: 0 };
+      return { meds: 0, allergies: 0, readings: 0, appointments: 0, cycles: 0 };
     }
     const meds = medicines.filter(
       (m) => m.status === 'active' && m.assignedPatientId === selectedPatient.id
@@ -106,14 +109,27 @@ export const ShareReportPage: React.FC = () => {
         a.status !== 'cancelled' &&
         (!a.patientId || a.patientId === selectedPatient.id)
     ).length;
-    return { meds, allergies, readings, appointments: apps };
-  }, [selectedPatient, medicines, healthRecords, appointments]);
+    const cycles = cycleLogs.filter((c) => c.patientId === selectedPatient.id).length;
+    return { meds, allergies, readings, appointments: apps, cycles };
+  }, [selectedPatient, medicines, healthRecords, appointments, cycleLogs]);
+
+  const showCycleReportOption = Boolean(
+    selectedPatient &&
+      (isCycleTrackerEnabledForPatient(selectedPatient.id) || snapshotCounts.cycles > 0)
+  );
+
+  useEffect(() => {
+    if (!showCycleReportOption && sections.cycleSummary) {
+      setSections((prev) => ({ ...prev, cycleSummary: false }));
+    }
+  }, [showCycleReportOption, sections.cycleSummary]);
 
   const anySectionSelected =
     sections.medicines ||
     sections.allergiesEmergency ||
     sections.recentReadings ||
-    sections.appointments;
+    sections.appointments ||
+    Boolean(sections.cycleSummary);
 
   const toggleSection = (key: keyof SharedReportSectionSelection) => {
     setSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -151,6 +167,7 @@ export const ShareReportPage: React.FC = () => {
         selection: sections,
         expiryHours,
         selectedDoctor,
+        cycleLogs,
       });
 
       const savedDoc = await createSharedReportInCloud(snapshot);
@@ -347,9 +364,19 @@ export const ShareReportPage: React.FC = () => {
                 desc: `ডাক্তার সাক্ষাতের সময়সূচি (${toBengaliNumber(snapshotCounts.appointments)}টি)`,
                 icon: Calendar,
               },
+              ...(showCycleReportOption
+                ? [
+                    {
+                      key: 'cycleSummary' as const,
+                      title: 'নারীর স্বাস্থ্য (চক্র সারাংশ)',
+                      desc: `মাসিক চক্রের গড়, শেষ তারিখ ও সম্ভাব্য তারিখ (${toBengaliNumber(snapshotCounts.cycles)}টি রেকর্ড, ডিফল্ট বন্ধ)`,
+                      icon: Heart,
+                    },
+                  ]
+                : []),
             ].map((item) => {
               const Icon = item.icon;
-              const checked = sections[item.key];
+              const checked = Boolean(sections[item.key]);
               return (
                 <button
                   key={item.key}
@@ -461,6 +488,9 @@ export const ShareReportPage: React.FC = () => {
                   : {}),
                 ...(sections.recentReadings ? { recentReadings: [] } : {}),
                 ...(sections.appointments ? { appointments: [] } : {}),
+                ...(sections.cycleSummary
+                  ? { cycleSummary: { averageCycleLength: null, cycleCount: 0, recentCycles: [] } }
+                  : {}),
               }).join(', ') || 'কোনোটিই নয়'}) একটি স্থির কপি তৈরি হবে — পরে ওষুধ বদলালে এই পুরনো লিংক বদলাবে না।
             </li>
             <li>
@@ -712,6 +742,47 @@ export const ShareReportPage: React.FC = () => {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {createdReport.sections.cycleSummary && (
+            <div className="text-xs space-y-1.5">
+              <h2 className="font-bold text-base">নারীর স্বাস্থ্য (চক্র সারাংশ):</h2>
+              <div>
+                গড় চক্র:{' '}
+                {createdReport.sections.cycleSummary.averageCycleLength
+                  ? `${toBengaliNumber(createdReport.sections.cycleSummary.averageCycleLength)} দিন`
+                  : 'পর্যাপ্ত তথ্য নেই'}
+                {createdReport.sections.cycleSummary.predictedNextStartDate
+                  ? ` · সম্ভাব্য পরবর্তী শুরু: ${formatBengaliDate(createdReport.sections.cycleSummary.predictedNextStartDate)}`
+                  : ''}
+              </div>
+              {createdReport.sections.cycleSummary.recentCycles.length > 0 && (
+                <table className="w-full text-xs border border-slate-400 print-table">
+                  <thead>
+                    <tr className="border-b border-slate-400">
+                      <th className="p-2 text-left">শুরুর তারিখ</th>
+                      <th className="p-2 text-left">শেষ</th>
+                      <th className="p-2 text-left">চক্রের দৈর্ঘ্য</th>
+                      <th className="p-2 text-left">স্রাব</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {createdReport.sections.cycleSummary.recentCycles.map((c, i) => (
+                      <tr key={i} className="border-b border-slate-300">
+                        <td className="p-2">{formatBengaliDate(c.startDate)}</td>
+                        <td className="p-2">{c.endDate ? formatBengaliDate(c.endDate) : '—'}</td>
+                        <td className="p-2">
+                          {typeof c.cycleLengthDays === 'number'
+                            ? `${toBengaliNumber(c.cycleLengthDays)} দিন`
+                            : '—'}
+                        </td>
+                        <td className="p-2">{c.flow || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
         </section>

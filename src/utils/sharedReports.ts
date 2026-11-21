@@ -11,8 +11,10 @@ import {
   SharedReportAppointmentItem,
   SharedReportDoc,
   DoctorProfile,
+  CycleLog,
 } from '../types';
 import { formatBengaliDate, toBengaliNumber } from './bengaliUtils';
+import { analyzeCycles } from './cycleTracker';
 
 export const SHARED_REPORT_EXPIRY_OPTIONS: Array<{
   hours: SharedReportExpiryHours;
@@ -28,6 +30,7 @@ export const DEFAULT_SHARED_REPORT_SECTIONS: SharedReportSectionSelection = {
   allergiesEmergency: true,
   recentReadings: false,
   appointments: false,
+  cycleSummary: false,
 };
 
 export const SHARED_REPORT_MAX_AGE_DAYS = 90;
@@ -157,6 +160,7 @@ export function getIncludedSectionLabels(sections: SharedReportSections): string
   if (sections.allergiesEmergency !== undefined) labels.push('অ্যালার্জি ও জরুরি তথ্য');
   if (sections.recentReadings !== undefined) labels.push('সাম্প্রতিক রিডিং');
   if (sections.appointments !== undefined) labels.push('অ্যাপয়েন্টমেন্ট');
+  if (sections.cycleSummary !== undefined) labels.push('নারীর স্বাস্থ্য (চক্র সারাংশ)');
   return labels;
 }
 
@@ -183,6 +187,7 @@ export interface BuildSnapshotParams {
   selection: SharedReportSectionSelection;
   expiryHours: SharedReportExpiryHours;
   selectedDoctor?: DoctorProfile | null;
+  cycleLogs?: CycleLog[];
   nowMs?: number;
 }
 
@@ -212,6 +217,7 @@ export function buildSharedReportSnapshot(
     selection,
     expiryHours,
     selectedDoctor,
+    cycleLogs = [],
     nowMs = Date.now(),
   } = params;
 
@@ -219,7 +225,8 @@ export function buildSharedReportSnapshot(
     selection.medicines ||
     selection.allergiesEmergency ||
     selection.recentReadings ||
-    selection.appointments;
+    selection.appointments ||
+    Boolean(selection.cycleSummary);
 
   if (!hasAnySection) {
     throw new Error('অন্তত একটি তথ্য বিভাগ নির্বাচন করুন');
@@ -319,6 +326,26 @@ export function buildSharedReportSnapshot(
       ...(a.notes ? { notes: a.notes.slice(0, 256) } : {}),
     }));
     sections.appointments = items;
+  }
+
+  if (selection.cycleSummary) {
+    const analysis = analyzeCycles(cycleLogs, patient.id);
+    sections.cycleSummary = {
+      averageCycleLength: analysis.averageCycleLength,
+      ...(analysis.lastCycle?.startDate ? { lastPeriodStartDate: analysis.lastCycle.startDate } : {}),
+      ...(analysis.lastCycle?.endDate ? { lastPeriodEndDate: analysis.lastCycle.endDate } : {}),
+      ...(analysis.predictedNextStartDate ? { predictedNextStartDate: analysis.predictedNextStartDate } : {}),
+      cycleCount: analysis.totalCycles,
+      recentCycles: analysis.recentCycles.slice(0, 6).map((c) => ({
+        startDate: c.startDate,
+        ...(c.endDate ? { endDate: c.endDate } : {}),
+        ...(c.flow ? { flow: c.flow } : {}),
+        ...(typeof c.cycleLengthDays === 'number' ? { cycleLengthDays: c.cycleLengthDays } : {}),
+      })),
+      ...(analysis.hasIrregularityAlert && analysis.irregularityReasons.length > 0
+        ? { note: analysis.irregularityReasons.join('; ').slice(0, 200) }
+        : {}),
+    };
   }
 
   const expiresAtMs = nowMs + expiryHours * 60 * 60 * 1000;

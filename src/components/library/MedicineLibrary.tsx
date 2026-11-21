@@ -11,6 +11,7 @@ import { GlobalMedicineDetailModal } from './GlobalMedicineDetailModal';
 import { AddToPersonalModal } from './AddToPersonalModal';
 import { LibrarySearchInput } from './LibrarySearchInput';
 import { LibraryMedicineCard } from './LibraryMedicineCard';
+import { GenericBrandsBottomSheet } from './GenericBrandsBottomSheet';
 import {
   LIBRARY_BROWSE_PAGE_SIZE,
   fetchLibraryBrowsePage,
@@ -69,7 +70,12 @@ export const MedicineLibrary: React.FC = () => {
     isCloudConnected,
     cloudStats,
     libraryMutationVersion,
+    currentUser,
+    openAuthModal,
+    openAddMedicineFromCatalogBrand,
   } = useMedicine();
+
+  const [genericBrandsTarget, setGenericBrandsTarget] = useState<string | null>(null);
 
   const publishedCount = cloudStats.published;
   const pendingCount = cloudStats.draft;
@@ -937,7 +943,18 @@ export const MedicineLibrary: React.FC = () => {
             <h2 className="text-sm font-bold text-text">
               একই উপাদানের অন্যান্য ব্র্যান্ড ({matchedByGenericSample[0].genericName})
             </h2>
-            <span className="text-xs text-primary font-semibold">দাম অনুযায়ী সাজানো</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-primary font-semibold">দাম অনুযায়ী সাজানো</span>
+              {currentUser && matchedByGenericSample[0].genericName?.trim() && (
+                <button
+                  type="button"
+                  onClick={() => setGenericBrandsTarget(matchedByGenericSample[0].genericName.trim())}
+                  className="min-h-[36px] px-3 py-1 rounded-xl bg-surface border border-primary/30 text-primary text-xs font-bold hover:bg-primary-soft cursor-pointer transition-colors"
+                >
+                  একই জেনেরিকের সব ব্র্যান্ড
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
             {matchedByGenericSample.map((alt) => (
@@ -1022,6 +1039,12 @@ export const MedicineLibrary: React.FC = () => {
                   onQuickPublish={handleQuickPublish}
                   onPromptDelete={promptSingleDelete}
                   onAddToPersonal={openAddToPersonalModal}
+                  canViewGenericBrands={!!currentUser}
+                  onOpenGenericBrands={(selectedMed) => {
+                    if (selectedMed.genericName?.trim()) {
+                      setGenericBrandsTarget(selectedMed.genericName.trim());
+                    }
+                  }}
                 />
               );
             })}
@@ -1123,6 +1146,17 @@ export const MedicineLibrary: React.FC = () => {
         onSelectMedicine={handleOpenMedicineDetail}
         onClose={() => setSelectedGlobalMedForDetail(null)}
         onAddToMyMedicines={openAddToPersonalModal}
+        canViewGenericBrands={!!currentUser}
+        onOpenGenericBrands={(genName) => setGenericBrandsTarget(genName)}
+      />
+
+      {/* Generic Brands Bottom Sheet */}
+      <GenericBrandsBottomSheet
+        genericName={genericBrandsTarget}
+        isLoggedIn={!!currentUser}
+        onClose={() => setGenericBrandsTarget(null)}
+        onOpenAuth={openAuthModal}
+        onSelectBrand={openAddMedicineFromCatalogBrand}
       />
 
       {/* Add To Personal Medicines Modal */}

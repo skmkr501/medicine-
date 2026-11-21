@@ -88,6 +88,8 @@ export const Settings: React.FC = () => {
     isAdmin,
     setCurrentPage,
     totalUsedDocumentPages,
+    isCycleTrackerEnabledForPatient,
+    setCycleTrackerEnabledForPatient,
   } = useMedicine();
 
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -369,6 +371,74 @@ export const Settings: React.FC = () => {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Per-Profile Women's Health (Cycle Tracker) Optional Toggle */}
+        {patients.length > 0 && (
+          <div className="pt-4 mt-2 border-t border-border space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Heart className="w-4 h-4 text-rose-500 shrink-0" />
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-text">
+                    নারীর স্বাস্থ্য (মাসিক চক্র ট্র্যাকার)
+                  </h3>
+                  <p className="text-xs text-text-muted">
+                    ডিফল্টভাবে বন্ধ থাকে। প্রতিটি প্রোফাইলের জন্য আলাদাভাবে চালু বা বন্ধ করুন (শুধুমাত্র আপনার নিজস্ব অ্যাকাউন্টের জন্য)।
+                  </p>
+                </div>
+              </div>
+              {activePatientId && isCycleTrackerEnabledForPatient(activePatientId) && (
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage('womens-health')}
+                  className="min-h-[40px] px-3.5 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800/70 text-rose-700 dark:text-rose-200 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 cursor-pointer hover:opacity-90"
+                >
+                  <Heart className="w-3.5 h-3.5" />
+                  <span>নারীর স্বাস্থ্য খুলুন</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {patients.map((p) => {
+                const enabled = isCycleTrackerEnabledForPatient(p.id);
+                return (
+                  <div
+                    key={`cycle-toggle-${p.id}`}
+                    className="p-3 rounded-xl border border-border bg-surface-2/60 flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <span className="text-sm font-bold text-text block truncate">{p.name}</span>
+                      <span className="text-xs text-text-muted block">{p.relation}</span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={enabled}
+                      aria-label={`${p.name}-এর জন্য নারীর স্বাস্থ্য ${enabled ? 'চালু' : 'বন্ধ'}`}
+                      onClick={() => {
+                        setCycleTrackerEnabledForPatient(p.id, !enabled);
+                        showToast(
+                          !enabled
+                            ? `${p.name}-এর জন্য নারীর স্বাস্থ্য চালু করা হয়েছে`
+                            : `${p.name}-এর জন্য নারীর স্বাস্থ্য বন্ধ করা হয়েছে`,
+                          'info'
+                        );
+                      }}
+                      className={`min-h-[44px] min-w-[68px] px-2.5 rounded-xl border text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors shrink-0 ${
+                        enabled
+                          ? 'bg-rose-600 dark:bg-rose-500 border-rose-600 text-white'
+                          : 'bg-surface border-border text-text-muted hover:text-text'
+                      }`}
+                    >
+                      <span>{enabled ? 'চালু' : 'বন্ধ'}</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </section>

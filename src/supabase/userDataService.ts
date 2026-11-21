@@ -2,6 +2,9 @@ import { supabase } from './client';
 import {
   appointmentFromRow,
   appointmentToRow,
+  cycleLogFromRow,
+  CycleLogRow,
+  cycleLogToRow,
   doctorFromRow,
   doctorToRow,
   doseLogFromRow,
@@ -19,6 +22,7 @@ import {
   USER_SETTINGS_ROW_ID,
 } from './mappers';
 import {
+  CycleLog,
   DoctorAppointment,
   DoctorProfile,
   DoseLog,
@@ -44,6 +48,7 @@ export type CoreSupabaseTable =
   | 'appointments'
   | 'doctors'
   | 'phonebook'
+  | 'cycle_logs'
   | 'user_settings';
 
 export interface SupabaseTableQueryLike {
@@ -768,6 +773,7 @@ export async function clearCoreUserTablesFromSupabase(userId: string): Promise<v
     'patients',
     'doctors',
     'phonebook',
+    'cycle_logs',
     'user_settings',
   ];
 
@@ -899,3 +905,59 @@ export function getSupabaseDataErrorMessageBn(
   if (error instanceof Error && error.message) return error.message;
   return fallbackMessage || String(error);
 }
+
+// ============================================================================
+// নারীর স্বাস্থ্য (cycle_logs) — শুধুমাত্র মালিকের ডেটা (RLS)
+// ============================================================================
+
+export async function fetchCycleLogsFromSupabase(
+  userId: string,
+  patientId?: string
+): Promise<CycleLog[]> {
+  if (!userId) return [];
+  let query = supabase
+    .from('cycle_logs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('start_date', { ascending: false });
+
+  if (patientId && patientId.trim()) {
+    query = query.eq('patient_id', patientId.trim());
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw formatSupabaseError(error, 'চক্রের তথ্য লোড করা যায়নি');
+  }
+
+  const rows = Array.isArray(data) ? (data as CycleLogRow[]) : [];
+  return rows.filter((r) => r && typeof r.id === 'string').map((r) => cycleLogFromRow(r));
+}
+
+export async function saveCycleLogToSupabase(
+  userId: string,
+  log: CycleLog
+): Promise<void> {
+  if (!userId || !log?.id) return;
+  await upsertRowsInBatches('cycle_logs', [cycleLogToRow(log)]);
+}
+
+export async function saveCycleLogsBatchToSupabase(
+  userId: string,
+  logs: CycleLog[]
+): Promise<number> {
+  if (!userId || !logs || logs.length === 0) return 0;
+  return upsertRowsInBatches(
+    'cycle_logs',
+    logs.map((l) => cycleLogToRow(l))
+  );
+}
+
+export async function deleteCycleLogFromSupabase(
+  userId: string,
+  logId: string
+): Promise<void> {
+  if (!userId || !logId) return;
+  await deleteRowsInBatches('cycle_logs', userId, [logId]);
+}
+

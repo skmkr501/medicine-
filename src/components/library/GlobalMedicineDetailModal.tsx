@@ -28,6 +28,8 @@ interface GlobalMedicineDetailModalProps {
   onSelectMedicine?: (medicine: GlobalMedicine) => void;
   onClose: () => void;
   onAddToMyMedicines: (medicine: GlobalMedicine) => void;
+  canViewGenericBrands?: boolean;
+  onOpenGenericBrands?: (genericName: string) => void;
 }
 
 export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps> = ({
@@ -38,6 +40,8 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
   onSelectMedicine,
   onClose,
   onAddToMyMedicines,
+  canViewGenericBrands = false,
+  onOpenGenericBrands,
 }) => {
   const { hasBengaliVoice, isSpeaking, voiceSettings, speak, stop } = useBengaliSpeech();
   const [remoteAlternatives, setRemoteAlternatives] = useState<GlobalMedicine[]>([]);
@@ -246,6 +250,25 @@ export const GlobalMedicineDetailModal: React.FC<GlobalMedicineDetailModalProps>
                   </p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Same Generic Brands Full Sheet Trigger (logged-in users) */}
+          {canViewGenericBrands && medicine.genericName?.trim() && onOpenGenericBrands && (
+            <div className="flex">
+              <button
+                type="button"
+                onClick={() => {
+                  const gen = medicine.genericName.trim();
+                  stop();
+                  onClose();
+                  onOpenGenericBrands(gen);
+                }}
+                className="min-h-[48px] w-full px-4 py-2.5 rounded-xl bg-primary-soft hover:bg-primary/15 border border-primary/30 text-primary font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-colors"
+              >
+                <Pill className="w-4 h-4 shrink-0" />
+                <span>একই জেনেরিকের সব ব্র্যান্ড</span>
+              </button>
             </div>
           )}
 

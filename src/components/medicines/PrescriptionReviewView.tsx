@@ -24,7 +24,8 @@ import {
   PrescriptionAiResponse,
 } from '../../services/aiService';
 import { GlobalMedicine, MealTiming, MedicineType, TimeSlot } from '../../types';
-import { searchLibraryMedicines } from '../../supabase/libraryService';
+import { mapDosageFormToMedicineType, searchLibraryMedicines } from '../../supabase/libraryService';
+import { GenericBrandsBottomSheet } from '../library/GenericBrandsBottomSheet';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import {
   PRESCRIPTION_DEFAULT_SLOT_TIMES,
@@ -102,6 +103,10 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
   } = useMedicine();
 
   const [fetchedCatalogPool, setFetchedCatalogPool] = useState<GlobalMedicine[]>([]);
+  const [genericBrandsModalState, setGenericBrandsModalState] = useState<{
+    tempId: string;
+    genericName: string;
+  } | null>(null);
   const brandLookupTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
@@ -925,12 +930,36 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
                 </div>
 
                 {/* Matched Catalog Manufacturer / Package Summary */}
-                {item.catalogMatch && (
-                  <p className="text-sm text-success-text bg-success-soft px-3.5 py-2 rounded-xl">
-                    লাইব্রেরি মিল: <span className="font-bold">{item.catalogMatch.genericName}</span>
-                    {item.catalogMatch.manufacturer ? ` · ${item.catalogMatch.manufacturer}` : ''}
-                    {item.catalogMatch.packageDescription ? ` · ${item.catalogMatch.packageDescription}` : ''}
-                  </p>
+                {(item.catalogMatch || (currentUser && item.genericName?.trim())) && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-success-soft px-3.5 py-2 rounded-xl">
+                    {item.catalogMatch ? (
+                      <p className="text-sm text-success-text">
+                        লাইব্রেরি মিল: <span className="font-bold">{item.catalogMatch.genericName}</span>
+                        {item.catalogMatch.manufacturer ? ` · ${item.catalogMatch.manufacturer}` : ''}
+                        {item.catalogMatch.packageDescription ? ` · ${item.catalogMatch.packageDescription}` : ''}
+                      </p>
+                    ) : (
+                      <span className="text-sm text-text-muted">
+                        জেনেরিক: <strong className="text-text">{item.genericName}</strong>
+                      </span>
+                    )}
+                    {currentUser && (item.catalogMatch?.genericName || item.genericName)?.trim() && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setGenericBrandsModalState({
+                            tempId: item.tempId,
+                            genericName: (
+                              item.catalogMatch?.genericName || item.genericName
+                            ).trim(),
+                          })
+                        }
+                        className="min-h-[36px] px-3 py-1 rounded-lg bg-surface border border-primary/30 text-primary text-xs font-bold hover:bg-primary-soft cursor-pointer transition-colors"
+                      >
+                        একই জেনেরিকের সব ব্র্যান্ড
+                      </button>
+                    )}
+                  </div>
                 )}
 
                 {/* Brand Name, Strength, Dosage Form, Generic Name */}
@@ -1294,6 +1323,30 @@ export const PrescriptionReviewView: React.FC<PrescriptionReviewViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Generic Brands Bottom Sheet */}
+      <GenericBrandsBottomSheet
+        genericName={genericBrandsModalState?.genericName || null}
+        isLoggedIn={!!currentUser}
+        onClose={() => setGenericBrandsModalState(null)}
+        onOpenAuth={openAuthModal}
+        onSelectBrand={(brand) => {
+          const targetTempId = genericBrandsModalState?.tempId;
+          if (!targetTempId) return;
+          const nextType = mapDosageFormToMedicineType(brand.dosageForm);
+          updateItem(targetTempId, (prev) => ({
+            ...prev,
+            brandName: brand.brandName,
+            genericName: brand.genericName || prev.genericName,
+            strength: brand.strength || prev.strength,
+            dosageForm: nextType,
+            unit: getDefaultUnitForType(nextType),
+            catalogMatch: brand,
+            needsVerification: false,
+          }));
+          showToast(`"${brand.brandName}" নির্বাচন করা হয়েছে`, 'success');
+        }}
+      />
     </div>
   );
 };

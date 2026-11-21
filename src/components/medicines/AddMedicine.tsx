@@ -6,6 +6,9 @@ import { toBengaliNumber, formatBengaliTime } from '../../utils/bengaliUtils';
 import { PrescriptionScannerModal } from './PrescriptionScannerModal';
 import { PrescriptionReviewView, InitialPrescriptionScanImage } from './PrescriptionReviewView';
 import { MedicineInfoModal } from '../ai/MedicineInfoModal';
+import { GenericBrandsBottomSheet } from '../library/GenericBrandsBottomSheet';
+import type { AddMedicineLibraryPrefill } from '../../supabase/libraryService';
+import { mapGlobalMedicineToAddFormPrefill } from '../../supabase/libraryService';
 import {
   PrescriptionScanResult,
   checkDrugInteractions,
@@ -59,6 +62,8 @@ export const AddMedicine: React.FC = () => {
     loadDoctors,
     addDoctor,
     isAdmin,
+    currentUser,
+    openAuthModal,
   } = useMedicine();
 
   // Wizard Step (1 to 4)
@@ -97,6 +102,10 @@ export const AddMedicine: React.FC = () => {
   const [aiSuccessBanner, setAiSuccessBanner] = useState<string | null>(null);
   const [isSavingQuickDoctor, setIsSavingQuickDoctor] = useState(false);
   const [addedDoctorKey, setAddedDoctorKey] = useState<string | null>(null);
+  const [catalogMedicineId, setCatalogMedicineId] = useState<string | undefined>(undefined);
+  const [packageDescription, setPackageDescription] = useState<string | undefined>(undefined);
+  const [pricePerUnit, setPricePerUnit] = useState<number | undefined>(undefined);
+  const [genericBrandsTarget, setGenericBrandsTarget] = useState<string | null>(null);
 
   // Drug Interaction State
   const [isCheckingInteractions, setIsCheckingInteractions] = useState(false);
@@ -167,9 +176,31 @@ export const AddMedicine: React.FC = () => {
     setAiSuccessBanner(`"${data.brandName || 'প্রেসক্রিপশন'}" এর তথ্য পূরণ করা হয়েছে — এখন যাচাই করুন।`);
   };
 
+  const applyLibraryPrefill = (prefill: AddMedicineLibraryPrefill) => {
+    if (prefill.brandName) setBrandName(prefill.brandName);
+    if (prefill.genericName) setGenericName(prefill.genericName);
+    if (prefill.strength) setStrength(prefill.strength);
+    if (prefill.type) setType(prefill.type);
+    if (prefill.mealTiming) setMealTiming(prefill.mealTiming);
+    if (prefill.purpose) setPurpose(prefill.purpose);
+    setCatalogMedicineId(prefill.catalogMedicineId || undefined);
+    setPackageDescription(prefill.packageDescription || undefined);
+    setPricePerUnit(typeof prefill.pricePerUnit === 'number' ? prefill.pricePerUnit : undefined);
+    setFormError('');
+    setAiSuccessBanner(
+      `"${prefill.brandName || 'নির্বাচিত ওষুধ'}" লাইব্রেরি থেকে পূরণ করা হয়েছে — এখন যাচাই করুন।`
+    );
+  };
+
   useEffect(() => {
     loadDoctors();
     try {
+      const libraryPrefillRaw = localStorage.getItem('shasthobondhu_pending_library_prefill');
+      if (libraryPrefillRaw) {
+        const parsedPrefill = JSON.parse(libraryPrefillRaw) as AddMedicineLibraryPrefill;
+        localStorage.removeItem('shasthobondhu_pending_library_prefill');
+        applyLibraryPrefill(parsedPrefill);
+      }
       const saved = localStorage.getItem('shasthobondhu_pending_ai_med');
       if (saved) {
         const parsed = JSON.parse(saved);
@@ -315,6 +346,9 @@ export const AddMedicine: React.FC = () => {
       doctorName: doctorName.trim(),
       instructions: instructions.trim(),
       expiryDate: expiryDate.trim() || undefined,
+      ...(catalogMedicineId ? { catalogMedicineId } : {}),
+      ...(packageDescription ? { packageDescription } : {}),
+      ...(typeof pricePerUnit === 'number' ? { pricePerUnit } : {}),
       status: 'active',
       colorTag: 'teal',
     });
@@ -442,6 +476,16 @@ export const AddMedicine: React.FC = () => {
               placeholder="যেমন: নাপা এক্সট্রা, সেক্লো ২০, কনকর"
               className="min-h-[56px] w-full px-4 py-3 text-lg bg-surface-2 border-2 border-border rounded-2xl text-text focus:outline-hidden focus:border-primary"
             />
+            {currentUser && genericName.trim() && (
+              <button
+                type="button"
+                onClick={() => setGenericBrandsTarget(genericName.trim())}
+                className="mt-2.5 min-h-[44px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary-soft border border-primary/25 text-primary text-sm font-bold hover:bg-primary/15 cursor-pointer transition-colors"
+              >
+                <Pill className="w-4 h-4 shrink-0" />
+                <span>একই জেনেরিকের সব ব্র্যান্ড ({genericName.trim()})</span>
+              </button>
+            )}
           </div>
 
           {/* Prominent Prescription Photo Entry & Library Shortcut */}
@@ -1107,6 +1151,17 @@ export const AddMedicine: React.FC = () => {
         isOpen={isInfoModalOpen}
         onClose={() => setIsInfoModalOpen(false)}
         initialMedicineName={brandName || genericName}
+      />
+
+      {/* Generic Brands Bottom Sheet */}
+      <GenericBrandsBottomSheet
+        genericName={genericBrandsTarget}
+        isLoggedIn={!!currentUser}
+        onClose={() => setGenericBrandsTarget(null)}
+        onOpenAuth={openAuthModal}
+        onSelectBrand={(brand) => {
+          applyLibraryPrefill(mapGlobalMedicineToAddFormPrefill(brand));
+        }}
       />
 
     </div>

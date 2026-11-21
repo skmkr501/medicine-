@@ -5,6 +5,8 @@ import {
   CaregiverSuggestedMedicinePayload,
   CaregiverSuggestionDoc,
   CaregiverTodaySummary,
+  CycleFlow,
+  CycleLog,
   DoctorAppointment,
   DoctorProfile,
   DoseLog,
@@ -1507,3 +1509,81 @@ export function familyAlertFromRow(
   return doc;
 }
 
+// ============================================================================
+// 20. cycle_logs (omits user_id on insert/upsert; Postgres defaults auth.uid())
+// ============================================================================
+export interface CycleLogRow {
+  id: string;
+  user_id?: string;
+  patient_id: string;
+  start_date: string;
+  end_date: string | null;
+  flow: string | null;
+  pain_level: number | null;
+  symptoms: string[] | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function normalizeCycleFlow(val: unknown): CycleFlow | undefined {
+  if (val === 'হালকা' || val === 'মাঝারি' || val === 'ভারী') return val;
+  return undefined;
+}
+
+export function cycleLogToRow(log: CycleLog): Omit<CycleLogRow, 'user_id'> {
+  const nowIso = new Date().toISOString();
+  const createdAt = normalizeTimestampToIso(log.createdAt) ?? nowIso;
+  const updatedAt =
+    normalizeTimestampToIso(log.updatedAt) ??
+    (typeof log.updatedAtMs === 'number' && log.updatedAtMs > 0
+      ? new Date(log.updatedAtMs).toISOString()
+      : nowIso);
+
+  const clampedPain =
+    typeof log.painLevel === 'number' && Number.isFinite(log.painLevel)
+      ? Math.max(0, Math.min(10, Math.round(log.painLevel)))
+      : null;
+
+  return {
+    id: log.id,
+    patient_id: log.patientId,
+    start_date: log.startDate,
+    end_date: asNullableString(log.endDate && log.endDate.trim() ? log.endDate.trim() : null),
+    flow: normalizeCycleFlow(log.flow) ?? null,
+    pain_level: clampedPain,
+    symptoms: Array.isArray(log.symptoms) ? log.symptoms.filter((s) => typeof s === 'string' && s.trim()) : [],
+    notes: asNullableString(log.notes && log.notes.trim() ? log.notes.trim() : null),
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
+export function cycleLogFromRow(row: Partial<CycleLogRow> & { id: string }): CycleLog {
+  const createdAt = row.created_at ?? new Date().toISOString();
+  const updatedAt = row.updated_at ?? createdAt;
+
+  const log: CycleLog = {
+    id: String(row.id),
+    patientId: String(row.patient_id ?? ''),
+    startDate: String(row.start_date ?? ''),
+    createdAt,
+    updatedAt,
+    updatedAtMs: isoToMillisSafe(updatedAt) || isoToMillisSafe(createdAt),
+  };
+
+  const endDate = asOptionalString(row.end_date);
+  if (endDate && endDate.trim()) log.endDate = endDate.trim();
+  const flow = normalizeCycleFlow(row.flow);
+  if (flow) log.flow = flow;
+  if (typeof row.pain_level === 'number' && Number.isFinite(row.pain_level)) {
+    log.painLevel = Math.max(0, Math.min(10, Math.round(row.pain_level)));
+  }
+  if (Array.isArray(row.symptoms)) {
+    log.symptoms = row.symptoms.filter((s): s is string => typeof s === 'string' && s.trim().length > 0);
+  }
+  const notes = asOptionalString(row.notes);
+  if (notes && notes.trim()) log.notes = notes;
+
+  return log;
+}

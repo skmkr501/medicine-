@@ -26,6 +26,7 @@ import {
   Stethoscope,
   Eye,
   Smartphone,
+  Heart,
 } from 'lucide-react';
 
 export const MePage: React.FC = () => {
@@ -41,8 +42,12 @@ export const MePage: React.FC = () => {
     signOutUser,
     settings,
     isAdmin,
+    isCycleTrackerEnabledForPatient,
   } = useMedicine();
 
+  const showWomensHealth = Boolean(
+    activePatient && isCycleTrackerEnabledForPatient(activePatient.id)
+  );
   const emergencyPhone = settings.emergencyContactPhone || activePatient?.emergencyContact || '';
 
   return (
@@ -234,6 +239,18 @@ export const MePage: React.FC = () => {
             iconColor: 'text-accent',
             anchor: '',
           },
+          ...(showWomensHealth
+            ? [
+                {
+                  id: 'womens-health' as const,
+                  title: 'নারীর স্বাস্থ্য',
+                  subtitle: 'মাসিক চক্র, লক্ষণ ও সম্ভাব্য তারিখের হিসাব',
+                  icon: Heart,
+                  iconColor: 'text-rose-500',
+                  anchor: '',
+                },
+              ]
+            : []),
           {
             id: 'doctors' as const,
             title: 'আমার ডাক্তার',

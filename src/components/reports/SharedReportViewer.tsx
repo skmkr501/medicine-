@@ -26,6 +26,7 @@ import {
   Ban,
   Lock,
   Stethoscope,
+  Heart,
 } from 'lucide-react';
 
 interface SharedReportViewerProps {
@@ -196,7 +197,14 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
   const { report } = state;
   const createdAtMs = report.createdAtMs || toMillisSafe(report.createdAt);
   const expiresAtMs = report.expiresAtMs || toMillisSafe(report.expiresAt);
-  const { medicines, allergiesEmergency, recentReadings, appointments, doctor } = report.sections;
+  const {
+    medicines,
+    allergiesEmergency,
+    recentReadings,
+    appointments,
+    doctor,
+    cycleSummary,
+  } = report.sections;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 py-6 px-4 sm:px-6 print-root-white">
@@ -489,6 +497,82 @@ export const SharedReportViewer: React.FC<SharedReportViewerProps> = ({ token })
                           </div>
                         </td>
                         <td className="p-3 text-slate-800">{app.location || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Section 5: Optional Women's Health Cycle Summary */}
+        {cycleSummary !== undefined && (
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Heart className="w-5 h-5 text-rose-600" />
+              <span>নারীর স্বাস্থ্য (চক্র সারাংশ)</span>
+            </h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              <div className="p-3.5 rounded-xl border border-slate-300 bg-slate-50">
+                <span className="text-xs text-slate-500 block font-medium">গড় চক্র (শেষ ৬টি)</span>
+                <strong className="text-base font-bold text-slate-900 mt-0.5 block">
+                  {cycleSummary.averageCycleLength
+                    ? `${toBengaliNumber(cycleSummary.averageCycleLength)} দিন`
+                    : 'পর্যাপ্ত তথ্য নেই'}
+                </strong>
+              </div>
+              <div className="p-3.5 rounded-xl border border-slate-300 bg-slate-50">
+                <span className="text-xs text-slate-500 block font-medium">শেষ মাসিক শুরু</span>
+                <strong className="text-base font-bold text-slate-900 mt-0.5 block">
+                  {cycleSummary.lastPeriodStartDate
+                    ? formatBengaliDate(cycleSummary.lastPeriodStartDate)
+                    : 'উল্লেখ নেই'}
+                </strong>
+              </div>
+              <div className="p-3.5 rounded-xl border border-slate-300 bg-slate-50">
+                <span className="text-xs text-slate-500 block font-medium">সম্ভাব্য পরবর্তী শুরু</span>
+                <strong className="text-base font-bold text-slate-900 mt-0.5 block">
+                  {cycleSummary.predictedNextStartDate
+                    ? formatBengaliDate(cycleSummary.predictedNextStartDate)
+                    : 'পর্যাপ্ত তথ্য নেই'}
+                </strong>
+              </div>
+            </div>
+
+            {cycleSummary.note && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs font-semibold text-amber-900">
+                সতর্কতা: {cycleSummary.note}
+              </div>
+            )}
+
+            {cycleSummary.recentCycles.length > 0 && (
+              <div className="overflow-x-auto border border-slate-300 rounded-xl">
+                <table className="w-full text-left border-collapse text-sm print-table">
+                  <thead>
+                    <tr className="bg-slate-100 border-b border-slate-300 text-slate-900 font-bold">
+                      <th className="p-3">শুরুর তারিখ</th>
+                      <th className="p-3">শেষের তারিখ</th>
+                      <th className="p-3">চক্রের দৈর্ঘ্য</th>
+                      <th className="p-3">স্রাবের ধরন</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {cycleSummary.recentCycles.map((c, idx) => (
+                      <tr key={idx}>
+                        <td className="p-3 font-semibold text-slate-900">
+                          {formatBengaliDate(c.startDate)}
+                        </td>
+                        <td className="p-3 text-slate-800">
+                          {c.endDate ? formatBengaliDate(c.endDate) : '—'}
+                        </td>
+                        <td className="p-3 text-slate-800">
+                          {typeof c.cycleLengthDays === 'number'
+                            ? `${toBengaliNumber(c.cycleLengthDays)} দিন`
+                            : '—'}
+                        </td>
+                        <td className="p-3 text-slate-800">{c.flow || '—'}</td>
                       </tr>
                     ))}
                   </tbody>

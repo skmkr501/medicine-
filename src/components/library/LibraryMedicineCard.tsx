@@ -27,6 +27,8 @@ interface LibraryMedicineCardProps {
   onQuickPublish: (e: React.MouseEvent, medId: string) => void;
   onPromptDelete: (e: React.MouseEvent, med: GlobalMedicine) => void;
   onAddToPersonal: (med: GlobalMedicine) => void;
+  canViewGenericBrands?: boolean;
+  onOpenGenericBrands?: (med: GlobalMedicine) => void;
 }
 
 function renderSourceBadge(med: GlobalMedicine) {
@@ -78,6 +80,8 @@ export const LibraryMedicineCard: React.FC<LibraryMedicineCardProps> = React.mem
     onQuickPublish,
     onPromptDelete,
     onAddToPersonal,
+    canViewGenericBrands = false,
+    onOpenGenericBrands,
   }) => {
     return (
       <div
@@ -187,49 +191,64 @@ export const LibraryMedicineCard: React.FC<LibraryMedicineCardProps> = React.mem
         </div>
 
         {/* Action Buttons */}
-        <div className="mt-4 pt-3 border-t border-border flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onOpenDetail(med)}
-            className="min-h-[48px] flex-1 py-2.5 px-3 text-base font-semibold text-text bg-surface-2 hover:bg-border/60 rounded-xl transition-colors cursor-pointer text-center"
-          >
-            বিস্তারিত
-          </button>
-
-          {/* If unpublished & user is Admin, allow one-click Verify & Publish */}
-          {isAdmin && isUnpublished ? (
-            <>
-              <button
-                type="button"
-                disabled={isPublishing}
-                onClick={(e) => onQuickPublish(e, med.id)}
-                className="min-h-[48px] flex items-center justify-center gap-1 py-2.5 px-4 text-base font-semibold text-white bg-[#B45309] hover:bg-[#92400E] rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
-                title="যাচাই ও সার্বজনীন প্রকাশ করুন"
-              >
-                <Check className="w-4 h-4" />
-                <span>{isPublishing ? 'প্রকাশ হচ্ছে...' : 'অনুমোদন'}</span>
-              </button>
-
-              {/* Safe Delete Option for Draft TEST DATA */}
-              <button
-                type="button"
-                onClick={(e) => onPromptDelete(e, med)}
-                className="min-h-[48px] min-w-[48px] flex items-center justify-center p-2.5 text-sm font-semibold text-danger-text bg-danger-soft hover:bg-danger/15 rounded-xl border border-danger/35 transition-colors cursor-pointer shrink-0"
-                title="এই রেকর্ডটি মুছে ফেলুন"
-                aria-label={`${med.brandName} মুছে ফেলুন`}
-              >
-                <Trash2 className="w-5 h-5" />
-              </button>
-            </>
-          ) : (
+        <div className="mt-4 pt-3 border-t border-border space-y-2">
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => onAddToPersonal(med)}
-              className="min-h-[48px] flex items-center justify-center gap-1.5 py-2.5 px-4 text-base font-bold text-on-primary bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
-              title="আমার ওষুধ তালিকায় যোগ করুন"
+              onClick={() => onOpenDetail(med)}
+              className="min-h-[48px] flex-1 py-2.5 px-3 text-base font-semibold text-text bg-surface-2 hover:bg-border/60 rounded-xl transition-colors cursor-pointer text-center"
             >
-              <Plus className="w-5 h-5" />
-              <span>যোগ করুন</span>
+              বিস্তারিত
+            </button>
+
+            {/* If unpublished & user is Admin, allow one-click Verify & Publish */}
+            {isAdmin && isUnpublished ? (
+              <>
+                <button
+                  type="button"
+                  disabled={isPublishing}
+                  onClick={(e) => onQuickPublish(e, med.id)}
+                  className="min-h-[48px] flex items-center justify-center gap-1 py-2.5 px-4 text-base font-semibold text-white bg-[#B45309] hover:bg-[#92400E] rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
+                  title="যাচাই ও সার্বজনীন প্রকাশ করুন"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>{isPublishing ? 'প্রকাশ হচ্ছে...' : 'অনুমোদন'}</span>
+                </button>
+
+                {/* Safe Delete Option for Draft TEST DATA */}
+                <button
+                  type="button"
+                  onClick={(e) => onPromptDelete(e, med)}
+                  className="min-h-[48px] min-w-[48px] flex items-center justify-center p-2.5 text-sm font-semibold text-danger-text bg-danger-soft hover:bg-danger/15 rounded-xl border border-danger/35 transition-colors cursor-pointer shrink-0"
+                  title="এই রেকর্ডটি মুছে ফেলুন"
+                  aria-label={`${med.brandName} মুছে ফেলুন`}
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onAddToPersonal(med)}
+                className="min-h-[48px] flex items-center justify-center gap-1.5 py-2.5 px-4 text-base font-bold text-on-primary bg-primary hover:bg-primary-hover rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
+                title="আমার ওষুধ তালিকায় যোগ করুন"
+              >
+                <Plus className="w-5 h-5" />
+                <span>যোগ করুন</span>
+              </button>
+            )}
+          </div>
+
+          {canViewGenericBrands && med.genericName?.trim() && onOpenGenericBrands && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenGenericBrands(med);
+              }}
+              className="min-h-[44px] w-full py-2 px-3 text-xs sm:text-sm font-bold text-primary bg-primary-soft/75 hover:bg-primary-soft border border-primary/25 rounded-xl transition-colors cursor-pointer text-center"
+            >
+              একই জেনেরিকের সব ব্র্যান্ড
             </button>
           )}
         </div>
