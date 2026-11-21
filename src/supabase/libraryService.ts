@@ -25,6 +25,7 @@ import {
   BulkMedicinePatch,
   matchMedicineBilingualFuzzy,
   normalizeGenericForCompare,
+  toPhoneticLatin,
 } from '../utils/libraryManagement';
 import { generateDuplicateKey, isTestMedicine } from '../utils/medicineImportParser';
 
@@ -118,9 +119,10 @@ export async function searchLibraryMedicines(
     if (cached) return cached;
   }
 
+  const q_alt = /[\u0980-\u09FF]/.test(q) ? toPhoneticLatin(q) || null : null;
   const client = options.client ?? (supabase as unknown as SearchLibraryRpcClient);
   const { data, error } = await retryWithBackoff(
-    async () => client.rpc('search_library', { q, lim }),
+    async () => client.rpc('search_library', { q, lim, q_alt }),
     { maxRetries: 2, baseDelayMs: 300 }
   );
 
