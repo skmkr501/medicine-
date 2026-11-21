@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import {
-  fetchAdminActivities,
-  fetchImportBatches,
-} from '../../firebase/services';
-import {
   APP_VERSION,
   deleteFeedbackFromSupabase,
+  fetchAdminActivities,
   fetchAdminOverviewStatsFromSupabase,
   fetchFeedbackFromSupabase,
+  fetchImportBatches,
 } from '../../supabase/libraryService';
 import { getSupabaseDataErrorMessageBn } from '../../supabase/userDataService';
 import { AdminActivity, AdminOverviewStats, FeedbackEntry } from '../../types';

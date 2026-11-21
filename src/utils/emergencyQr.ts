@@ -92,8 +92,8 @@ export interface BuiltEmergencyCardPayload {
  * Builds the privacy-scoped emergency card document.
  * Strict privacy guarantees:
  * - Never includes home address, NID, or non-emergency personal numbers.
- * - Unchecked fields remain undefined (and are deleted via deleteField() on update).
- * - Every string field is clamped to <= 500 characters to match Firestore rules.
+ * - Unchecked fields remain undefined (omitted from JSON payload).
+ * - Every string field is clamped to <= 500 characters.
  */
 export function buildEmergencyCardPayload(
   params: BuildEmergencyCardPayloadParams

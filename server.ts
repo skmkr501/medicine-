@@ -738,7 +738,7 @@ function normalizePrescriptionPayload(raw: any) {
 
 /**
  * Endpoint 2B: Multi-Medicine Prescription Photo Reader (Verification Flow)
- * Enforces Firebase ID token verification + 10/hr scan rate limit.
+ * Enforces Supabase JWT token verification + 10/hr scan rate limit.
  * Never logs or persists uploaded images or extracted prescription content.
  */
 app.post('/api/ai/prescription', requireSupabaseAuth, rateLimitAi(true), async (req, res) => {
@@ -1055,7 +1055,7 @@ async function startServer() {
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     const prodIndexPath = path.resolve(__dirname, 'dist', 'index.html');
-    app.get(['/r', '/r/*', '/e', '/e/*'], (_req, res) => {
+    app.get(['/r', '/r/*', '/report', '/report/*', '/e', '/e/*', '/guest', '/guest/*'], (_req, res) => {
       setPrivateReportHeaders(res);
       try {
         const html = fs.readFileSync(prodIndexPath, 'utf8');
@@ -1077,7 +1077,7 @@ async function startServer() {
       appType: 'spa',
     });
 
-    app.get(['/r', '/r/*', '/e', '/e/*'], async (req, res, next) => {
+    app.get(['/r', '/r/*', '/report', '/report/*', '/e', '/e/*', '/guest', '/guest/*'], async (req, res, next) => {
       setPrivateReportHeaders(res);
       try {
         const devIndexPath = path.resolve(__dirname, 'index.html');

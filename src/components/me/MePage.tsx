@@ -24,6 +24,8 @@ import {
   Share2,
   QrCode,
   Stethoscope,
+  Eye,
+  Smartphone,
 } from 'lucide-react';
 
 export const MePage: React.FC = () => {
@@ -262,6 +264,30 @@ export const MePage: React.FC = () => {
             subtitle: 'স্ক্যান করলে জরুরি তথ্য দেখা যাবে, ওয়ালেট কার্ড ও লক স্ক্রিন ছবি',
             icon: QrCode,
             iconColor: 'text-accent',
+            anchor: '',
+          },
+          {
+            id: 'guest-views' as const,
+            title: 'অতিথি দেখার লিংক',
+            subtitle: 'লগইন ছাড়াই শুধু দৈনিক ওষুধ দেখার সহজ ও নিরাপদ লিংক',
+            icon: Eye,
+            iconColor: 'text-primary',
+            anchor: '',
+          },
+          {
+            id: 'phonebook' as const,
+            title: 'জরুরি ফোনবুক',
+            subtitle: 'পরিবার, অ্যাম্বুলেন্স, হাসপাতাল ও ফার্মেসির নম্বর',
+            icon: PhoneCall,
+            iconColor: 'text-primary',
+            anchor: '',
+          },
+          {
+            id: 'phone-transfer' as const,
+            title: 'ফোন বদল / QR ট্রান্সফার',
+            subtitle: 'পুরনো ফোন থেকে নতুন ফোনে এনক্রিপ্টেড ডেটা স্থানান্তর',
+            icon: Smartphone,
+            iconColor: 'text-primary',
             anchor: '',
           },
           {

@@ -111,7 +111,6 @@ export const Dashboard: React.FC = () => {
     syncLocalToCloud,
     triggerManualSync,
     syncStatus,
-    isQuotaExceeded,
     pendingSyncCount,
     lastSyncedAt,
     isSyncing,
@@ -606,20 +605,18 @@ export const Dashboard: React.FC = () => {
             <button
               type="button"
               onClick={triggerManualSync}
-              disabled={syncStatus === 'syncing' || isSyncing || isQuotaExceeded}
+              disabled={syncStatus === 'syncing' || isSyncing}
               className={`min-h-[48px] inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
-                syncStatus === 'synced' && !isQuotaExceeded
+                syncStatus === 'synced'
                   ? 'bg-success-soft text-success-text border-success/30'
                   : syncStatus === 'syncing' || isSyncing
                   ? 'bg-primary-soft text-primary border-primary/30'
-                  : syncStatus === 'offline' || isQuotaExceeded
+                  : syncStatus === 'offline'
                   ? 'bg-warning-soft text-warning-text border-warning/30'
                   : 'bg-danger-soft text-danger-text border-danger/30'
               }`}
               title={
-                isQuotaExceeded
-                  ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
-                  : lastSyncedAt
+                lastSyncedAt
                   ? `শেষ সিঙ্ক: ${lastSyncedAt}`
                   : 'সিঙ্ক অবস্থা'
               }
@@ -634,10 +631,10 @@ export const Dashboard: React.FC = () => {
                   <RefreshCw className="w-4 h-4 animate-spin text-primary" />
                   <span>সিঙ্ক হচ্ছে</span>
                 </>
-              ) : syncStatus === 'offline' || isQuotaExceeded ? (
+              ) : syncStatus === 'offline' ? (
                 <>
                   <CloudOff className="w-4 h-4 text-warning-text" />
-                  <span>{isQuotaExceeded ? 'ফোনে সেভ' : 'অফলাইন'}</span>
+                  <span>অফলাইন</span>
                 </>
               ) : (
                 <>
@@ -658,30 +655,6 @@ export const Dashboard: React.FC = () => {
           )}
         </div>
       </div>
-
-      {/* Daily Cloud Quota Notice Banner */}
-      {isQuotaExceeded && currentUser && (
-        <section
-          aria-label="ক্লাউড সীমা বিজ্ঞপ্তি"
-          className="bg-warning-soft border border-warning/35 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-        >
-          <div className="flex items-start gap-3">
-            <CloudOff className="w-5 h-5 text-warning-text shrink-0 mt-0.5" />
-            <p className="text-sm sm:text-base text-text font-medium">
-              আজকের ক্লাউড সীমা শেষ হয়েছে — আপনার সব পরিবর্তন ফোনেই নিরাপদে সংরক্ষিত হচ্ছে
-              {pendingSyncCount > 0 ? ` (${toBengaliNumber(pendingSyncCount)}টি পরিবর্তন অপেক্ষায়)` : ''}। বাংলাদেশ সময় দুপুর ২:০০টার পর সীমা রিসেট হলে সিঙ্ক হবে।
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={triggerManualSync}
-            disabled={isSyncing || isQuotaExceeded}
-            className="min-h-[44px] shrink-0 px-4 py-2 bg-surface border border-warning/40 text-warning-text rounded-xl text-sm font-bold hover:bg-surface-2 transition-colors cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed"
-          >
-            {isSyncing ? 'যাচাই হচ্ছে...' : 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'}
-          </button>
-        </section>
-      )}
 
       {/* Native Alarm Permission Alert Banner */}
       {hasMissingPermissions && (

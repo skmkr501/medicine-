@@ -3,8 +3,8 @@ import { EmergencyCardDoc } from '../../types';
 import {
   EmergencyCardDebugInfo,
   EmergencyCardFetchResult,
-  fetchEmergencyCardByTokenFromCloud,
-} from '../../firebase/services';
+  fetchEmergencyCardByTokenFromSupabase as fetchEmergencyCardByTokenFromCloud,
+} from '../../supabase/sharingService';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import { AppLogo } from '../ui/AppLogo';
 import {
@@ -20,7 +20,6 @@ import {
   ShieldAlert,
   Stethoscope,
   WifiOff,
-  ClockAlert,
 } from 'lucide-react';
 
 interface EmergencyCardViewerProps {
@@ -28,7 +27,7 @@ interface EmergencyCardViewerProps {
 }
 
 const ERROR_STATES: Record<
-  'not_found' | 'revoked' | 'quota' | 'offline',
+  'not_found' | 'revoked' | 'offline',
   { title: string; body: string; allowRetry: boolean }
 > = {
   not_found: {
@@ -41,11 +40,6 @@ const ERROR_STATES: Record<
     body: 'এই জরুরি QR কার্ডটি রোগী বা পরিবারের সদস্য বাতিল করেছেন অথবা এটি আর সক্রিয় নেই।',
     allowRetry: false,
   },
-  quota: {
-    title: 'সীমা শেষ — পরে চেষ্টা করুন',
-    body: 'এই মুহূর্তে সার্ভারে চাপ বেশি থাকায় কার্ডটি খোলা যাচ্ছে না। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।',
-    allowRetry: true,
-  },
   offline: {
     title: 'সংযোগ নেই',
     body: 'ইন্টারনেট সংযোগ না থাকায় জরুরি কার্ডটি লোড করা যায়নি। সংযোগ চালু করে আবার চেষ্টা করুন।',
@@ -57,7 +51,7 @@ export const EmergencyCardViewer: React.FC<EmergencyCardViewerProps> = ({ token 
   const [state, setState] = useState<
     | { status: 'loading' }
     | { status: 'ok'; card: EmergencyCardDoc; debug: EmergencyCardDebugInfo }
-    | { status: 'not_found' | 'revoked' | 'quota' | 'offline'; debug: EmergencyCardDebugInfo }
+    | { status: 'not_found' | 'revoked' | 'offline'; debug: EmergencyCardDebugInfo }
     | { status: 'error'; message: string; debug: EmergencyCardDebugInfo }
   >({ status: 'loading' });
 
@@ -180,8 +174,6 @@ export const EmergencyCardViewer: React.FC<EmergencyCardViewerProps> = ({ token 
         ? FileX2
         : state.status === 'revoked'
         ? Ban
-        : state.status === 'quota'
-        ? ClockAlert
         : WifiOff;
 
     return (

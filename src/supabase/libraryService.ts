@@ -1,4 +1,4 @@
-import { supabase } from './client';
+import { getCachedSupabaseAdmin, getCachedSupabaseUser, supabase } from './client';
 import {
   adminActivityFromRow,
   adminActivityToRow,
@@ -1023,4 +1023,40 @@ export async function deleteFeedbackFromSupabase(id: string): Promise<void> {
     },
     { maxRetries: 2, baseDelayMs: 300 }
   );
+}
+
+export function assertAdminAuth(): void {
+  const currentUser = getCachedSupabaseUser();
+  if (!currentUser) {
+    throw new Error('অননুমোদিত অ্যাক্সেস! ক্রিয়াকলাপের জন্য অনুগ্রহ করে প্রথমে অ্যাডমিন হিসেবে সাইন-ইন করুন।');
+  }
+  if (!getCachedSupabaseAdmin()) {
+    throw new Error(
+      'নিরাপত্তা বিধিনিষেধ: আপনার বর্তমান অ্যাকাউন্টে অ্যাডমিন কার্যক্রম পরিচালনার অনুমতি নেই।'
+    );
+  }
+}
+
+export async function fetchImportBatches(): Promise<ImportBatch[]> {
+  assertAdminAuth();
+  return fetchImportBatchesFromSupabase();
+}
+
+export async function recordAdminActivity(
+  activity: Omit<AdminActivity, 'id' | 'timestamp' | 'adminEmail'> & {
+    id?: string;
+    timestamp?: string;
+    adminEmail?: string;
+  }
+): Promise<void> {
+  assertAdminAuth();
+  return recordAdminActivityInSupabase({
+    ...activity,
+    adminEmail: activity.adminEmail || getCachedSupabaseUser()?.email || '',
+  });
+}
+
+export async function fetchAdminActivities(): Promise<AdminActivity[]> {
+  assertAdminAuth();
+  return fetchAdminActivitiesFromSupabase();
 }

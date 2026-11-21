@@ -285,6 +285,7 @@ export interface SyncableSnapshotInput {
   healthRecords: Array<{ id: string; updatedAtMs?: number }>;
   appointments: Array<{ id: string; updatedAtMs?: number }>;
   doctors?: Array<{ id: string }>;
+  phonebook?: Array<{ id: string; updatedAtMs?: number }>;
 }
 
 export interface DocSyncQueueLike {
@@ -304,6 +305,7 @@ export interface DirtySyncPlan {
     healthRecords: number;
     appointments: number;
     doctors: number;
+    phonebook: number;
     settings: number;
     documents: number;
   };
@@ -321,7 +323,7 @@ export function collectDirtySyncPlan(
   merged.settingsDirty = outbox.settingsDirty;
 
   const mergeCollection = (
-    key: 'medicines' | 'patients' | 'doseLogs' | 'healthRecords' | 'appointments',
+    key: 'medicines' | 'patients' | 'doseLogs' | 'healthRecords' | 'appointments' | 'phonebook',
     records: Array<{ id: string; updatedAtMs?: number }>
   ): number => {
     const deleteSet = new Set(outbox.deletes[key]);
@@ -345,6 +347,7 @@ export function collectDirtySyncPlan(
   const logCount = mergeCollection('doseLogs', snapshot.doseLogs);
   const hrCount = mergeCollection('healthRecords', snapshot.healthRecords);
   const aptCount = mergeCollection('appointments', snapshot.appointments);
+  const phonebookCount = mergeCollection('phonebook', snapshot.phonebook || []);
 
   const doctorMap = new Set((snapshot.doctors || []).map((d) => d.id));
   const doctorDeletes = new Set(outbox.deletes.doctors);
@@ -363,7 +366,15 @@ export function collectDirtySyncPlan(
     : 0;
 
   const totalWrites =
-    medCount + patCount + logCount + hrCount + aptCount + doctorCount + settingsCount + docOpsCount;
+    medCount +
+    patCount +
+    logCount +
+    hrCount +
+    aptCount +
+    doctorCount +
+    phonebookCount +
+    settingsCount +
+    docOpsCount;
 
   const toBn = (n: number) =>
     String(n).replace(/[0-9]/g, (d) => ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'][Number(d)]);
@@ -375,6 +386,7 @@ export function collectDirtySyncPlan(
   if (hrCount > 0) breakdownLabels.push(`স্বাস্থ্য রেকর্ড (${toBn(hrCount)}টি)`);
   if (aptCount > 0) breakdownLabels.push(`অ্যাপয়েন্টমেন্ট (${toBn(aptCount)}টি)`);
   if (doctorCount > 0) breakdownLabels.push(`ডাক্তার (${toBn(doctorCount)}টি)`);
+  if (phonebookCount > 0) breakdownLabels.push(`ফোনবুক (${toBn(phonebookCount)}টি)`);
   if (settingsCount > 0) breakdownLabels.push('সেটিংস (১টি)');
   if (docOpsCount > 0) breakdownLabels.push(`প্রেসক্রিপশন ও রিপোর্ট (${toBn(docOpsCount)}টি)`);
 
@@ -388,6 +400,7 @@ export function collectDirtySyncPlan(
       healthRecords: hrCount,
       appointments: aptCount,
       doctors: doctorCount,
+      phonebook: phonebookCount,
       settings: settingsCount,
       documents: docOpsCount,
     },

@@ -531,7 +531,7 @@ export const AdminImportView: React.FC = () => {
         </div>
       </div>
 
-      {/* Compact Cloud Firestore Status Bar (Requirement 6) */}
+      {/* Compact Cloud Status Bar (Requirement 6) */}
       <div className="bg-[#1E1B4B] text-white dark:bg-surface-2 rounded-2xl p-3.5 px-4 flex flex-wrap items-center justify-between gap-3 shadow-xs border border-indigo-900/50 dark:border-border">
         <div className="flex flex-wrap items-center gap-2.5 text-xs">
           <div className="flex items-center gap-1.5 font-semibold text-indigo-100">

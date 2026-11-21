@@ -16,7 +16,7 @@ import {
   getIncludedSectionLabels,
   toMillisSafe,
 } from '../../utils/sharedReports';
-import { createSharedReportInCloud } from '../../firebase/services';
+import { createSharedReportInSupabase as createSharedReportInCloud } from '../../supabase/sharingService';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
 import { MySharedLinksSection } from './MySharedLinksSection';
 import {

@@ -527,7 +527,7 @@ export const CaregiverSettingsSection: React.FC = () => {
                 <span>কোড দিয়ে যুক্ত হোন (যত্নকারী হিসেবে)</span>
               </h3>
               <p className="text-xs sm:text-sm text-text-muted">
-                মা-বাবা বা পরিবারের কারও কাছ থেকে পাওয়া ৬ অক্ষরের আমন্ত্রণ কোডটি এখানে লিখুন
+                মা-বাবা বা পরিবারের কারও কাছ থেকে পাওয়া ৮ অক্ষরের আমন্ত্রণ কোডটি এখানে লিখুন
               </p>
             </div>
 
@@ -547,18 +547,19 @@ export const CaregiverSettingsSection: React.FC = () => {
                 autoCapitalize="characters"
                 autoCorrect="off"
                 spellCheck={false}
+                maxLength={8}
                 value={inviteCodeInput}
                 onChange={(e) => {
                   clearCaregiverError();
                   setRedeemSuccessMsg(null);
                   setInviteCodeInput(normalizeInviteCodeInput(e.target.value));
                 }}
-                placeholder="৬ অক্ষরের কোড (যেমন: A7K9M2)"
+                placeholder="৮ অক্ষরের কোড (যেমন: A7K9M2PQ)"
                 className="min-h-[48px] flex-1 px-4 py-2 rounded-xl bg-surface-2 border border-border font-mono text-lg font-bold tracking-widest uppercase text-text focus:outline-hidden focus:border-primary"
               />
               <button
                 type="submit"
-                disabled={isRedeeming || normalizeInviteCodeInput(inviteCodeInput).length < 6}
+                disabled={isRedeeming || normalizeInviteCodeInput(inviteCodeInput).length < 8}
                 className="min-h-[48px] px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover disabled:opacity-50 text-on-primary font-bold text-base cursor-pointer shrink-0"
               >
                 {isRedeeming ? 'যুক্ত হচ্ছে...' : 'যুক্ত হোন'}

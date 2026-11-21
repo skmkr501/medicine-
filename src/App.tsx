@@ -46,6 +46,12 @@ import { EmergencyCardViewer } from './components/emergency/EmergencyCardViewer'
 import { EmergencyQrPage } from './components/emergency/EmergencyQrPage';
 import { extractEmergencyCardTokenFromPath } from './utils/emergencyQr';
 import { DoctorsPage } from './components/doctors/DoctorsPage';
+import { GuestViewViewer } from './components/guest/GuestViewViewer';
+import { GuestViewManager } from './components/guest/GuestViewManager';
+import { extractGuestViewTokenFromPath } from './utils/guestViews';
+import { PhoneTransferPage } from './components/transfer/PhoneTransferPage';
+import { parseTransferInput } from './utils/phoneTransfer';
+import { PhonebookPage } from './components/phonebook/PhonebookPage';
 
 const AppContent: React.FC = () => {
   const {
@@ -70,6 +76,30 @@ const AppContent: React.FC = () => {
   const [showOnboarding, setShowOnboarding] = React.useState<boolean>(() =>
     shouldShowOnboarding()
   );
+  const [initialTransferInput, setInitialTransferInput] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const handleHashTransfer = () => {
+      if (typeof window === 'undefined') return;
+      const hash = window.location.hash || '';
+      if (hash.startsWith('#/transfer') && parseTransferInput(hash)) {
+        setInitialTransferInput(hash);
+        setCurrentPage('phone-transfer');
+        try {
+          window.history.replaceState(
+            null,
+            '',
+            window.location.pathname + window.location.search
+          );
+        } catch {
+          // ignore history replace restrictions
+        }
+      }
+    };
+    handleHashTransfer();
+    window.addEventListener('hashchange', handleHashTransfer);
+    return () => window.removeEventListener('hashchange', handleHashTransfer);
+  }, [setCurrentPage]);
 
   React.useEffect(() => {
     stopBengaliSpeech();
@@ -102,12 +132,20 @@ const AppContent: React.FC = () => {
         {currentPage === 'health-records' && <HealthRecordsPage />}
         {currentPage === 'appointments' && <AppointmentsPage />}
         {currentPage === 'doctors' && <DoctorsPage />}
+        {currentPage === 'phonebook' && <PhonebookPage />}
         {currentPage === 'add-medicine' && <AddMedicine />}
         {currentPage === 'ai-assistant' && <AiAssistantPage />}
         {currentPage === 'reminders' && <MedicineReminder />}
         {currentPage === 'history' && <MedicineHistory />}
         {currentPage === 'share-report' && <ShareReportPage />}
         {currentPage === 'emergency-qr' && <EmergencyQrPage />}
+        {currentPage === 'guest-views' && <GuestViewManager />}
+        {currentPage === 'phone-transfer' && (
+          <PhoneTransferPage
+            initialTransferInput={initialTransferInput}
+            onConsumeInitialInput={() => setInitialTransferInput(null)}
+          />
+        )}
         {currentPage === 'settings' && <Settings />}
         {currentPage === 'library' && (
           <React.Suspense
@@ -205,6 +243,7 @@ export default function App() {
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
   const shareToken = extractSharedReportTokenFromPath(pathname);
   const emergencyToken = extractEmergencyCardTokenFromPath(pathname);
+  const guestToken = extractGuestViewTokenFromPath(pathname);
 
   if (shareToken) {
     return <SharedReportViewer token={shareToken} />;
@@ -212,6 +251,10 @@ export default function App() {
 
   if (emergencyToken) {
     return <EmergencyCardViewer token={emergencyToken} />;
+  }
+
+  if (guestToken) {
+    return <GuestViewViewer token={guestToken} />;
   }
 
   return (

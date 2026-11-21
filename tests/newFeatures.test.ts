@@ -117,20 +117,6 @@ import {
   markOnboardingDone,
 } from '../src/utils/onboarding';
 import {
-  QUOTA_EXCEEDED_BN_MSG,
-  WRITE_QUOTA_PAUSE_KEY,
-  QuotaExceededWriteError,
-  getQuotaDayKey,
-  isQuotaExceededError,
-  consumeQuotaExceededNoticeOnce,
-  resetQuotaNoticeForTests,
-  markWriteQuotaExceeded,
-  isWriteQuotaPaused,
-  clearWriteQuotaPause,
-  subscribeWriteQuotaExceeded,
-  getFriendlyErrorMessage,
-} from '../src/firebase/errors';
-import {
   AdminActivity,
   FeedbackEntry,
   GlobalMedicine,
@@ -213,12 +199,6 @@ import {
   collectDirtySyncPlan,
 } from '../src/utils/cloudSyncOutbox';
 import {
-  recordFirestoreWrite,
-  recordFirestoreRead,
-  getTodayFirestoreUsage,
-  resetFirestoreUsageForTests,
-} from '../src/utils/firestoreUsageTracker';
-import {
   DEFAULT_SHARED_REPORT_SECTIONS,
   SHARED_REPORT_DELETE_AFTER_EXPIRY_MS,
   SHARED_REPORT_UNAVAILABLE_MSG,
@@ -233,14 +213,6 @@ import {
   canDeleteExpiredSharedReport,
   getIncludedSectionLabels,
 } from '../src/utils/sharedReports';
-import { Timestamp, serverTimestamp, GeoPoint, FieldValue, deleteField } from 'firebase/firestore';
-import {
-  executeGuardedWrite,
-  isFirestoreSdkQuotaErrorLog,
-  resumeFirestoreNetwork,
-  stripUndefined,
-  tripWriteQuotaCircuitBreaker,
-} from '../src/firebase/config';
 import {
   clearCloudSyncOutbox,
   clearOutboxEntry,
@@ -314,7 +286,7 @@ import {
   saveCachedOlderDoseLogs,
   saveCachedPastAppointments,
   shouldFetchCollectionFromCloud,
-} from '../src/utils/firestoreReadOptimizer';
+} from '../src/utils/cloudReadOptimizer';
 import {
   normalizeBengaliDigits,
   validateBangladeshiPhone,
@@ -360,7 +332,48 @@ import {
   markFileDeletedInQueue,
   markFileUploadedInQueue,
 } from '../src/utils/documentsIndexedDb';
-import { MedicalDocument } from '../src/types';
+import {
+  EmergencyCardDoc,
+  FamilyAlertDoc,
+  GuestViewDoc,
+  MedicalDocument,
+  SharedReportDoc,
+} from '../src/types';
+import {
+  sharedReportToRow,
+  sharedReportFromRow,
+  emergencyCardToRow,
+  emergencyCardFromRow,
+  guestViewToRow,
+  guestViewFromRow,
+  caregiverLinkToRow,
+  caregiverLinkFromRow,
+  caregiverSuggestionToRow,
+  caregiverSuggestionFromRow,
+  familyAlertToRow,
+  familyAlertFromRow,
+} from '../src/supabase/mappers';
+import {
+  GUEST_VIEW_BANNER_PREFIX,
+  GUEST_VIEW_UNAVAILABLE_MSG,
+  buildGuestViewSnapshot,
+  buildGuestViewUrl,
+  extractGuestViewTokenFromPath,
+  generateGuestViewToken,
+  getGuestViewStatus,
+  isValidGuestViewTokenFormat,
+  loadCachedGuestView,
+  saveCachedGuestView,
+} from '../src/utils/guestViews';
+import {
+  MAX_TRANSFER_PLAINTEXT_BYTES,
+  buildPhoneTransferBundle,
+  buildTransferManualCode,
+  buildTransferUrl,
+  decryptAndDecompressTransferPayload,
+  encryptAndCompressTransferPayload,
+  parseTransferInput,
+} from '../src/utils/phoneTransfer';
 
 console.log('\n================================================================');
 console.log('  স্বাস্থ্যবন্ধু (Shasthobondhu) - New Features Verification Tests');
@@ -668,7 +681,7 @@ describe('ধাপ ৭: রিয়েল-টাইম ক্লাউড ও�
   const cleanId = sanitizeId(dirtyId, 'fallback');
   assert.match(cleanId, /^[a-zA-Z0-9_\-]+$/);
   assert.ok(cleanId.length <= 128);
-  console.log('✅ PASS: sanitizeMedicineId strictly conforms to firestore.rules document ID regex');
+  console.log('✅ PASS: sanitizeMedicineId strictly conforms to safe document ID regex');
 });
 
 describe('ধাপ ৮: ব্যবহারকারীর ডেটা স্থায়িত্ব, অফলাইন ক্যাশ গার্ড ও মাইগ্রেশন নীতি', () => {
@@ -1022,120 +1035,8 @@ describe('ধাপ ১২: সহজ মোড, কথা বলে শোন�
   });
 });
 
-describe('ধাপ ১৩: কোটা সীমা হ্যান্ডলিং ও সার্কিট-ব্রেকার', () => {
-  it('Firestore quota exceeded এরর শনাক্ত করে ও সেশনে কেবল একবার বাংলা সতর্কতা দেখায়', () => {
-    resetQuotaNoticeForTests();
-    const quotaErr1 = { code: 'resource-exhausted', message: 'Quota exceeded.' };
-    const quotaErr2 = new Error('RESOURCE_EXHAUSTED: Quota exceeded for free tier database');
-    const permErr = { code: 'permission-denied', message: 'Missing or insufficient permissions.' };
-
-    assert.strictEqual(isQuotaExceededError(quotaErr1), true);
-    assert.strictEqual(isQuotaExceededError(quotaErr2), true);
-    assert.strictEqual(isQuotaExceededError(permErr), false);
-    assert.strictEqual(getFriendlyErrorMessage(quotaErr1), QUOTA_EXCEEDED_BN_MSG);
-
-    assert.strictEqual(consumeQuotaExceededNoticeOnce(), true);
-    assert.strictEqual(consumeQuotaExceededNoticeOnce(), false);
-    resetQuotaNoticeForTests();
-
-    const storeMap = new Map<string, string>();
-    const memStore = {
-      getItem: (k: string) => (storeMap.has(k) ? storeMap.get(k)! : null),
-      setItem: (k: string, v: string) => {
-        storeMap.set(k, v);
-      },
-      removeItem: (k: string) => {
-        storeMap.delete(k);
-      },
-    };
-
-    assert.strictEqual(isWriteQuotaPaused('2026-11-14', memStore), false);
-    markWriteQuotaExceeded('2026-11-14', memStore);
-    assert.strictEqual(storeMap.get(WRITE_QUOTA_PAUSE_KEY), '2026-11-14');
-    assert.strictEqual(isWriteQuotaPaused('2026-11-14', memStore), true);
-    // Automatically resets on the next calendar day
-    assert.strictEqual(isWriteQuotaPaused('2026-11-15', memStore), false);
-    assert.strictEqual(storeMap.has(WRITE_QUOTA_PAUSE_KEY), false);
-
-    markWriteQuotaExceeded('2026-11-15', memStore);
-    clearWriteQuotaPause(memStore);
-    assert.strictEqual(isWriteQuotaPaused('2026-11-15', memStore), false);
-    resetQuotaNoticeForTests();
-  });
-
-  it('Pacific Time (America/Los_Angeles) দিন কী, backoff ত্রুটি শনাক্তকরণ এবং executeGuardedWrite সার্কিট-ব্রেকার কাজ করে', async () => {
-    resetQuotaNoticeForTests();
-    clearWriteQuotaPause();
-
-    // 2026-11-16T06:00:00Z is already Nov 16 in Dhaka (UTC+6), but still Nov 15 22:00 in Pacific Time!
-    assert.strictEqual(getQuotaDayKey(new Date('2026-11-15T19:41:38.505Z')), '2026-11-15');
-    assert.strictEqual(getQuotaDayKey(new Date('2026-11-16T06:00:00.000Z')), '2026-11-15');
-    // Past midnight Pacific Time (08:05 UTC = 00:05 PST) rolls over to Nov 16
-    assert.strictEqual(getQuotaDayKey(new Date('2026-11-16T08:05:00.000Z')), '2026-11-16');
-
-    const backoffLog = new Error('Using maximum backoff delay to prevent overloading the backend.');
-    const customQuotaErr = new QuotaExceededWriteError();
-    assert.strictEqual(isQuotaExceededError(backoffLog), true);
-    assert.strictEqual(isQuotaExceededError(customQuotaErr), true);
-
-    // Subscriber notification
-    let listenerHits = 0;
-    const unsub = subscribeWriteQuotaExceeded(() => {
-      listenerHits += 1;
-    });
-    markWriteQuotaExceeded();
-    assert.strictEqual(listenerHits, 1);
-
-    // When paused, executeGuardedWrite rejects immediately without calling writeFn
-    let writeInvoked = false;
-    await assert.rejects(
-      () =>
-        executeGuardedWrite(async () => {
-          writeInvoked = true;
-        }),
-      (err: unknown) => err instanceof QuotaExceededWriteError && isQuotaExceededError(err)
-    );
-    assert.strictEqual(writeInvoked, false);
-
-    // Unpause, start a never-settling write promise, then trip circuit breaker -> rejects immediately
-    await resumeFirestoreNetwork();
-    clearWriteQuotaPause();
-    const hangingPromise = executeGuardedWrite(
-      () => new Promise<void>(() => {})
-    );
-    tripWriteQuotaCircuitBreaker('FirebaseError: [code=resource-exhausted]: Quota limit exceeded.');
-    await assert.rejects(
-      () => hangingPromise,
-      (err: unknown) => err instanceof QuotaExceededWriteError
-    );
-    assert.strictEqual(listenerHits, 2);
-
-    unsub();
-    markWriteQuotaExceeded();
-    assert.strictEqual(listenerHits, 2);
-
-    await resumeFirestoreNetwork();
-    clearWriteQuotaPause();
-    resetQuotaNoticeForTests();
-  });
-
-  it('read-only নেটওয়ার্ক backoff-এ 24h write-লক ট্রিগার হয় না, এবং cloudSyncOutbox শুধু পরিবর্তিত আইটেম ট্র্যাক করে', () => {
-    // Flaky Wi-Fi / read-stream backoff with 0 pending writes must NOT trip write quota circuit breaker
-    assert.strictEqual(
-      isFirestoreSdkQuotaErrorLog('Using maximum backoff delay to prevent overloading the backend.', false),
-      false
-    );
-    // Backoff while a write is actively pending DOES trigger quota guard
-    assert.strictEqual(
-      isFirestoreSdkQuotaErrorLog('Using maximum backoff delay to prevent overloading the backend.', true),
-      true
-    );
-    // Explicit resource-exhausted always triggers regardless of hasPendingWrites
-    assert.strictEqual(
-      isFirestoreSdkQuotaErrorLog('FirebaseError: [code=resource-exhausted]: Quota limit exceeded.', false),
-      true
-    );
-
+describe('ধাপ ১৩: cloudSyncOutbox ডার্টি পরিবর্তন ট্র্যাকিং', () => {
+  it('cloudSyncOutbox শুধু পরিবর্তিত আইটেম ট্র্যাক করে এবং upsert ও delete সমন্বয় করে', () => {
     const storeMap = new Map<string, string>();
     const mockStorage: OutboxStorageLike = {
       getItem: (k) => storeMap.get(k) ?? null,
@@ -1928,12 +1829,12 @@ describe('ধাপ ১৫: অ্যাডমিন ওষুধ ব্যব�
 
 describe('ধাপ ১৫: পরিবারের সদস্যকে সতর্কতা (যত্নকারী মোড)', () => {
   it('আমন্ত্রণ কোড ফরম্যাট, ৪৮ ঘণ্টা মেয়াদ ও হোয়াটসঅ্যাপ লিংক ঠিকমতো তৈরি করে', () => {
-    const code = generateInviteCode(6);
-    assert.strictEqual(code.length, 6);
+    const code = generateInviteCode(8);
+    assert.strictEqual(code.length, 8);
     assert.ok(isValidInviteCode(code));
-    assert.strictEqual(normalizeInviteCodeInput(' a7k-9m2 '), 'A7K9M2');
-    assert.strictEqual(normalizeInviteCodeInput('a৭k৯m২'), 'A7K9M2');
-    assert.strictEqual(normalizeInviteCodeInput('A7K9M2XYZ'), 'A7K9M2');
+    assert.strictEqual(normalizeInviteCodeInput(' a7k-9m2p-q '), 'A7K9M2PQ');
+    assert.strictEqual(normalizeInviteCodeInput('a৭k৯m২p৮'), 'A7K9M2P8');
+    assert.strictEqual(normalizeInviteCodeInput('A7K9M2PQXYZ'), 'A7K9M2PQ');
 
     const nowMs = Date.now();
     assert.strictEqual(isInviteExpired(nowMs + CAREGIVER_INVITE_TTL_MS, nowMs), false);
@@ -2029,7 +1930,7 @@ describe('ধাপ ১৫: পরিবারের সদস্যকে স�
     assert.strictEqual(missedAlert.message, 'যমুনা আপা আজ সকালের Napa Extend খাননি');
     assert.strictEqual(
       missedAlert.id,
-      buildDeterministicAlertId('p_uid_1', 'med_napa', '2026-11-13', 'missed_dose', 'সকাল')
+      buildDeterministicAlertId('missed_dose', 'med_napa', 'সকাল', '2026-11-13')
     );
 
     // Same-day dedupe prevents sending duplicate alert when sentAlertIds contains alert ID
@@ -2210,7 +2111,7 @@ describe('বাংলা ভয়েস রিমাইন্ডার: ভয
 });
 
 describe('ডাক্তার/পরিবারের জন্য নিরাপদ রিপোর্ট শেয়ার লিংক (Shared Reports)', () => {
-  it('অনুমান-অযোগ্য >=১২০-বিট ক্রিপ্টোগ্রাফিক টোকেন ও /r/{token} URL তৈরি ও পার্স করে', () => {
+  it('অনুমান-অযোগ্য >=১২০-বিট ক্রিপ্টোগ্রাফিক টোকেন ও /report/{token} (এবং /r/{token}) URL তৈরি ও পার্স করে', () => {
     const tokens = new Set<string>();
     for (let i = 0; i < 25; i += 1) {
       const tok = generateShareToken();
@@ -2225,16 +2126,17 @@ describe('ডাক্তার/পরিবারের জন্য নির�
     assert.strictEqual(isValidShareTokenFormat('patient-1-report'), false);
 
     const sampleToken = generateShareToken();
+    assert.strictEqual(extractSharedReportTokenFromPath(`/report/${sampleToken}`), sampleToken);
     assert.strictEqual(extractSharedReportTokenFromPath(`/r/${sampleToken}`), sampleToken);
     assert.strictEqual(extractSharedReportTokenFromPath(`/r/${sampleToken}/?print=1`), sampleToken);
     assert.strictEqual(extractSharedReportTokenFromPath('/medicines'), null);
     assert.strictEqual(
       buildSharedReportUrl(sampleToken, 'https://shasthobondhu.app/'),
-      `https://shasthobondhu.app/r/${sampleToken}`
+      `https://shasthobondhu.app/report/${sampleToken}`
     );
 
     const waUrl = buildSharedReportWhatsAppUrl(
-      `https://shasthobondhu.app/r/${sampleToken}`,
+      `https://shasthobondhu.app/report/${sampleToken}`,
       'যমুনা আপা',
       Date.now() + 7 * 24 * 60 * 60 * 1000
     );
@@ -2451,41 +2353,6 @@ describe('ডাক্তার/পরিবারের জন্য নির�
       ),
       true
     );
-  });
-
-  it('stripUndefined শুধু সাধারণ অবজেক্ট/অ্যারে থেকে undefined বাদ দেয় এবং Timestamp, serverTimestamp ও Date অবিকৃত রাখে', () => {
-    const ts = Timestamp.fromMillis(1_763_000_000_000);
-    const st = serverTimestamp();
-    const dt = new Date('2026-11-14T00:00:00.000Z');
-    const gp = new GeoPoint(23.8103, 90.4125);
-    const nullProtoObj = Object.assign(Object.create(null), { keep: 'yes', drop: undefined });
-
-    const payload = {
-      ownerUid: 'u1',
-      createdAt: st,
-      expiresAt: ts,
-      checkedAt: dt,
-      location: gp,
-      optional: undefined,
-      sections: {
-        medicines: [{ brandName: 'Napa', instructions: undefined }],
-      },
-      nullProtoObj,
-    };
-
-    const cleaned = stripUndefined(payload);
-    assert.strictEqual(cleaned.createdAt, st);
-    assert.ok(cleaned.createdAt instanceof FieldValue);
-    assert.strictEqual(cleaned.expiresAt, ts);
-    assert.ok(cleaned.expiresAt instanceof Timestamp);
-    assert.strictEqual(cleaned.checkedAt, dt);
-    assert.ok(cleaned.checkedAt instanceof Date);
-    assert.strictEqual(cleaned.location, gp);
-    assert.ok(cleaned.location instanceof GeoPoint);
-    assert.strictEqual('optional' in cleaned, false);
-    assert.strictEqual('instructions' in cleaned.sections.medicines[0], false);
-    assert.strictEqual(cleaned.nullProtoObj.keep, 'yes');
-    assert.strictEqual('drop' in cleaned.nullProtoObj, false);
   });
 });
 
@@ -3085,15 +2952,6 @@ describe('ধাপ ২২: জরুরি কার্ড QR (টোকেন,
     const summaryLabels = getEmergencyIncludedSummaryLabels(DEFAULT_EMERGENCY_CARD_SELECTION, defaultPayload);
     assert.ok(summaryLabels.includes('রক্তের গ্রুপ'));
     assert.ok(!summaryLabels.includes('চলমান ওষুধের তালিকা'));
-
-    // deleteField() sentinel survives stripUndefined
-    const updateSentinel = stripUndefined({
-      patientName: 'রহিম উদ্দিন',
-      medicines: deleteField(),
-      createdAt: serverTimestamp(),
-    });
-    assert.ok(updateSentinel.medicines instanceof FieldValue);
-    assert.ok(updateSentinel.createdAt instanceof FieldValue);
   });
 });
 
@@ -3763,7 +3621,7 @@ describe('Suite 25: ডোজ-লগ ৯০ দিন উইন্ডো, TTL �
   });
 });
 
-describe('আমার ডাক্তার (ডিরেক্টরি, ফোন যাচাই, অগ্রাধিকার ও Firestore-সাশ্রয়ী ক্যাশ)', () => {
+describe('আমার ডাক্তার (ডিরেক্টরি, ফোন যাচাই, অগ্রাধিকার ও Supabase-সাশ্রয়ী ক্যাশ)', () => {
   it('বাংলা ও ইংরেজি সংখ্যায় বাংলাদেশি ফোন নম্বর যাচাই করে, কল/হোয়াটসঅ্যাপ লিংক বানায় এবং অস্বাভাবিক ফরম্যাটে নম্র সতর্কতা দেয়', () => {
     assert.strictEqual(normalizeBengaliDigits('০১৭১২-৩৪৫৬৭৮'), '01712-345678');
 
@@ -3851,7 +3709,7 @@ describe('আমার ডাক্তার (ডিরেক্টরি, ফ�
     );
   });
 
-  it('undefined/খালি ফিল্ড বাদ দেয় এবং Timestamp, serverTimestamp ও deleteField অক্ষত রাখে', () => {
+  it('undefined/খালি ফিল্ড বাদ দেয় এবং ডাক্তার ইনপুট সীমাবদ্ধ রাখে', () => {
     const clean = buildCleanDoctorInput({
       name: '  ডা. সাবিনা ইয়াসমিন  ',
       specialty: '   ',
@@ -3869,22 +3727,6 @@ describe('আমার ডাক্তার (ডিরেক্টরি, ফ�
     assert.strictEqual(clean.notes?.length, 500);
     assert.strictEqual(clean.patientIds?.length, 20);
     assert.strictEqual(clean.isEmergency, true);
-
-    const st = serverTimestamp();
-    const df = deleteField();
-    const ts = Timestamp.fromMillis(1_763_000_000_000);
-    const firestorePayload = stripUndefined({
-      ...clean,
-      id: 'doc_1',
-      specialty: df,
-      createdAt: ts,
-      updatedAt: st,
-    });
-
-    assert.strictEqual('whatsapp' in firestorePayload, false);
-    assert.strictEqual(firestorePayload.specialty, df);
-    assert.strictEqual(firestorePayload.createdAt, ts);
-    assert.strictEqual(firestorePayload.updatedAt, st);
   });
 
   it('অ্যাপয়েন্টমেন্ট পে-লোড, জরুরি কার্ড/QR অগ্রাধিকার, নাম মেলানো ও শেয়ার রিপোর্ট সংযোগ কাজ করে', () => {
@@ -4265,7 +4107,7 @@ describe('ধাপ ২০: প্রেসক্রিপশন ও রিপ�
   });
 });
 
-describe('ধাপ ২৮: টার্গেটেড ডার্টি সিঙ্ক, এডমিন অফলাইন/কোটা প্রকাশ সারি ও Firestore রাইট/রিড কাউন্টার', () => {
+describe('ধাপ ২৮: টার্গেটেড ডার্টি সিঙ্ক ও পরিবর্তন পরিকল্পনা', () => {
   it('১০০০ লগ ও ১০ ওষুধে পরিবর্তিত না হলে ০ লেখা এবং শুধু পরিবর্তিত রেকর্ডগুলোই সিঙ্ক পরিকল্পনায় ধরে', () => {
     const map = new Map<string, string>();
     const memStore = {
@@ -4335,34 +4177,6 @@ describe('ধাপ ২৮: টার্গেটেড ডার্টি স�
     assert.strictEqual(dirtyPlan.collectionCounts.doseLogs, 2);
     assert.deepStrictEqual(dirtyPlan.outboxToFlush.upserts.medicines, ['med-3']);
     assert.deepStrictEqual(dirtyPlan.outboxToFlush.upserts.doseLogs, ['log-6', 'log-43']);
-  });
-
-  it('দৈনিক Firestore write ও read কালেকশন অনুযায়ী সঠিকভাবে হিসাব করে', () => {
-    const map = new Map<string, string>();
-    const memStore = {
-      getItem: (k: string) => map.get(k) ?? null,
-      setItem: (k: string, v: string) => {
-        map.set(k, v);
-      },
-      removeItem: (k: string) => {
-        map.delete(k);
-      },
-    };
-    const now = new Date('2026-11-17T06:00:00.000Z');
-    resetFirestoreUsageForTests(memStore);
-
-    recordFirestoreWrite('doseLogs', 2, memStore, now);
-    recordFirestoreWrite('medicines', 1, memStore, now);
-    recordFirestoreRead('library_meta', 1, memStore, now);
-    recordFirestoreRead('doctors', 5, memStore, now);
-
-    const snapshot = getTodayFirestoreUsage(memStore, now);
-    assert.strictEqual(snapshot.dateKey, '2026-11-17');
-    assert.strictEqual(snapshot.totalWrites, 3);
-    assert.strictEqual(snapshot.totalReads, 6);
-    assert.strictEqual(snapshot.writesByCollection['doseLogs'], 2);
-    assert.strictEqual(snapshot.writesByCollection['medicines'], 1);
-    assert.strictEqual(snapshot.readsByCollection['doctors'], 5);
   });
 });
 
@@ -5105,6 +4919,353 @@ describe('ধাপ ৩৩: Supabase অংশ ২খ — লাইব্রে�
     });
     assert.strictEqual(url3, 'https://signed.example/2');
     assert.strictEqual(signCalls, 2);
+  });
+});
+
+describe('ধাপ ৩৪: Supabase অংশ ৩/৩ — শেয়ারিং, জরুরি কার্ড, অতিথি লিংক, যত্নকারী, সতর্কতা ও এনক্রিপ্টেড ফোন-বদল', () => {
+  it('shared_reports, emergency_cards, guest_views, caregiver_links, caregiver_suggestions, family_alerts ম্যাপার মালিকানা কলাম বাদ রাখে এবং নিখুঁত round-trip দেয়', () => {
+    const report: SharedReportDoc = {
+      ownerUid: 'owner-1',
+      token: 'rep_tok_12345678901234567890',
+      createdAt: '2026-11-20T08:00:00.000Z',
+      expiresAt: '2026-11-27T08:00:00.000Z',
+      createdAtMs: Date.parse('2026-11-20T08:00:00.000Z'),
+      expiresAtMs: Date.parse('2026-11-27T08:00:00.000Z'),
+      patientName: 'রহিম উদ্দিন',
+      age: 65,
+      gender: 'পুরুষ',
+      relation: 'বাবা',
+      sections: { medicines: [] },
+      revoked: false,
+    };
+    const rRow = sharedReportToRow(report);
+    assert.strictEqual('owner_id' in rRow, false);
+    assert.strictEqual(rRow.patient_name, 'রহিম উদ্দিন');
+    const rDoc = sharedReportFromRow({ ...rRow, owner_id: 'owner-1' });
+    assert.strictEqual(rDoc.patientName, 'রহিম উদ্দিন');
+    assert.strictEqual(rDoc.ownerUid, 'owner-1');
+    assert.strictEqual(rDoc.age, 65);
+
+    const card: EmergencyCardDoc = {
+      ownerUid: 'owner-1',
+      token: 'emg_tok_12345678901234567890',
+      createdAt: '2026-11-20T08:00:00.000Z',
+      patientName: 'রহিম উদ্দিন',
+      age: 65,
+      bloodGroup: 'O+',
+      allergies: 'Penicillin',
+      conditions: 'উচ্চ রক্তচাপ',
+      contactName: 'তানভীর',
+      contactPhone: '01711000000',
+      medicines: 'Telmivas 40',
+      doctorName: 'ডা. করিম',
+      active: true,
+    };
+    const cRow = emergencyCardToRow(card);
+    assert.strictEqual('owner_id' in cRow, false);
+    assert.strictEqual(cRow.data.bloodGroup, 'O+');
+    const cDoc = emergencyCardFromRow({ ...cRow, owner_id: 'owner-1' });
+    assert.strictEqual(cDoc.bloodGroup, 'O+');
+    assert.strictEqual(cDoc.doctorName, 'ডা. করিম');
+
+    const guestView: GuestViewDoc = {
+      token: 'gst_tok_12345678901234567890',
+      ownerUid: 'owner-1',
+      patientName: 'দাদিমা',
+      snapshot: {
+        patientName: 'দাদিমা',
+        slots: {
+          'সকাল': [{ brandName: 'Napa', dosage: '১টি', mealTiming: 'খাওয়ার পরে', time: '০৮:০০ AM' }],
+          'দুপুর': [],
+          'সন্ধ্যা': [],
+          'রাত': [],
+        },
+        generatedAt: '2026-11-20T09:00:00.000Z',
+      },
+      createdAt: '2026-11-20T09:00:00.000Z',
+      updatedAt: '2026-11-20T09:00:00.000Z',
+      expiresAt: '2026-11-27T09:00:00.000Z',
+      active: true,
+    };
+    const gRow = guestViewToRow(guestView);
+    assert.strictEqual('owner_id' in gRow, false);
+    const gDoc = guestViewFromRow({ ...gRow, owner_id: 'owner-1' });
+    assert.strictEqual(gDoc.snapshot.slots['সকাল'][0].brandName, 'Napa');
+
+    const link: CaregiverLinkDoc = {
+      id: 'A7K9M2PQ',
+      inviteCode: 'A7K9M2PQ',
+      patientUid: 'p-1',
+      caregiverUid: 'cg-1',
+      patientName: 'রহিম',
+      caregiverName: 'তানভীর',
+      status: 'active',
+      allowFullView: true,
+      allowSuggestions: true,
+      createdAt: '2026-11-20T08:00:00.000Z',
+      updatedAt: '2026-11-20T08:30:00.000Z',
+      expiresAt: '2026-11-22T08:00:00.000Z',
+      expiresAtMs: Date.parse('2026-11-22T08:00:00.000Z'),
+    };
+    const lkRow = caregiverLinkToRow(link);
+    assert.strictEqual('patient_uid' in lkRow, false);
+    assert.strictEqual(lkRow.invite_code, 'A7K9M2PQ');
+    const lkDoc = caregiverLinkFromRow({ ...lkRow, patient_uid: 'p-1' });
+    assert.strictEqual(lkDoc.allowFullView, true);
+    assert.strictEqual(lkDoc.patientUid, 'p-1');
+
+    const suggestion: CaregiverSuggestionDoc = {
+      id: 'sug-1',
+      patientUid: 'p-1',
+      caregiverUid: 'cg-1',
+      linkId: 'A7K9M2PQ',
+      caregiverName: 'তানভীর',
+      kind: 'add',
+      medicine: {
+        brandName: 'Seclo 20',
+        type: 'ক্যাপসুল',
+        dosage: '১টি',
+        timeSlots: ['সকাল'],
+        mealTiming: 'খাওয়ার আগে',
+        stock: 14,
+        unit: 'টি',
+      },
+      status: 'pending',
+      createdAt: '2026-11-20T09:00:00.000Z',
+      createdAtMs: Date.parse('2026-11-20T09:00:00.000Z'),
+    };
+    const sgRow = caregiverSuggestionToRow(suggestion);
+    assert.strictEqual('caregiver_uid' in sgRow, false);
+    const sgDoc = caregiverSuggestionFromRow({ ...sgRow, caregiver_uid: 'cg-1' });
+    assert.strictEqual(sgDoc.medicine.brandName, 'Seclo 20');
+
+    const alert: FamilyAlertDoc = {
+      id: 'missed_dose_med1_morning_2026-11-20',
+      patientUid: 'p-1',
+      caregiverUids: ['cg-1'],
+      caregiverLinkIds: ['A7K9M2PQ'],
+      type: 'missed_dose',
+      medicineId: 'med1',
+      medicineName: 'Napa',
+      slot: 'সকাল',
+      date: '2026-11-20',
+      message: 'রহিম আজ সকালের Napa খাননি',
+      createdAt: '2026-11-20T09:30:00.000Z',
+      createdAtMs: Date.parse('2026-11-20T09:30:00.000Z'),
+      seenBy: [],
+    };
+    const alRow = familyAlertToRow(alert);
+    assert.strictEqual('patient_uid' in alRow, false);
+    assert.strictEqual(alRow.alert_date, '2026-11-20');
+    const alDoc = familyAlertFromRow({ ...alRow, patient_uid: 'p-1' });
+    assert.strictEqual(alDoc.date, '2026-11-20');
+    assert.strictEqual(alDoc.slot, 'সকাল');
+  });
+
+  it('অতিথি লিংক (GuestView): প্রাইভেসি স্ন্যাপশট, টোকেন URL এবং অফলাইন ক্যাশ কাজ করে', () => {
+    const tok = generateGuestViewToken();
+    assert.ok(isValidGuestViewTokenFormat(tok));
+    assert.strictEqual(extractGuestViewTokenFromPath(`/guest/${tok}`), tok);
+    assert.strictEqual(extractGuestViewTokenFromPath(`/guest/${tok}/`), tok);
+    assert.strictEqual(extractGuestViewTokenFromPath(`/report/${tok}`), null);
+    assert.strictEqual(
+      buildGuestViewUrl(tok, 'https://shasthobondhu.app/'),
+      `https://shasthobondhu.app/guest/${tok}`
+    );
+
+    const patient: PatientProfile = {
+      id: 'p-elder',
+      name: 'দাদিমা',
+      relation: 'দাদি',
+      age: 74,
+      gender: 'মহিলা',
+      bloodGroup: 'A+',
+      chronicConditions: ['উচ্চ রক্তচাপ'],
+      allergies: ['সালফা'],
+      emergencyContact: '01799999999',
+    };
+    const meds: Medicine[] = [
+      {
+        id: 'm1',
+        brandName: 'Napa',
+        genericName: 'Paracetamol',
+        type: 'ট্যাবলেট',
+        strength: '500 mg',
+        mealTiming: 'খাওয়ার পরে',
+        schedules: [
+          { id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' },
+          { id: 's2', timeSlot: 'রাত', time: '09:00 PM', dosage: '১টি' },
+        ],
+        stock: 20,
+        minStockAlert: 5,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: true,
+        assignedPatientId: 'p-elder',
+        status: 'active',
+        colorTag: 'teal',
+      },
+      {
+        id: 'm2',
+        brandName: 'OtherMed',
+        genericName: 'Other',
+        type: 'ট্যাবলেট',
+        strength: '10 mg',
+        mealTiming: 'খাওয়ার আগে',
+        schedules: [{ id: 's3', timeSlot: 'দুপুর', time: '02:00 PM', dosage: '১টি' }],
+        stock: 10,
+        minStockAlert: 2,
+        unit: 'টি',
+        startDate: '2026-11-01',
+        isChronic: false,
+        assignedPatientId: 'p-someone-else',
+        status: 'active',
+        colorTag: 'blue',
+      },
+    ];
+
+    const snap = buildGuestViewSnapshot(patient, meds, new Date('2026-11-20T10:00:00.000Z'));
+    assert.strictEqual(snap.patientName, 'দাদিমা');
+    assert.strictEqual(snap.slots['সকাল'].length, 1);
+    assert.strictEqual(snap.slots['সকাল'][0].brandName, 'Napa');
+    assert.strictEqual(snap.slots['দুপুর'].length, 0);
+    assert.strictEqual(snap.slots['রাত'].length, 1);
+    assert.strictEqual('emergencyContact' in snap, false);
+
+    const viewDoc: GuestViewDoc = {
+      token: tok,
+      ownerUid: 'u1',
+      patientName: 'দাদিমা',
+      snapshot: snap,
+      createdAt: '2026-11-20T10:00:00.000Z',
+      updatedAt: '2026-11-20T10:00:00.000Z',
+      expiresAt: '2026-11-27T10:00:00.000Z',
+      active: true,
+    };
+
+    assert.strictEqual(
+      getGuestViewStatus(viewDoc, Date.parse('2026-11-21T00:00:00.000Z')),
+      'active'
+    );
+    assert.strictEqual(
+      getGuestViewStatus({ ...viewDoc, active: false }, Date.parse('2026-11-21T00:00:00.000Z')),
+      'revoked'
+    );
+    assert.strictEqual(
+      getGuestViewStatus(viewDoc, Date.parse('2026-12-01T00:00:00.000Z')),
+      'expired'
+    );
+
+    const map = new Map<string, string>();
+    const memStore = {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+    };
+    saveCachedGuestView(tok, viewDoc, memStore);
+    const cached = loadCachedGuestView(tok, memStore);
+    assert.strictEqual(cached?.snapshot.patientName, 'দাদিমা');
+    assert.ok(GUEST_VIEW_BANNER_PREFIX.includes('শুধু দেখার জন্য'));
+    assert.ok(GUEST_VIEW_UNAVAILABLE_MSG.includes('বাতিল'));
+  });
+
+  it('এনক্রিপ্টেড ফোন-বদল: gzip + AES-GCM রাউন্ড-ট্রিপ, ভুল চাবি প্রত্যাখ্যান, ১.২ এমবি সীমা এবং QR/কোড পার্সার', async () => {
+    const bundle = buildPhoneTransferBundle({
+      medicines: [
+        {
+          id: 'm1',
+          brandName: 'Napa Extend',
+          genericName: 'Paracetamol',
+          type: 'ট্যাবলেট',
+          strength: '665 mg',
+          mealTiming: 'খাওয়ার পরে',
+          schedules: [{ id: 's1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }],
+          stock: 14,
+          minStockAlert: 4,
+          unit: 'টি',
+          startDate: '2026-11-01',
+          isChronic: false,
+          status: 'active',
+          colorTag: 'teal',
+        },
+      ],
+      patients: [
+        {
+          id: 'p1',
+          name: 'নিজ',
+          relation: 'নিজ',
+          age: 35,
+          gender: 'পুরুষ',
+          bloodGroup: 'O+',
+          chronicConditions: [],
+          allergies: [],
+          emergencyContact: '01700000000',
+        },
+      ],
+      doseLogs: [],
+      doctors: [],
+      phonebook: [
+        {
+          id: 'pb-1',
+          name: 'জরুরি অ্যাম্বুলেন্স',
+          phone: '01711000000',
+          category: 'জরুরি',
+          isEmergency: true,
+        },
+      ],
+      healthRecords: [],
+      appointments: [],
+      settings: {
+        soundEnabled: true,
+        selectedTone: 'soft-bell',
+        advanceMinutes: 10,
+        snoozeDurationMinutes: 10,
+        language: 'bn',
+      },
+    });
+
+    const encrypted = await encryptAndCompressTransferPayload(bundle);
+    assert.ok(encrypted.ciphertext.length > 0);
+    assert.ok(encrypted.keyB64.length >= 40);
+
+    const decrypted = await decryptAndDecompressTransferPayload(
+      encrypted.ciphertext,
+      encrypted.keyB64
+    );
+    assert.strictEqual(decrypted.medicines[0].brandName, 'Napa Extend');
+    assert.strictEqual(decrypted.phonebook[0].name, 'জরুরি অ্যাম্বুলেন্স');
+
+    // Wrong key must fail decryption
+    const wrongKey = 'A'.repeat(encrypted.keyB64.length);
+    await assert.rejects(() =>
+      decryptAndDecompressTransferPayload(encrypted.ciphertext, wrongKey)
+    );
+
+    // Oversized payload > MAX_TRANSFER_PLAINTEXT_BYTES must be rejected
+    const oversizedBundle = {
+      ...bundle,
+      medicines: [
+        {
+          ...bundle.medicines[0],
+          instructions: 'ক'.repeat(MAX_TRANSFER_PLAINTEXT_BYTES),
+        },
+      ],
+    };
+    await assert.rejects(() => encryptAndCompressTransferPayload(oversizedBundle));
+
+    const sampleUuid = '123e4567-e89b-12d3-a456-426614174000';
+    const url = buildTransferUrl(sampleUuid, encrypted.keyB64, 'https://shasthobondhu.app');
+    assert.deepStrictEqual(parseTransferInput(url), {
+      id: sampleUuid,
+      keyB64: encrypted.keyB64,
+    });
+    const manual = buildTransferManualCode(sampleUuid, encrypted.keyB64);
+    assert.deepStrictEqual(parseTransferInput(manual), {
+      id: sampleUuid,
+      keyB64: encrypted.keyB64,
+    });
+    assert.strictEqual(parseTransferInput('invalid-code'), null);
   });
 });
 

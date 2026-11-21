@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { SharedReportDoc } from '../../types';
 import {
-  fetchSharedReportByTokenFromCloud,
+  fetchSharedReportByTokenFromSupabase as fetchSharedReportByTokenFromCloud,
   SharedReportFetchResult,
   SharedReportDebugInfo,
-} from '../../firebase/services';
+} from '../../supabase/sharingService';
 import {
   SHARED_REPORT_VIEWER_DISCLAIMER,
   formatSharedReportDateTime,

@@ -22,13 +22,13 @@ import {
   formatEmergencyDoctorLabelForQr,
 } from '../../utils/doctorsManager';
 import {
-  createEmergencyCardInCloud,
-  deleteEmergencyCardInCloud,
-  fetchOwnerEmergencyCardsFromCloud,
-  revokeEmergencyCardInCloud,
-  rotateEmergencyCardInCloud,
-  updateEmergencyCardInCloud,
-} from '../../firebase/services';
+  createEmergencyCardInSupabase as createEmergencyCardInCloud,
+  deleteEmergencyCardInSupabase as deleteEmergencyCardInCloud,
+  fetchOwnerEmergencyCardsFromSupabase as fetchOwnerEmergencyCardsFromCloud,
+  revokeEmergencyCardInSupabase as revokeEmergencyCardInCloud,
+  rotateEmergencyCardInSupabase as rotateEmergencyCardInCloud,
+  updateEmergencyCardInSupabase as updateEmergencyCardInCloud,
+} from '../../supabase/sharingService';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import {
   AlertOctagon,

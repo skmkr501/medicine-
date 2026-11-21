@@ -1,11 +1,20 @@
 import {
   AdminActivity,
+  CaregiverFullMedicineItem,
+  CaregiverLinkDoc,
+  CaregiverSuggestedMedicinePayload,
+  CaregiverSuggestionDoc,
+  CaregiverTodaySummary,
   DoctorAppointment,
   DoctorProfile,
   DoseLog,
   DoseSchedule,
+  EmergencyCardDoc,
+  FamilyAlertDoc,
   FeedbackEntry,
   GlobalMedicine,
+  GuestViewDoc,
+  GuestViewSnapshot,
   HealthRecord,
   ImportBatch,
   MedicalDocument,
@@ -14,7 +23,10 @@ import {
   PatientProfile,
   PhonebookEntry,
   ReminderSettings,
+  SharedReportDoc,
+  SharedReportSections,
   StockAdjustment,
+  TimeSlot,
   WeekStartDay,
 } from '../types';
 
@@ -1009,3 +1021,489 @@ export function feedbackFromRow(row: Partial<FeedbackRow> & { id: string }): Fee
   if (appVersion !== undefined) entry.appVersion = appVersion;
   return entry;
 }
+
+function isoToMillisSafe(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  return 0;
+}
+
+// ============================================================================
+// 14. shared_reports (omits owner_id on insert; Postgres sets auth.uid())
+// ============================================================================
+export interface SharedReportRow {
+  token: string;
+  owner_id?: string | null;
+  patient_name: string;
+  age: number | null;
+  gender: string | null;
+  relation: string | null;
+  sections: SharedReportSections;
+  created_at: string;
+  expires_at: string;
+  revoked: boolean;
+}
+
+export function sharedReportToRow(
+  report: Omit<SharedReportDoc, 'ownerUid'>
+): Omit<SharedReportRow, 'owner_id'> {
+  const nowIso = new Date().toISOString();
+  const createdAt =
+    normalizeTimestampToIso(report.createdAt) ??
+    (typeof report.createdAtMs === 'number' && report.createdAtMs > 0
+      ? new Date(report.createdAtMs).toISOString()
+      : nowIso);
+  const expiresAt =
+    normalizeTimestampToIso(report.expiresAt) ??
+    (typeof report.expiresAtMs === 'number' && report.expiresAtMs > 0
+      ? new Date(report.expiresAtMs).toISOString()
+      : nowIso);
+
+  return {
+    token: report.token,
+    patient_name: report.patientName ?? '',
+    age: asNullableNumber(report.age),
+    gender: asNullableString(report.gender),
+    relation: asNullableString(report.relation),
+    sections: report.sections && typeof report.sections === 'object' ? report.sections : {},
+    created_at: createdAt,
+    expires_at: expiresAt,
+    revoked: Boolean(report.revoked),
+  };
+}
+
+export function sharedReportFromRow(
+  row: Partial<SharedReportRow> & {
+    token?: string;
+    patientName?: string;
+    createdAt?: string;
+    expiresAt?: string;
+  }
+): SharedReportDoc {
+  const createdAt = row.created_at ?? row.createdAt ?? new Date().toISOString();
+  const expiresAt = row.expires_at ?? row.expiresAt ?? new Date().toISOString();
+  const doc: SharedReportDoc = {
+    ownerUid: String(row.owner_id ?? ''),
+    token: String(row.token ?? ''),
+    createdAt,
+    expiresAt,
+    createdAtMs: isoToMillisSafe(createdAt),
+    expiresAtMs: isoToMillisSafe(expiresAt),
+    patientName: String(row.patient_name ?? row.patientName ?? ''),
+    sections: row.sections && typeof row.sections === 'object' ? row.sections : {},
+    revoked: Boolean(row.revoked),
+  };
+
+  const age = asOptionalNumber(row.age);
+  if (age !== undefined) doc.age = age;
+  const gender = asOptionalString(row.gender);
+  if (gender !== undefined) doc.gender = gender;
+  const relation = asOptionalString(row.relation);
+  if (relation !== undefined) doc.relation = relation;
+
+  return doc;
+}
+
+// ============================================================================
+// 15. emergency_cards (packs/unpacks data jsonb; omits owner_id on insert)
+// ============================================================================
+export interface EmergencyCardDataJson {
+  age?: number;
+  bloodGroup?: string;
+  allergies?: string;
+  conditions?: string;
+  contactName?: string;
+  contactPhone?: string;
+  medicines?: string;
+  doctorName?: string;
+}
+
+export interface EmergencyCardRow {
+  token: string;
+  owner_id?: string | null;
+  patient_name: string;
+  data: EmergencyCardDataJson;
+  created_at: string;
+  active: boolean;
+}
+
+export function emergencyCardToRow(
+  card: Omit<EmergencyCardDoc, 'ownerUid'>
+): Omit<EmergencyCardRow, 'owner_id'> {
+  const nowIso = new Date().toISOString();
+  const createdAt =
+    normalizeTimestampToIso(card.createdAt) ??
+    (typeof card.createdAtMs === 'number' && card.createdAtMs > 0
+      ? new Date(card.createdAtMs).toISOString()
+      : nowIso);
+
+  const data: EmergencyCardDataJson = {};
+  if (typeof card.age === 'number' && Number.isFinite(card.age)) data.age = card.age;
+  if (card.bloodGroup !== undefined) data.bloodGroup = card.bloodGroup;
+  if (card.allergies !== undefined) data.allergies = card.allergies;
+  if (card.conditions !== undefined) data.conditions = card.conditions;
+  if (card.contactName !== undefined) data.contactName = card.contactName;
+  if (card.contactPhone !== undefined) data.contactPhone = card.contactPhone;
+  if (card.medicines !== undefined) data.medicines = card.medicines;
+  if (card.doctorName !== undefined) data.doctorName = card.doctorName;
+
+  return {
+    token: card.token,
+    patient_name: card.patientName ?? '',
+    data,
+    created_at: createdAt,
+    active: card.active !== false,
+  };
+}
+
+export function emergencyCardFromRow(
+  row: Partial<EmergencyCardRow> & {
+    token?: string;
+    patientName?: string;
+    createdAt?: string;
+  }
+): EmergencyCardDoc {
+  const createdAt = row.created_at ?? row.createdAt ?? new Date().toISOString();
+  const data = row.data && typeof row.data === 'object' ? row.data : {};
+
+  const doc: EmergencyCardDoc = {
+    ownerUid: String(row.owner_id ?? ''),
+    token: String(row.token ?? ''),
+    createdAt,
+    createdAtMs: isoToMillisSafe(createdAt),
+    patientName: String(row.patient_name ?? row.patientName ?? ''),
+    active: row.active !== false,
+  };
+
+  if (typeof data.age === 'number' && Number.isFinite(data.age)) doc.age = data.age;
+  if (typeof data.bloodGroup === 'string') doc.bloodGroup = data.bloodGroup;
+  if (typeof data.allergies === 'string') doc.allergies = data.allergies;
+  if (typeof data.conditions === 'string') doc.conditions = data.conditions;
+  if (typeof data.contactName === 'string') doc.contactName = data.contactName;
+  if (typeof data.contactPhone === 'string') doc.contactPhone = data.contactPhone;
+  if (typeof data.medicines === 'string') doc.medicines = data.medicines;
+  if (typeof data.doctorName === 'string') doc.doctorName = data.doctorName;
+
+  return doc;
+}
+
+// ============================================================================
+// 16. guest_views (omits owner_id on insert)
+// ============================================================================
+export interface GuestViewRow {
+  token: string;
+  owner_id?: string | null;
+  patient_name: string;
+  snapshot: GuestViewSnapshot;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+  active: boolean;
+}
+
+export function guestViewToRow(
+  view: Omit<GuestViewDoc, 'ownerUid'>
+): Omit<GuestViewRow, 'owner_id'> {
+  const nowIso = new Date().toISOString();
+  return {
+    token: view.token,
+    patient_name: view.patientName ?? '',
+    snapshot: view.snapshot,
+    created_at: normalizeTimestampToIso(view.createdAt) ?? nowIso,
+    updated_at: normalizeTimestampToIso(view.updatedAt) ?? nowIso,
+    expires_at: normalizeTimestampToIso(view.expiresAt) ?? nowIso,
+    active: view.active !== false,
+  };
+}
+
+export function guestViewFromRow(
+  row: Partial<GuestViewRow> & {
+    token?: string;
+    patientName?: string;
+    updatedAt?: string;
+    expiresAt?: string;
+    createdAt?: string;
+  }
+): GuestViewDoc {
+  const createdAt = row.created_at ?? row.createdAt ?? new Date().toISOString();
+  const updatedAt = row.updated_at ?? row.updatedAt ?? createdAt;
+  const expiresAt = row.expires_at ?? row.expiresAt ?? createdAt;
+  const rawSnapshot = row.snapshot;
+  const fallbackSlots: GuestViewSnapshot['slots'] = {
+    'সকাল': [],
+    'দুপুর': [],
+    'সন্ধ্যা': [],
+    'রাত': [],
+  };
+  const snapshot: GuestViewSnapshot =
+    rawSnapshot && typeof rawSnapshot === 'object'
+      ? {
+          patientName: String(rawSnapshot.patientName ?? row.patient_name ?? row.patientName ?? ''),
+          slots: {
+            'সকাল': Array.isArray(rawSnapshot.slots?.['সকাল']) ? rawSnapshot.slots['সকাল'] : [],
+            'দুপুর': Array.isArray(rawSnapshot.slots?.['দুপুর']) ? rawSnapshot.slots['দুপুর'] : [],
+            'সন্ধ্যা': Array.isArray(rawSnapshot.slots?.['সন্ধ্যা']) ? rawSnapshot.slots['সন্ধ্যা'] : [],
+            'রাত': Array.isArray(rawSnapshot.slots?.['রাত']) ? rawSnapshot.slots['রাত'] : [],
+          },
+          generatedAt: String(rawSnapshot.generatedAt ?? updatedAt),
+        }
+      : {
+          patientName: String(row.patient_name ?? row.patientName ?? ''),
+          slots: fallbackSlots,
+          generatedAt: updatedAt,
+        };
+
+  return {
+    token: String(row.token ?? ''),
+    ownerUid: String(row.owner_id ?? ''),
+    patientName: String(row.patient_name ?? row.patientName ?? snapshot.patientName ?? ''),
+    snapshot,
+    createdAt,
+    updatedAt,
+    expiresAt,
+    createdAtMs: isoToMillisSafe(createdAt),
+    updatedAtMs: isoToMillisSafe(updatedAt),
+    expiresAtMs: isoToMillisSafe(expiresAt),
+    active: row.active !== false,
+  };
+}
+
+// ============================================================================
+// 17. caregiver_links (omits patient_uid on insert; caregiver_uid nullable)
+// ============================================================================
+export interface CaregiverLinkRow {
+  id: string;
+  invite_code: string;
+  patient_uid?: string | null;
+  caregiver_uid: string | null;
+  patient_name: string;
+  caregiver_name: string;
+  patient_phone: string | null;
+  status: 'pending' | 'active';
+  allow_full_view: boolean;
+  allow_suggestions: boolean;
+  expires_at: string;
+  linked_at: string | null;
+  today_summary: CaregiverTodaySummary | null;
+  shared_medicines: CaregiverFullMedicineItem[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function caregiverLinkToRow(
+  link: Omit<CaregiverLinkDoc, 'patientUid'> & { patientUid?: string }
+): Omit<CaregiverLinkRow, 'patient_uid'> {
+  const nowIso = new Date().toISOString();
+  const expiresAt =
+    normalizeTimestampToIso(link.expiresAt) ??
+    (typeof link.expiresAtMs === 'number' && link.expiresAtMs > 0
+      ? new Date(link.expiresAtMs).toISOString()
+      : nowIso);
+
+  return {
+    id: link.id,
+    invite_code: link.inviteCode,
+    caregiver_uid: link.caregiverUid && link.caregiverUid.trim() ? link.caregiverUid.trim() : null,
+    patient_name: link.patientName ?? '',
+    caregiver_name: link.caregiverName ?? '',
+    patient_phone: asNullableString(link.patientPhone),
+    status: link.status === 'active' ? 'active' : 'pending',
+    allow_full_view: Boolean(link.allowFullView),
+    allow_suggestions: link.allowSuggestions !== false,
+    expires_at: expiresAt,
+    linked_at: asNullableString(normalizeTimestampToIso(link.linkedAt)),
+    today_summary: link.todaySummary ?? null,
+    shared_medicines: Array.isArray(link.sharedMedicines) ? link.sharedMedicines : null,
+    created_at: normalizeTimestampToIso(link.createdAt) ?? nowIso,
+    updated_at: normalizeTimestampToIso(link.updatedAt) ?? nowIso,
+  };
+}
+
+export function caregiverLinkFromRow(
+  row: Partial<CaregiverLinkRow> & { id: string }
+): CaregiverLinkDoc {
+  const createdAt = row.created_at ?? new Date().toISOString();
+  const updatedAt = row.updated_at ?? createdAt;
+  const expiresAt = row.expires_at ?? createdAt;
+
+  const doc: CaregiverLinkDoc = {
+    id: String(row.id),
+    inviteCode: String(row.invite_code ?? row.id),
+    patientUid: String(row.patient_uid ?? ''),
+    caregiverUid: row.caregiver_uid ? String(row.caregiver_uid) : '',
+    patientName: String(row.patient_name ?? ''),
+    caregiverName: String(row.caregiver_name ?? ''),
+    status: row.status === 'active' ? 'active' : 'pending',
+    allowFullView: Boolean(row.allow_full_view),
+    allowSuggestions: row.allow_suggestions !== false,
+    createdAt,
+    expiresAt,
+    expiresAtMs: isoToMillisSafe(expiresAt),
+    updatedAt,
+  };
+
+  const phone = asOptionalString(row.patient_phone);
+  if (phone !== undefined) doc.patientPhone = phone;
+  const linkedAt = asOptionalString(row.linked_at);
+  if (linkedAt !== undefined) doc.linkedAt = linkedAt;
+  if (row.today_summary && typeof row.today_summary === 'object') {
+    doc.todaySummary = row.today_summary;
+  }
+  if (Array.isArray(row.shared_medicines)) {
+    doc.sharedMedicines = row.shared_medicines;
+  }
+
+  return doc;
+}
+
+// ============================================================================
+// 18. caregiver_suggestions (omits caregiver_uid on insert; Postgres defaults auth.uid())
+// ============================================================================
+export interface CaregiverSuggestionRow {
+  id: string;
+  patient_uid: string;
+  caregiver_uid?: string | null;
+  link_id: string;
+  caregiver_name: string;
+  patient_name: string | null;
+  kind: CaregiverSuggestionDoc['kind'];
+  medicine: CaregiverSuggestedMedicinePayload;
+  target_medicine_id: string | null;
+  target_medicine_name: string | null;
+  note: string | null;
+  status: CaregiverSuggestionDoc['status'];
+  created_at: string;
+}
+
+export function caregiverSuggestionToRow(
+  sug: Omit<CaregiverSuggestionDoc, 'caregiverUid'> & { caregiverUid?: string }
+): Omit<CaregiverSuggestionRow, 'caregiver_uid'> {
+  const createdAt =
+    normalizeTimestampToIso(sug.createdAt) ??
+    (typeof sug.createdAtMs === 'number' && sug.createdAtMs > 0
+      ? new Date(sug.createdAtMs).toISOString()
+      : new Date().toISOString());
+
+  return {
+    id: sug.id,
+    patient_uid: sug.patientUid,
+    link_id: sug.linkId,
+    caregiver_name: sug.caregiverName ?? '',
+    patient_name: asNullableString(sug.patientName),
+    kind: sug.kind,
+    medicine: sug.medicine,
+    target_medicine_id: asNullableString(sug.targetMedicineId),
+    target_medicine_name: asNullableString(sug.targetMedicineName),
+    note: asNullableString(sug.note),
+    status: sug.status ?? 'pending',
+    created_at: createdAt,
+  };
+}
+
+export function caregiverSuggestionFromRow(
+  row: Partial<CaregiverSuggestionRow> & { id: string }
+): CaregiverSuggestionDoc {
+  const createdAt = row.created_at ?? new Date().toISOString();
+  const doc: CaregiverSuggestionDoc = {
+    id: String(row.id),
+    patientUid: String(row.patient_uid ?? ''),
+    caregiverUid: String(row.caregiver_uid ?? ''),
+    linkId: String(row.link_id ?? ''),
+    caregiverName: String(row.caregiver_name ?? ''),
+    kind: (row.kind as CaregiverSuggestionDoc['kind']) || 'add',
+    medicine: row.medicine as CaregiverSuggestedMedicinePayload,
+    status: (row.status as CaregiverSuggestionDoc['status']) || 'pending',
+    createdAt,
+    createdAtMs: isoToMillisSafe(createdAt),
+  };
+
+  const patientName = asOptionalString(row.patient_name);
+  if (patientName !== undefined) doc.patientName = patientName;
+  const targetMedicineId = asOptionalString(row.target_medicine_id);
+  if (targetMedicineId !== undefined) doc.targetMedicineId = targetMedicineId;
+  const targetMedicineName = asOptionalString(row.target_medicine_name);
+  if (targetMedicineName !== undefined) doc.targetMedicineName = targetMedicineName;
+  const note = asOptionalString(row.note);
+  if (note !== undefined) doc.note = note;
+
+  return doc;
+}
+
+// ============================================================================
+// 19. family_alerts (omits patient_uid on insert; uses alert_date)
+// ============================================================================
+export interface FamilyAlertRow {
+  id: string;
+  patient_uid?: string | null;
+  caregiver_uids: string[];
+  caregiver_link_ids: string[];
+  type: FamilyAlertDoc['type'];
+  medicine_id: string;
+  medicine_name: string;
+  slot: string | null;
+  alert_date: string;
+  message: string;
+  patient_name: string | null;
+  patient_phone: string | null;
+  seen_by: string[];
+  created_at: string;
+}
+
+export function familyAlertToRow(
+  alert: Omit<FamilyAlertDoc, 'patientUid'> & { patientUid?: string }
+): Omit<FamilyAlertRow, 'patient_uid'> {
+  const createdAt =
+    normalizeTimestampToIso(alert.createdAt) ??
+    (typeof alert.createdAtMs === 'number' && alert.createdAtMs > 0
+      ? new Date(alert.createdAtMs).toISOString()
+      : new Date().toISOString());
+
+  return {
+    id: alert.id,
+    caregiver_uids: Array.isArray(alert.caregiverUids) ? alert.caregiverUids : [],
+    caregiver_link_ids: Array.isArray(alert.caregiverLinkIds) ? alert.caregiverLinkIds : [],
+    type: alert.type,
+    medicine_id: alert.medicineId ?? '',
+    medicine_name: alert.medicineName ?? '',
+    slot: asNullableString(alert.slot),
+    alert_date: alert.date ?? '',
+    message: alert.message ?? '',
+    patient_name: asNullableString(alert.patientName),
+    patient_phone: asNullableString(alert.patientPhone),
+    seen_by: Array.isArray(alert.seenBy) ? alert.seenBy : [],
+    created_at: createdAt,
+  };
+}
+
+export function familyAlertFromRow(
+  row: Partial<FamilyAlertRow> & { id: string }
+): FamilyAlertDoc {
+  const createdAt = row.created_at ?? new Date().toISOString();
+  const doc: FamilyAlertDoc = {
+    id: String(row.id),
+    patientUid: String(row.patient_uid ?? ''),
+    caregiverUids: asStringArray(row.caregiver_uids),
+    caregiverLinkIds: asStringArray(row.caregiver_link_ids),
+    type: row.type === 'low_stock' ? 'low_stock' : 'missed_dose',
+    medicineId: String(row.medicine_id ?? ''),
+    medicineName: String(row.medicine_name ?? ''),
+    date: String(row.alert_date ?? ''),
+    message: String(row.message ?? ''),
+    createdAt,
+    createdAtMs: isoToMillisSafe(createdAt),
+    seenBy: asStringArray(row.seen_by),
+  };
+
+  const slot = asOptionalString(row.slot);
+  if (slot !== undefined) doc.slot = slot as TimeSlot;
+  const patientName = asOptionalString(row.patient_name);
+  if (patientName !== undefined) doc.patientName = patientName;
+  const patientPhone = asOptionalString(row.patient_phone);
+  if (patientPhone !== undefined) doc.patientPhone = patientPhone;
+
+  return doc;
+}
+

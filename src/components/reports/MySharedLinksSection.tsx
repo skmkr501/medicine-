@@ -2,10 +2,10 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { SharedReportDoc } from '../../types';
 import { useMedicine } from '../../context/MedicineContext';
 import {
-  fetchOwnerSharedReportsFromCloud,
-  revokeSharedReportInCloud,
-  deleteSharedReportInCloud,
-} from '../../firebase/services';
+  fetchOwnerSharedReportsFromSupabase as fetchOwnerSharedReportsFromCloud,
+  revokeSharedReportInSupabase as revokeSharedReportInCloud,
+  deleteSharedReportInSupabase as deleteSharedReportInCloud,
+} from '../../supabase/sharingService';
 import {
   buildSharedReportUrl,
   canDeleteExpiredSharedReport,
@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 
 interface MySharedLinksSectionProps {
-  /** When false (e.g. inside Settings), waits until user expands/opens to fetch from Firestore */
+  /** When false (e.g. inside Settings), waits until user expands/opens to fetch from Supabase */
   autoLoadOnMount?: boolean;
   /** Incrementing trigger from parent when a new report link is created */
   refreshSignal?: number;

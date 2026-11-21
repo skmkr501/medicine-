@@ -322,42 +322,42 @@ export function validateMedicineRecord(
 ): string[] {
   const errors: string[] = [];
 
-  // Core essential attributes & Firestore rules validation
+  // Core essential attributes & length limits validation
   if (!record.brandName || record.brandName.trim().length === 0) {
     errors.push('ব্র্যান্ড নাম (Brand Name) অনুপস্থিত');
   } else if (record.brandName.length > 128) {
-    errors.push('ব্র্যান্ড নাম সর্বোচ্চ ১২৮ অক্ষর হতে পারে (Firestore Rules)');
+    errors.push('ব্র্যান্ড নাম সর্বোচ্চ ১২৮ অক্ষর হতে পারে (সীমা অতিক্রম)');
   }
 
   if (!record.genericName || record.genericName.trim().length === 0) {
     errors.push('জেনেরিক নাম (Generic Name) অনুপস্থিত');
   } else if (record.genericName.length > 256) {
-    errors.push('জেনেরিক নাম সর্বোচ্চ ২৫৬ অক্ষর হতে পারে (Firestore Rules)');
+    errors.push('জেনেরিক নাম সর্বোচ্চ ২৫৬ অক্ষর হতে পারে (সীমা অতিক্রম)');
   }
 
   if (!record.strength || record.strength.trim().length === 0) {
     errors.push('শক্তি/মাত্রা (Strength) অনুপস্থিত');
   } else if (record.strength.length > 64) {
-    errors.push('শক্তি/মাত্রা সর্বোচ্চ ৬৪ অক্ষর হতে পারে (Firestore Rules)');
+    errors.push('শক্তি/মাত্রা সর্বোচ্চ ৬৪ অক্ষর হতে পারে (সীমা অতিক্রম)');
   }
 
   if (!record.dosageForm || record.dosageForm.trim().length === 0) {
     errors.push('ডোজের ধরন (Dosage Form) অনুপস্থিত');
   } else if (record.dosageForm.length > 64) {
-    errors.push('ডোজের ধরন সর্বোচ্চ ৬৪ অক্ষর হতে পারে (Firestore Rules)');
+    errors.push('ডোজের ধরন সর্বোচ্চ ৬৪ অক্ষর হতে পারে (সীমা অতিক্রম)');
   }
 
   if (!record.manufacturer || record.manufacturer.trim().length === 0) {
     errors.push('প্রস্তুতকারক প্রতিষ্ঠান (Manufacturer) অনুপস্থিত');
   } else if (record.manufacturer.length > 128) {
-    errors.push('প্রস্তুতকারক প্রতিষ্ঠান সর্বোচ্চ ১২৮ অক্ষর হতে পারে (Firestore Rules)');
+    errors.push('প্রস্তুতকারক প্রতিষ্ঠান সর্বোচ্চ ১২৮ অক্ষর হতে পারে (সীমা অতিক্রম)');
   }
 
   // Legal & Compliance validations (Requirements 1, 2, 5)
   if (!record.source) {
     errors.push('উৎস (Source) অনুপস্থিত');
   } else if (record.source.length > 64) {
-    errors.push('উৎস সর্বোচ্চ ৬৪ অক্ষর হতে পারে (Firestore Rules)');
+    errors.push('উৎস সর্বোচ্চ ৬৪ অক্ষর হতে পারে (সীমা অতিক্রম)');
   }
 
   if (!record.licenseReference || record.licenseReference.trim().length === 0) {

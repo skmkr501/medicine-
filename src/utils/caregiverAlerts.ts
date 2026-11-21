@@ -67,15 +67,15 @@ function getSafeStorage(storage?: SimpleStorageLike): SimpleStorageLike | null {
   return null;
 }
 
-export function sanitizeFirestoreIdPart(raw: string): string {
+export function sanitizeIdPart(raw: string): string {
   const cleaned = (raw || 'item').replace(/[^a-zA-Z0-9_-]/g, '_');
   return cleaned || 'item';
 }
 
 /**
- * Generates a 6-character uppercase alphanumeric invite code (excluding 0/O/1/I).
+ * Generates an 8-character uppercase alphanumeric invite code (excluding 0/O/1/I).
  */
-export function generateInviteCode(length: number = 6): string {
+export function generateInviteCode(length: number = 8): string {
   const chars: string[] = [];
   const alphabetLen = CAREGIVER_CODE_ALPHABET.length;
   for (let i = 0; i < length; i++) {
@@ -100,22 +100,22 @@ export function normalizeInviteCodeInput(raw: string): string {
 
   if (!ascii) return '';
 
-  // If user pasted a multi-word WhatsApp invite message, extract the 6-char code token cleanly
+  // If user pasted a multi-word WhatsApp invite message, extract the 8-char code token cleanly
   if (/\s|:/.test(ascii)) {
     const strictAlphabetMatch = ascii.match(
-      /(?:^|[^A-Z0-9])([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6})(?:$|[^A-Z0-9])/
+      /(?:^|[^A-Z0-9])([ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8})(?:$|[^A-Z0-9])/
     );
     if (strictAlphabetMatch) return strictAlphabetMatch[1];
 
-    const generalSixMatch = ascii.match(/(?:^|[^A-Z0-9])([A-Z0-9]{6})(?:$|[^A-Z0-9])/);
-    if (generalSixMatch) return generalSixMatch[1];
+    const generalEightMatch = ascii.match(/(?:^|[^A-Z0-9])([A-Z0-9]{8})(?:$|[^A-Z0-9])/);
+    if (generalEightMatch) return generalEightMatch[1];
   }
 
-  return ascii.replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  return ascii.replace(/[^A-Z0-9]/g, '').slice(0, 8);
 }
 
 export function isValidInviteCode(code: string): boolean {
-  return /^[A-Z0-9]{6}$/.test(code);
+  return /^[A-Z0-9]{8}$/.test(code);
 }
 
 export function isInviteExpired(expiresAtMs: number, nowMs: number = Date.now()): boolean {
@@ -164,24 +164,23 @@ export function buildPatientManualAlertWhatsAppUrl(alertMessage: string): string
 }
 
 /**
- * Deterministic alert document ID complying strictly with Firestore ID regex ^[a-zA-Z0-9_-]+$.
+ * Deterministic alert ID: `${type}_${medicineId}_${slot}_${date}`.
  * Ensures at most 1 alert per dose/medicine per day.
  */
 export function buildDeterministicAlertId(
-  patientUid: string,
-  medicineId: string,
-  dateIso: string,
   type: FamilyAlertType,
-  slot?: TimeSlot
+  medicineId: string,
+  slot: TimeSlot | undefined,
+  dateIso: string
 ): string {
-  const p = sanitizeFirestoreIdPart(patientUid).slice(0, 32);
-  const m = sanitizeFirestoreIdPart(medicineId).slice(0, 40);
-  const d = sanitizeFirestoreIdPart(dateIso);
-  const tail =
+  const t = sanitizeIdPart(type);
+  const m = sanitizeIdPart(medicineId).slice(0, 48);
+  const slotPart =
     type === 'missed_dose'
       ? SLOT_ASCII_MAP[slot || 'সকাল'] || 'dose'
-      : 'low_stock';
-  return `${p}_${m}_${d}_${tail}`.slice(0, 128);
+      : 'stock';
+  const d = sanitizeIdPart(dateIso);
+  return `${t}_${m}_${slotPart}_${d}`.slice(0, 128);
 }
 
 /**
@@ -358,11 +357,10 @@ export function evaluateCaregiverTriggers(
       if (nowMs >= triggerAtMs) {
         if (caregiverUids.length > 0) {
           const alertId = buildDeterministicAlertId(
-            input.patientUid,
-            med.id,
-            dateIso,
             'missed_dose',
-            sch.timeSlot
+            med.id,
+            sch.timeSlot,
+            dateIso
           );
           if (!sentIds.has(alertId)) {
             const slotWord = SLOT_GENITIVE_BN[sch.timeSlot] || sch.timeSlot;
@@ -401,10 +399,10 @@ export function evaluateCaregiverTriggers(
         const daysRemaining = stock <= 0 ? 0 : Math.floor(stock / dailyUsage);
         if (daysRemaining < 3 && caregiverUids.length > 0) {
           const alertId = buildDeterministicAlertId(
-            input.patientUid,
+            'low_stock',
             med.id,
-            dateIso,
-            'low_stock'
+            undefined,
+            dateIso
           );
           if (!sentIds.has(alertId)) {
             const message =

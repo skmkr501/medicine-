@@ -22,7 +22,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
     syncLocalToCloud,
     isSyncing,
     syncStatus,
-    isQuotaExceeded,
     lastSyncedAt,
     triggerManualSync,
     isCloudConnected,
@@ -50,7 +49,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
     { id: 'medicines', label: isBn ? 'ওষুধ' : 'Medicines', matchPages: ['medicines', 'weekly-pillbox', 'add-medicine', 'library', 'shopping-list'] },
     { id: 'doctors', label: isBn ? 'ডাক্তার' : 'Doctors', matchPages: ['doctors', 'appointments'] },
     { id: 'ai-assistant', label: 'AI সহায়ক', matchPages: ['ai-assistant'] },
-    { id: 'me', label: isBn ? 'আমি' : 'Me', matchPages: ['me', 'settings', 'health-records', 'history', 'share-report'] },
+    { id: 'me', label: isBn ? 'আমি' : 'Me', matchPages: ['me', 'settings', 'health-records', 'history', 'share-report', 'emergency-qr', 'guest-views', 'phone-transfer', 'phonebook'] },
     ...(isAdmin
       ? [{ id: 'admin-import' as NavigationPage, label: isBn ? 'অ্যাডমিন' : 'Admin', matchPages: ['admin-import', 'admin-dashboard', 'admin-library'] as NavigationPage[] }]
       : []),
@@ -144,20 +143,18 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
             <button
               type="button"
               onClick={triggerManualSync}
-              disabled={syncStatus === 'syncing' || isSyncing || isQuotaExceeded}
+              disabled={syncStatus === 'syncing' || isSyncing}
               className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center ${
-                syncStatus === 'synced' && !isQuotaExceeded
+                syncStatus === 'synced'
                   ? 'text-success-text hover:bg-success-soft'
                   : syncStatus === 'syncing' || isSyncing
                   ? 'text-primary bg-primary-soft'
-                  : syncStatus === 'offline' || isQuotaExceeded
+                  : syncStatus === 'offline'
                   ? 'text-warning-text hover:bg-warning-soft'
                   : 'text-danger-text hover:bg-danger-soft'
               }`}
               title={
-                isQuotaExceeded
-                  ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
-                  : syncStatus === 'synced'
+                syncStatus === 'synced'
                   ? `✓ ক্লাউড সিঙ্ক হয়েছে (${lastSyncedAt ? `শেষ সিঙ্ক: ${lastSyncedAt}` : 'সক্রিয়'})`
                   : syncStatus === 'syncing' || isSyncing
                   ? '⟳ চলছে...'
@@ -199,7 +196,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
             {isDarkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-text-muted" />}
           </button>
 
-          {/* Firebase Authentication & Cloud Sync Widget */}
+          {/* Cloud Authentication & Sync Widget */}
           {currentUser ? (
             <div className="relative">
               <button
@@ -247,21 +244,13 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
                       e.stopPropagation();
                       syncLocalToCloud();
                     }}
-                    disabled={isSyncing || isQuotaExceeded}
-                    title={
-                      isQuotaExceeded
-                        ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
-                        : 'ক্লাউডে সিঙ্ক করুন'
-                    }
+                    disabled={isSyncing}
+                    title="ক্লাউডে সিঙ্ক করুন"
                     className="w-full text-left px-3 py-2.5 min-h-[48px] rounded-lg hover:bg-surface-2 flex items-center justify-between text-text cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mt-1"
                   >
                     <span className="flex items-center gap-2 text-sm font-medium">
                       <RefreshCw className={`w-4 h-4 text-primary shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
-                      <span>
-                        {isQuotaExceeded
-                          ? 'আজকের সীমা শেষ, দুপুর ২টার পর চেষ্টা করুন'
-                          : 'ক্লাউডে সিঙ্ক করুন'}
-                      </span>
+                      <span>ক্লাউডে সিঙ্ক করুন</span>
                     </span>
                   </button>
 

@@ -152,7 +152,7 @@ export const CaregiverAlertBanners: React.FC = () => {
                 যত্নকারীকে এখনই জানানো যায়নি
               </p>
               <p className="text-sm text-text mt-0.5">
-                ইন্টারনেট বা ক্লাউড সীমার কারণে {toBengaliNumber(failedCaregiverAlerts.length)}টি সতর্কতা অপেক্ষায় আছে। চাইলে এখনই হোয়াটসঅ্যাপে পাঠাতে পারেন:
+                ইন্টারনেট বা সংযোগ সমস্যার কারণে {toBengaliNumber(failedCaregiverAlerts.length)}টি সতর্কতা অপেক্ষায় আছে। চাইলে এখনই হোয়াটসঅ্যাপে পাঠাতে পারেন:
               </p>
               <p className="text-sm font-semibold text-text mt-1.5">
                 “{failedCaregiverAlerts[0].message}”
@@ -258,7 +258,7 @@ export const CaregiverFamilyCard: React.FC = () => {
             className="min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-bold text-primary bg-primary-soft border border-primary/25 flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isCaregiverLoading ? 'animate-spin' : ''}`} />
-            <span>হালনাগাদ</span>
+            <span>রিফ্রেশ</span>
           </button>
 
           <button

@@ -283,6 +283,36 @@ export interface FamilyAlertDoc {
   seenBy: string[];
 }
 
+export type GuestViewExpiryHours = 24 | 168 | 720;
+
+export interface GuestViewMedicineItem {
+  brandName: string;
+  strength?: string;
+  dosage: string;
+  mealTiming: string;
+  time: string;
+}
+
+export interface GuestViewSnapshot {
+  patientName: string;
+  slots: Record<TimeSlot, GuestViewMedicineItem[]>;
+  generatedAt: string;
+}
+
+export interface GuestViewDoc {
+  token: string;
+  ownerUid: string;
+  patientName: string;
+  snapshot: GuestViewSnapshot;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  createdAtMs?: number;
+  updatedAtMs?: number;
+  expiresAtMs?: number;
+  active: boolean;
+}
+
 export type NavigationPage =
   | 'dashboard'
   | 'me'
@@ -290,6 +320,7 @@ export type NavigationPage =
   | 'health-records'
   | 'appointments'
   | 'doctors'
+  | 'phonebook'
   | 'medicines'
   | 'weekly-pillbox'
   | 'add-medicine'
@@ -298,6 +329,8 @@ export type NavigationPage =
   | 'history'
   | 'share-report'
   | 'emergency-qr'
+  | 'guest-views'
+  | 'phone-transfer'
   | 'ai-assistant'
   | 'settings'
   | 'library'
@@ -368,7 +401,7 @@ export interface MedicalDocument {
   pages: MedicalDocumentPageMeta[]; // max 10 pages
   createdAt: unknown;
   updatedAt: unknown;
-  pendingCloudUpload?: boolean; // client-only indicator, stripped before Firestore write
+  pendingCloudUpload?: boolean; // client-only indicator, stripped before cloud write
 }
 
 export interface MedicalDocumentFile {

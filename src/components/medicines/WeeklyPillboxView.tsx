@@ -16,7 +16,7 @@ import {
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import { toLocalIsoDate } from '../../utils/shoppingListCalculator';
-import { DOSE_LOG_REALTIME_DAYS, getDoseLogsCutoffDate } from '../../utils/firestoreReadOptimizer';
+import { DOSE_LOG_REALTIME_DAYS, getDoseLogsCutoffDate } from '../../utils/cloudReadOptimizer';
 import {
   PillboxDoseItem,
   PillboxWeekDay,

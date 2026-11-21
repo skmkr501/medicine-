@@ -876,14 +876,17 @@ export async function cleanupDemoRecordsFromSupabase(
   }
 }
 
-export function getSupabaseDataErrorMessageBn(error: unknown): string {
-  if (!error) return 'একটি অজানা ত্রুটি ঘটেছে।';
+export function getSupabaseDataErrorMessageBn(
+  error: unknown,
+  fallbackMessage?: string
+): string {
+  if (!error) return fallbackMessage || 'একটি অজানা ত্রুটি ঘটেছে।';
   const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
   if (msg.includes('jwt') || msg.includes('not authenticated') || msg.includes('401')) {
     return 'লগইন সেশন শেষ হয়েছে। অনুগ্রহ করে আবার লগইন করুন।';
   }
   if (msg.includes('row-level security') || msg.includes('permission denied') || msg.includes('403')) {
-    return 'অনুমতি নেই: আপনার এই তথ্য পরিবর্তন করার অনুমতি নেই।';
+    return fallbackMessage || 'অনুমতি নেই: আপনার এই তথ্য পরিবর্তন করার অনুমতি নেই।';
   }
   if (
     msg.includes('failed to fetch') ||
@@ -893,5 +896,6 @@ export function getSupabaseDataErrorMessageBn(error: unknown): string {
   ) {
     return 'ইন্টারনেট সংযোগ সমস্যা। অনুগ্রহ করে সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।';
   }
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error && error.message) return error.message;
+  return fallbackMessage || String(error);
 }

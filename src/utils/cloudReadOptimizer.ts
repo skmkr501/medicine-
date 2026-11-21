@@ -4,8 +4,8 @@ import { addLocalDays, toLocalIsoDate } from './shoppingListCalculator';
 export const DOSE_LOG_REALTIME_DAYS = 90;
 export const DOSE_LOG_INITIAL_DAYS = 90;
 export const OLDER_LOGS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-export const COLLECTION_SYNC_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours (medicines, patients, settings)
-export const RECORDS_SYNC_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours (upcoming appointments, health records)
+export const COLLECTION_SYNC_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+export const RECORDS_SYNC_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const HEALTH_RECORDS_INITIAL_LIMIT = 60;
 
 export type CloudSyncCollectionKey =
@@ -15,6 +15,7 @@ export type CloudSyncCollectionKey =
   | 'upcomingAppointments'
   | 'healthRecords'
   | 'doctors'
+  | 'phonebook'
   | 'documents';
 
 export type CloudSyncMetaMap = Partial<Record<CloudSyncCollectionKey, number>>;
@@ -29,6 +30,28 @@ interface CachedPastAppointmentsPayload {
   cachedAtMs: number;
   beforeDateIso: string;
   appointments: DoctorAppointment[];
+}
+
+/**
+ * Recursively removes `undefined` fields from plain objects/arrays before JSON serialization.
+ */
+export function stripUndefined<T>(obj: T): T {
+  if (obj === null || obj === undefined || typeof obj !== 'object') {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => stripUndefined(item)) as unknown as T;
+  }
+  if (obj instanceof Date) {
+    return obj;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (value !== undefined) {
+      result[key] = stripUndefined(value);
+    }
+  }
+  return result as T;
 }
 
 export function getDoseLogsCutoffDate(
@@ -47,10 +70,6 @@ export function getAppointmentsRecentCutoffDate(
   return toLocalIsoDate(addLocalDays(refDate, -safeDays));
 }
 
-/**
- * Keeps older logs (< cutoffDate) intact from local state/cache while authoritatively
- * updating the active real-time window (>= cutoffDate) from the bounded onSnapshot listener.
- */
 export function mergeDoseLogsWithWindow(
   existingLogs: DoseLog[],
   recentWindowLogs: DoseLog[],
@@ -76,10 +95,6 @@ export function mergeDoseLogsWithWindow(
   });
 }
 
-/**
- * Replaces the older portion (< cutoffDate) with freshly fetched/cached older logs
- * while preserving the authoritative real-time 45-day window (>= cutoffDate).
- */
 export function replaceOlderDoseLogsKeepingRecent(
   existingLogs: DoseLog[],
   olderLogs: DoseLog[],
@@ -103,10 +118,6 @@ export function replaceOlderDoseLogsKeepingRecent(
   });
 }
 
-/**
- * Keeps cached past appointments (< minDateIso) intact while replacing upcoming/recent
- * appointments (>= minDateIso) from Firestore.
- */
 export function mergeUpcomingAppointments(
   existing: DoctorAppointment[],
   upcomingFromCloud: DoctorAppointment[],
@@ -128,10 +139,6 @@ export function mergeUpcomingAppointments(
   return Array.from(byId.values());
 }
 
-/**
- * Replaces past appointments (< beforeDateIso) from cloud/cache while keeping
- * already-synced upcoming appointments (>= beforeDateIso).
- */
 export function replacePastAppointmentsKeepingUpcoming(
   existing: DoctorAppointment[],
   pastFromCloud: DoctorAppointment[],
@@ -262,7 +269,6 @@ export function loadCachedOlderDoseLogs(
     if (nowMs - parsed.cachedAtMs >= OLDER_LOGS_CACHE_TTL_MS) {
       return { hit: false, logs: [] };
     }
-    // Cached cutoffDate must be >= current cutoffDate so there is no gap between older cache and 45-day listener
     if (parsed.cutoffDate < cutoffDate) {
       return { hit: false, logs: [] };
     }
@@ -290,7 +296,7 @@ export function saveCachedOlderDoseLogs(
     };
     localStorage.setItem(getOlderDoseLogsStorageKey(uid), JSON.stringify(payload));
   } catch {
-    // ignore quota / storage errors gracefully
+    // ignore storage errors gracefully
   }
 }
 

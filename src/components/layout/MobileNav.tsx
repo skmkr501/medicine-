@@ -42,7 +42,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({ activePage, onNavigate }) 
       id: 'me',
       label: 'আমি',
       icon: User,
-      matchPages: ['me', 'settings', 'health-records', 'history'],
+      matchPages: ['me', 'settings', 'health-records', 'history', 'share-report', 'emergency-qr', 'guest-views', 'phone-transfer', 'phonebook'],
     },
   ];
 

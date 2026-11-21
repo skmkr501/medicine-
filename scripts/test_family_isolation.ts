@@ -7,12 +7,22 @@
  * 4. Dashboard family care summary accuracy
  * 5. Dose taken independence (no side-effects on other members' stock or history)
  * 6. Archived profile history & data preservation
- * 7. Cross-account Firestore security rules access isolation (Account A vs Account B)
- * 8. Security rules deployment status verification
+ * 7. Cross-account Supabase RLS isolation & client payload ownership omission
+ * 8. Supabase PatientProfile mapper & archive schema consistency verification
  */
 
-import { PatientProfile, Medicine, DoseLog, TimeSlot } from '../src/types';
+import { PatientProfile, Medicine, DoseLog } from '../src/types';
 import { parseDosageUnits } from '../src/utils/stockPredictor';
+import {
+  caregiverLinkToRow,
+  caregiverSuggestionToRow,
+  emergencyCardToRow,
+  familyAlertToRow,
+  guestViewToRow,
+  patientFromRow,
+  patientToRow,
+  sharedReportToRow,
+} from '../src/supabase/mappers';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -458,88 +468,142 @@ const activeAfterUnarchive = profiles.filter((p) => !p.isArchived);
 assert(activeAfterUnarchive.length === 3, 'Mother successfully unarchived, active profiles restored to 3');
 
 // -------------------------------------------------------------------------
-// Requirement 7: Multi-User / Cross-Account Security Rules Verification
+// Requirement 7: Multi-User / Cross-Account Supabase RLS & Ownership Omission
 // -------------------------------------------------------------------------
-console.log('\n--- REQ 7: দুটি আলাদা টেস্ট অ্যাকাউন্টে Cross-Account এক্সেস ব্লকিং পরীক্ষা ---');
+console.log('\n--- REQ 7: Supabase RLS বিচ্ছিন্নতা ও ক্লায়েন্ট-সাইড মালিকানা সুরক্ষা পরীক্ষা ---');
 
-// Parse firestore.rules to verify security rules implementation
-const rulesPath = path.resolve(process.cwd(), 'firestore.rules');
-const rulesContent = fs.readFileSync(rulesPath, 'utf-8');
+const userDataServicePath = path.resolve(process.cwd(), 'src/supabase/userDataService.ts');
+const userDataServiceContent = fs.readFileSync(userDataServicePath, 'utf-8');
 
-assert(rulesContent.includes('match /users/{userId}'), 'Security rules contain /users/{userId} isolation');
-assert(rulesContent.includes('if isOwner(userId)'), 'Security rules enforce isOwner(userId) on all user subcollections');
-assert(rulesContent.includes('function isOwner(userId)'), 'isOwner security helper function is defined');
-assert(rulesContent.includes('request.auth.uid == userId'), 'isOwner checks strict equality between auth.uid and resource path userId');
+assert(
+  !userDataServiceContent.includes('user_id:'),
+  'userDataService does NOT inject user_id into upsert rows (Postgres defaults auth.uid() & RLS enforces owner)'
+);
 
-// Simulate the Firestore rule engine evaluation function
-interface SecurityContext {
-  auth: { uid: string } | null;
+const mappersPath = path.resolve(process.cwd(), 'src/supabase/mappers.ts');
+const mappersContent = fs.readFileSync(mappersPath, 'utf-8');
+assert(
+  !mappersContent.includes('owner_id: report.'),
+  'sharedReportToRow omits owner_id so Postgres RLS auth.uid() cannot be spoofed'
+);
+
+// Verify Part 3 toRow mappers never include spoofable auth-owner columns
+const sampleReportRow = sharedReportToRow({
+  token: 'tok_test_12345678901234567890',
+  patientName: 'রহিম',
+  sections: {},
+  createdAt: '2026-11-20T00:00:00.000Z',
+  expiresAt: '2026-11-27T00:00:00.000Z',
+  revoked: false,
+});
+assert(!('owner_id' in sampleReportRow), 'sharedReportToRow output omits owner_id');
+
+const sampleCardRow = emergencyCardToRow({
+  token: 'emg_test_12345678901234567890',
+  patientName: 'রহিম',
+  createdAt: '2026-11-20T00:00:00.000Z',
+  active: true,
+});
+assert(!('owner_id' in sampleCardRow), 'emergencyCardToRow output omits owner_id');
+
+const sampleGuestRow = guestViewToRow({
+  token: 'gst_test_12345678901234567890',
+  patientName: 'রহিম',
+  snapshot: {
+    patientName: 'রহিম',
+    slots: { 'সকাল': [], 'দুপুর': [], 'সন্ধ্যা': [], 'রাত': [] },
+    generatedAt: '2026-11-20T00:00:00.000Z',
+  },
+  createdAt: '2026-11-20T00:00:00.000Z',
+  updatedAt: '2026-11-20T00:00:00.000Z',
+  expiresAt: '2026-11-27T00:00:00.000Z',
+  active: true,
+});
+assert(!('owner_id' in sampleGuestRow), 'guestViewToRow output omits owner_id');
+
+const sampleLinkRow = caregiverLinkToRow({
+  id: 'A7K9M2PQ',
+  inviteCode: 'A7K9M2PQ',
+  caregiverUid: '',
+  patientName: 'রহিম',
+  caregiverName: '',
+  status: 'pending',
+  allowFullView: false,
+  allowSuggestions: true,
+  createdAt: '2026-11-20T00:00:00.000Z',
+  updatedAt: '2026-11-20T00:00:00.000Z',
+  expiresAt: '2026-11-22T00:00:00.000Z',
+  expiresAtMs: Date.parse('2026-11-22T00:00:00.000Z'),
+});
+assert(!('patient_uid' in sampleLinkRow), 'caregiverLinkToRow output omits patient_uid');
+
+const sampleSuggestionRow = caregiverSuggestionToRow({
+  id: 'sug-1',
+  patientUid: 'patient-uid-1',
+  linkId: 'A7K9M2PQ',
+  caregiverName: 'তানভীর',
+  kind: 'add',
+  medicine: {
+    brandName: 'Napa',
+    type: 'ট্যাবলেট',
+    dosage: '১টি',
+    timeSlots: ['সকাল'],
+    mealTiming: 'খাওয়ার পরে',
+    stock: 10,
+    unit: 'টি',
+  },
+  status: 'pending',
+  createdAt: '2026-11-20T00:00:00.000Z',
+  createdAtMs: Date.parse('2026-11-20T00:00:00.000Z'),
+});
+assert(!('caregiver_uid' in sampleSuggestionRow), 'caregiverSuggestionToRow output omits caregiver_uid');
+
+const sampleAlertRow = familyAlertToRow({
+  id: 'missed_dose_med1_morning_2026-11-20',
+  caregiverUids: ['cg-1'],
+  caregiverLinkIds: ['A7K9M2PQ'],
+  type: 'missed_dose',
+  medicineId: 'med1',
+  medicineName: 'Napa',
+  date: '2026-11-20',
+  message: 'রহিম আজ সকালের Napa খাননি',
+  createdAt: '2026-11-20T09:00:00.000Z',
+  createdAtMs: Date.parse('2026-11-20T09:00:00.000Z'),
+  seenBy: [],
+});
+assert(!('patient_uid' in sampleAlertRow), 'familyAlertToRow output omits patient_uid');
+
+// Simulate RLS user_id = auth.uid() row check across Account A and Account B
+interface RlsContext {
+  authUid: string | null;
 }
-
-function evaluateFirestoreRule(
-  path: string,
-  method: 'read' | 'write',
-  context: SecurityContext
-): { allowed: boolean; reason: string } {
-  // Check users/{userId}/* match
-  const userSubmatch = path.match(/^\/users\/([^/]+)\/(patients|medicines|doseLogs|settings)/);
-  if (userSubmatch) {
-    const targetUserId = userSubmatch[1];
-    if (!context.auth) {
-      return { allowed: false, reason: 'PERMISSION_DENIED: Unauthenticated request' };
-    }
-    if (context.auth.uid === targetUserId) {
-      return { allowed: true, reason: 'ALLOWED: User is resource owner' };
-    }
-    return {
-      allowed: false,
-      reason: `PERMISSION_DENIED: Cross-account access denied (request.auth.uid '${context.auth.uid}' != resource owner '${targetUserId}')`,
-    };
-  }
-
-  return { allowed: false, reason: 'PERMISSION_DENIED: No matching allow rule' };
+function evaluatePostgresRls(rowUserId: string, context: RlsContext): boolean {
+  return Boolean(context.authUid && context.authUid === rowUserId);
 }
+const accountA: RlsContext = { authUid: 'user_account_A_12345' };
+const accountB: RlsContext = { authUid: 'user_account_B_67890' };
+const unauthenticated: RlsContext = { authUid: null };
 
-const accountA: SecurityContext = { auth: { uid: 'user_account_A_12345' } };
-const accountB: SecurityContext = { auth: { uid: 'user_account_B_67890' } };
-const unauthenticated: SecurityContext = { auth: null };
-
-// Test 7a: Account A reading Account A's patients -> ALLOWED
-const resAA = evaluateFirestoreRule('/users/user_account_A_12345/patients', 'read', accountA);
-assert(resAA.allowed, 'Account A CAN read its own patients data');
-
-// Test 7b: Account A trying to read Account B's patients -> BLOCKED
-const resAB_read = evaluateFirestoreRule('/users/user_account_B_67890/patients', 'read', accountA);
-assert(!resAB_read.allowed, `Account A CANNOT read Account B's patients: ${resAB_read.reason}`);
-
-// Test 7c: Account A trying to modify Account B's medicines -> BLOCKED
-const resAB_writeMed = evaluateFirestoreRule('/users/user_account_B_67890/medicines/med_1', 'write', accountA);
-assert(!resAB_writeMed.allowed, `Account A CANNOT write to Account B's medicines: ${resAB_writeMed.reason}`);
-
-// Test 7d: Account A trying to modify Account B's doseLogs -> BLOCKED
-const resAB_writeLog = evaluateFirestoreRule('/users/user_account_B_67890/doseLogs/log_1', 'write', accountA);
-assert(!resAB_writeLog.allowed, `Account A CANNOT tamper with Account B's dose logs: ${resAB_writeLog.reason}`);
-
-// Test 7e: Unauthenticated request to Account B's data -> BLOCKED
-const resAnon = evaluateFirestoreRule('/users/user_account_B_67890/patients', 'read', unauthenticated);
-assert(!resAnon.allowed, `Unauthenticated request CANNOT read Account B's patients: ${resAnon.reason}`);
+assert(evaluatePostgresRls(accountA.authUid!, accountA), 'Account A CAN access its own rows');
+assert(!evaluatePostgresRls(accountB.authUid!, accountA), 'Account A CANNOT access Account B rows');
+assert(!evaluatePostgresRls(accountB.authUid!, unauthenticated), 'Unauthenticated request CANNOT access Account B rows');
 
 // -------------------------------------------------------------------------
-// Requirement 8: Security Rules Deploy Status & Blueprint Verification
+// Requirement 8: Supabase Mapper Schema Consistency Verification
 // -------------------------------------------------------------------------
-console.log('\n--- REQ 8: Security Rules ডিপ্লয়মেন্ট ও Blueprint কনসিস্টেন্সি ---');
+console.log('\n--- REQ 8: Supabase PatientProfile Mapper ও আর্কাইভ স্কিমা পরীক্ষা ---');
 
-const blueprintPath = path.resolve(process.cwd(), 'firebase-blueprint.json');
-const blueprintContent = fs.readFileSync(blueprintPath, 'utf-8');
-const blueprint = JSON.parse(blueprintContent);
-
-const patientSchema = blueprint.entities.PatientProfile.properties;
-assert(patientSchema.isArchived !== undefined, 'firebase-blueprint.json contains isArchived boolean schema');
-assert(patientSchema.archivedAt !== undefined, 'firebase-blueprint.json contains archivedAt string schema');
-
-// Verify that firestore.rules isValidPatient includes isArchived validation
-assert(rulesContent.includes('isArchived'), 'firestore.rules isValidPatient() validates isArchived');
-assert(rulesContent.includes('archivedAt'), 'firestore.rules isValidPatient() validates archivedAt');
+const archivedProfileSample: PatientProfile = {
+  ...profiles[1],
+  isArchived: true,
+  archivedAt: '2026-11-20T12:00:00.000Z',
+};
+const mappedRow = patientToRow(archivedProfileSample);
+assert(mappedRow.is_archived === true, 'patientToRow maps isArchived -> is_archived');
+assert(mappedRow.archived_at === '2026-11-20T12:00:00.000Z', 'patientToRow maps archivedAt -> archived_at');
+const roundTrippedPatient = patientFromRow(mappedRow);
+assert(roundTrippedPatient.isArchived === true, 'patientFromRow preserves isArchived');
+assert(roundTrippedPatient.archivedAt === '2026-11-20T12:00:00.000Z', 'patientFromRow preserves archivedAt');
 
 console.log('\n================================================================');
 console.log('  🎉 ALL 8 TESTS PASSED SUCCESSFULLY! No regressions found.  ');

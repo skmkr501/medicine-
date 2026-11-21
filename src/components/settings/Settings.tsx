@@ -39,6 +39,8 @@ import {
   Square,
   Share2,
   CalendarDays,
+  Eye,
+  QrCode,
 } from 'lucide-react';
 import {
   isNativeRemindersAvailable,
@@ -1175,20 +1177,30 @@ export const Settings: React.FC = () => {
           <div>
             <h2 className="text-base font-bold text-text flex items-center gap-2">
               <Share2 className="w-4 h-4 text-primary" />
-              <span>রিপোর্ট শেয়ার লিংক (ডাক্তার/পরিবার)</span>
+              <span>রিপোর্ট ও অতিথি দেখার লিংক</span>
             </h2>
             <p className="text-xs text-text-muted mt-0.5">
-              মেয়াদি নিরাপদ লিংক তৈরি করুন ও আগে তৈরি করা লিংক পরিচালনা বা বাতিল করুন
+              মেয়াদি নিরাপদ রিপোর্ট লিংক এবং লগইন ছাড়া দৈনিক ওষুধ দেখার অতিথি লিংক পরিচালনা করুন
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setCurrentPage('share-report')}
-            className="min-h-[44px] px-3.5 py-2 rounded-lg bg-primary hover:bg-primary-hover text-on-primary text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-          >
-            <Share2 className="w-3.5 h-3.5" />
-            <span>নতুন শেয়ার লিংক বানান</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCurrentPage('guest-views')}
+              className="min-h-[44px] px-3.5 py-2 rounded-lg bg-surface-2 hover:bg-border/60 border border-border text-text text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Eye className="w-3.5 h-3.5 text-primary" />
+              <span>অতিথি দেখার লিংক</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentPage('share-report')}
+              className="min-h-[44px] px-3.5 py-2 rounded-lg bg-primary hover:bg-primary-hover text-on-primary text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>নতুন শেয়ার লিংক বানান</span>
+            </button>
+          </div>
         </div>
 
         <MySharedLinksSection autoLoadOnMount={false} />
@@ -1295,6 +1307,14 @@ export const Settings: React.FC = () => {
               onChange={handleImportBackupFile}
               className="hidden"
             />
+            <button
+              type="button"
+              onClick={() => setCurrentPage('phone-transfer')}
+              className="flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] text-xs font-semibold text-text bg-surface-2 border border-border rounded-lg hover:border-primary cursor-pointer"
+            >
+              <QrCode className="w-4 h-4 text-primary" />
+              <span>ফোন বদল (QR)</span>
+            </button>
             <button
               type="button"
               disabled={isImportingBackup}

@@ -76,7 +76,7 @@ export function isValidShareTokenFormat(token: string): boolean {
 export function extractSharedReportTokenFromPath(pathname: string): string | null {
   if (!pathname || typeof pathname !== 'string') return null;
   const cleaned = pathname.split('?')[0].split('#')[0];
-  const match = cleaned.match(/^\/r\/([A-Za-z0-9_-]{1,128})\/?$/);
+  const match = cleaned.match(/^\/(?:report|r)\/([A-Za-z0-9_-]{1,128})\/?$/);
   if (!match) return null;
   return match[1];
 }
@@ -86,7 +86,7 @@ export function buildSharedReportUrl(token: string, origin?: string): string {
     origin ||
     (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '')
   ).replace(/\/+$/g, '');
-  return `${cleanOrigin}/r/${token}`;
+  return `${cleanOrigin}/report/${token}`;
 }
 
 export function toMillisSafe(value: unknown): number {
