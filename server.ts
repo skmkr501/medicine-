@@ -1,6 +1,7 @@
 import express from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -172,15 +173,21 @@ const PORT = resolveServerPort();
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
-// Server-side initialization of GoogleGenAI
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
+// Lazy server-side initialization of GoogleGenAI so startup stays fast and clean
+let aiInstance: GoogleGenAI | null = null;
+function getAiClient(): GoogleGenAI {
+  if (!aiInstance) {
+    aiInstance = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+  }
+  return aiInstance;
+}
 
 const MANDATORY_DISCLAIMER = 'এটি সাধারণ তথ্য, ডাক্তারের পরামর্শের বিকল্প নয়।';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
@@ -228,7 +235,7 @@ async function listAvailableGeminiModels(forceRefresh = false): Promise<{
   }
 
   try {
-    const pager = await ai.models.list({ config: { pageSize: 100 } });
+    const pager = await getAiClient().models.list({ config: { pageSize: 100 } });
     const rawNames: string[] = [];
     let count = 0;
     for await (const model of pager) {
@@ -401,7 +408,7 @@ app.get('/api/ai/health', requireAdminAuth, rateLimitAi(false), async (req, res)
     const { result: probe, modelUsed } = await generateWithModelFallback(
       '/api/ai/health',
       (modelName) =>
-        ai.models.generateContent({
+        getAiClient().models.generateContent({
           model: modelName,
           contents: 'ok',
         })
@@ -504,7 +511,7 @@ app.post('/api/ai/medicine-info', requireSupabaseAuth, rateLimitAi(false), async
     const { result: response, modelUsed } = await generateWithModelFallback(
       '/api/ai/medicine-info',
       (modelName) =>
-        ai.models.generateContent({
+        getAiClient().models.generateContent({
           model: modelName,
           contents: prompt,
           config: {
@@ -586,7 +593,7 @@ app.post('/api/ai/scan-prescription', requireSupabaseAuth, rateLimitAi(true), as
     const { result: response, modelUsed } = await generateWithModelFallback(
       '/api/ai/scan-prescription',
       (modelName) =>
-        ai.models.generateContent({
+        getAiClient().models.generateContent({
           model: modelName,
           contents: [
             {
@@ -804,7 +811,7 @@ app.post('/api/ai/prescription', requireSupabaseAuth, rateLimitAi(true), async (
     const { result: response, modelUsed } = await generateWithModelFallback(
       '/api/ai/prescription',
       (modelName) =>
-        ai.models.generateContent({
+        getAiClient().models.generateContent({
           model: modelName,
           contents: {
             parts: [
@@ -963,7 +970,7 @@ JSON ফরম্যাটে উত্তর দাও:
     const { result: response, modelUsed } = await generateWithModelFallback(
       '/api/ai/drug-interaction',
       (modelName) =>
-        ai.models.generateContent({
+        getAiClient().models.generateContent({
           model: modelName,
           contents: prompt,
           config: {
@@ -1050,8 +1057,14 @@ function setPrivateReportHeaders(res: express.Response): void {
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
 }
 
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
 // Mount Vite or serve static assets
 async function startServer() {
+  const httpServer = http.createServer(app);
+
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     const prodIndexPath = path.resolve(__dirname, 'dist', 'index.html');
@@ -1068,18 +1081,24 @@ async function startServer() {
       res.sendFile(prodIndexPath);
     });
   } else {
-    const { createServer } = await import('vite');
-    const vite = await createServer({
-      server: {
-        middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true',
-      },
-      appType: 'spa',
+    const vitePromise = import('vite').then(({ createServer }) =>
+      createServer({
+        server: {
+          middlewareMode: true,
+          hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+        },
+        appType: 'spa',
+      })
+    );
+
+    vitePromise.catch((err) => {
+      console.error('Vite initialization error:', err);
     });
 
     app.get(['/r', '/r/*', '/report', '/report/*', '/e', '/e/*', '/guest', '/guest/*'], async (req, res, next) => {
       setPrivateReportHeaders(res);
       try {
+        const vite = await vitePromise;
         const devIndexPath = path.resolve(__dirname, 'index.html');
         const rawHtml = fs.readFileSync(devIndexPath, 'utf8');
         const transformed = await vite.transformIndexHtml(req.originalUrl, rawHtml);
@@ -1089,10 +1108,17 @@ async function startServer() {
       }
     });
 
-    app.use(vite.middlewares);
+    app.use(async (req, res, next) => {
+      try {
+        const vite = await vitePromise;
+        return vite.middlewares(req, res, next);
+      } catch (err) {
+        return next(err);
+      }
+    });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`স্বাস্থ্যবন্ধু (Shasthobondhu) Full-Stack Server running on http://0.0.0.0:${PORT}`);
   });
 }
