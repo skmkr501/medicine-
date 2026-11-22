@@ -18,7 +18,7 @@ import {
   extractGeminiErrorStatus,
   filterAvailableFlashProModels,
   pickFallbackFlashModel,
-  isModelNotFoundError,
+  executeWithModelFallback,
   normalizeGeminiModelName,
   UNAUTH_ERROR_MSG,
   FORBIDDEN_ADMIN_MSG,
@@ -268,60 +268,24 @@ async function generateWithModelFallback<T>(
   endpoint: string,
   invoke: (modelName: string) => Promise<T>
 ): Promise<{ result: T; modelUsed: string; usedFallback: boolean }> {
-  if (!hasGeminiApiKey()) {
-    const keyErr: any = new Error('GEMINI_API_KEY is missing from environment variables.');
-    keyErr.status = 401;
-    keyErr.attemptedModel = GEMINI_MODEL;
-    throw keyErr;
-  }
-
-  try {
-    const result = await invoke(GEMINI_MODEL);
-    return { result, modelUsed: GEMINI_MODEL, usedFallback: false };
-  } catch (primaryError: any) {
-    primaryError.attemptedModel = GEMINI_MODEL;
-    if (!isModelNotFoundError(primaryError)) {
-      throw primaryError;
-    }
-
-    console.warn(
-      formatSafeAiErrorLog(
-        endpoint,
-        extractGeminiErrorStatus(primaryError),
-        primaryError,
-        [],
-        GEMINI_MODEL
-      )
-    );
-
-    let fallbackModel = ENV_FALLBACK_MODEL || null;
-    if (!fallbackModel) {
+  return executeWithModelFallback({
+    endpoint,
+    primaryModel: GEMINI_MODEL,
+    envFallbackModel: ENV_FALLBACK_MODEL,
+    hasApiKey: hasGeminiApiKey(),
+    listAvailableModels: async () => {
       const { models } = await listAvailableGeminiModels(false);
-      fallbackModel = pickFallbackFlashModel(models, GEMINI_MODEL);
-    }
-
-    if (
-      !fallbackModel ||
-      normalizeGeminiModelName(fallbackModel).toLowerCase() ===
-        normalizeGeminiModelName(GEMINI_MODEL).toLowerCase()
-    ) {
-      throw primaryError;
-    }
-
-    try {
-      console.info(
-        `[AI Fallback] route=${endpoint} primary=${GEMINI_MODEL} retryingModel=${fallbackModel}`
-      );
-      const fallbackResult = await invoke(fallbackModel);
-      console.info(
-        `[AI Fallback] route=${endpoint} modelUsed=${fallbackModel} outcome=success`
-      );
-      return { result: fallbackResult, modelUsed: fallbackModel, usedFallback: true };
-    } catch (fallbackError: any) {
-      fallbackError.attemptedModel = fallbackModel;
-      throw fallbackError;
-    }
-  }
+      return models;
+    },
+    invoke,
+    onLog: (level, message) => {
+      if (level === 'warn') {
+        console.warn(message);
+      } else {
+        console.info(message);
+      }
+    },
+  });
 }
 
 // 1-minute caching for GET /api/ai/health probe

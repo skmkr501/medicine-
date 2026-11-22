@@ -378,6 +378,215 @@ export function isModelNotFoundError(error: any): boolean {
   return false;
 }
 
+export function isTransientAiError(error: any): boolean {
+  if (!error) return false;
+  const status = extractGeminiErrorStatus(error);
+  if (status === 401 || status === 403 || status === 404) {
+    return false;
+  }
+  if (status === 400 && !isModelNotFoundError(error)) {
+    return false;
+  }
+  if (status === 503 || status === 429 || status === 500 || status === 504) {
+    return true;
+  }
+
+  const msg = String(error?.message || error || '');
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('overloaded') ||
+    lower.includes('unavailable') ||
+    lower.includes('high demand') ||
+    lower.includes('resource_exhausted')
+  );
+}
+
+export const DEFAULT_FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
+export const PRIMARY_RETRY_DELAYS_MS = [1200, 3000] as const;
+export const FALLBACK_RETRY_DELAY_MS = 1500;
+
+export function buildFallbackModelChain(options: {
+  primaryModel: string;
+  envFallbackModel?: string | null;
+  pickedModel?: string | null;
+  extraFallbacks?: readonly string[];
+}): string[] {
+  const normalizedPrimary = normalizeGeminiModelName(options.primaryModel).toLowerCase();
+  const seen = new Set<string>();
+  const chain: string[] = [];
+
+  const rawCandidates = [
+    options.envFallbackModel || '',
+    options.pickedModel || '',
+    ...(options.extraFallbacks ?? DEFAULT_FALLBACK_MODELS),
+  ];
+
+  for (const raw of rawCandidates) {
+    const clean = normalizeGeminiModelName(raw);
+    if (!clean) continue;
+    const lower = clean.toLowerCase();
+    if (lower === normalizedPrimary || seen.has(lower)) continue;
+    seen.add(lower);
+    chain.push(clean);
+  }
+
+  return chain;
+}
+
+function attachAttemptedModel(error: unknown, modelName: string): any {
+  if (error && typeof error === 'object') {
+    try {
+      (error as any).attemptedModel = modelName;
+    } catch {
+      // Ignore frozen error objects
+    }
+    return error;
+  }
+  const wrapped: any = new Error(String(error || 'AI error'));
+  wrapped.attemptedModel = modelName;
+  return wrapped;
+}
+
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+export interface ExecuteWithModelFallbackOptions<T> {
+  endpoint: string;
+  primaryModel: string;
+  envFallbackModel?: string;
+  hasApiKey: boolean;
+  listAvailableModels: () => Promise<string[]>;
+  invoke: (modelName: string) => Promise<T>;
+  sleep?: (ms: number) => Promise<void>;
+  onLog?: (level: 'warn' | 'info', message: string) => void;
+}
+
+export async function executeWithModelFallback<T>(
+  options: ExecuteWithModelFallbackOptions<T>
+): Promise<{ result: T; modelUsed: string; usedFallback: boolean }> {
+  const {
+    endpoint,
+    primaryModel,
+    envFallbackModel,
+    hasApiKey,
+    listAvailableModels,
+    invoke,
+    sleep = defaultSleep,
+    onLog,
+  } = options;
+
+  if (!hasApiKey) {
+    const keyErr: any = new Error('GEMINI_API_KEY is missing from environment variables.');
+    keyErr.status = 401;
+    keyErr.attemptedModel = primaryModel;
+    throw keyErr;
+  }
+
+  let lastError: any = null;
+  const maxPrimaryAttempts = 1 + PRIMARY_RETRY_DELAYS_MS.length;
+
+  for (let attempt = 0; attempt < maxPrimaryAttempts; attempt++) {
+    try {
+      const result = await invoke(primaryModel);
+      return { result, modelUsed: primaryModel, usedFallback: false };
+    } catch (err: any) {
+      lastError = attachAttemptedModel(err, primaryModel);
+
+      const transient = isTransientAiError(lastError);
+      const modelNotFound = isModelNotFoundError(lastError);
+
+      if (!transient && !modelNotFound) {
+        throw lastError;
+      }
+
+      onLog?.(
+        'warn',
+        formatSafeAiErrorLog(
+          endpoint,
+          extractGeminiErrorStatus(lastError),
+          lastError,
+          [],
+          primaryModel
+        )
+      );
+
+      if (modelNotFound) {
+        break;
+      }
+
+      if (attempt < PRIMARY_RETRY_DELAYS_MS.length) {
+        const delayMs = PRIMARY_RETRY_DELAYS_MS[attempt];
+        onLog?.(
+          'info',
+          `[AI Retry] route=${endpoint} model=${primaryModel} attempt=${attempt + 2}/${maxPrimaryAttempts} waitMs=${delayMs}`
+        );
+        await sleep(delayMs);
+      }
+    }
+  }
+
+  let availableModels: string[] = [];
+  try {
+    availableModels = await listAvailableModels();
+  } catch {
+    availableModels = [];
+  }
+
+  const pickedModel = pickFallbackFlashModel(availableModels, primaryModel);
+  const fallbackModels = buildFallbackModelChain({
+    primaryModel,
+    envFallbackModel,
+    pickedModel,
+  });
+
+  for (const fallbackModel of fallbackModels) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        onLog?.(
+          'info',
+          `[AI Fallback] route=${endpoint} primary=${primaryModel} tryingModel=${fallbackModel} attempt=${attempt + 1}/2`
+        );
+        const fallbackResult = await invoke(fallbackModel);
+        onLog?.(
+          'info',
+          `[AI Fallback] route=${endpoint} modelUsed=${fallbackModel} outcome=success`
+        );
+        return { result: fallbackResult, modelUsed: fallbackModel, usedFallback: true };
+      } catch (err: any) {
+        lastError = attachAttemptedModel(err, fallbackModel);
+
+        const transient = isTransientAiError(lastError);
+        const modelNotFound = isModelNotFoundError(lastError);
+
+        if (!transient && !modelNotFound) {
+          throw lastError;
+        }
+
+        onLog?.(
+          'warn',
+          formatSafeAiErrorLog(
+            endpoint,
+            extractGeminiErrorStatus(lastError),
+            lastError,
+            [],
+            fallbackModel
+          )
+        );
+
+        if (modelNotFound) {
+          break;
+        }
+
+        if (attempt === 0) {
+          await sleep(FALLBACK_RETRY_DELAY_MS);
+        }
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 export function classifyAiError(
   error: any,
   fallbackMessage: string

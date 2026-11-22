@@ -90,6 +90,9 @@ import {
   filterAvailableFlashProModels,
   pickFallbackFlashModel,
   isModelNotFoundError,
+  isTransientAiError,
+  buildFallbackModelChain,
+  executeWithModelFallback,
   classifyAiError,
   MAX_AI_REQUESTS_PER_HOUR,
   MAX_SCAN_REQUESTS_PER_HOUR,
@@ -5566,9 +5569,201 @@ describe('নতুন ৩টি Supabase ফিচার: জেনেরিক
   });
 });
 
+describe('ধাপ ২০: AI মডেল রিট্রাই ও ক্রমানুসারে ফলব্যাক চেইন (generateWithModelFallback)', () => {
+  it('অস্থায়ী ত্রুটি (503/429/500/504 ও বার্তা) এবং স্থায়ী ত্রুটি (401/403/400) সঠিকভাবে শনাক্ত করে', () => {
+    assert.strictEqual(isTransientAiError({ status: 503 }), true);
+    assert.strictEqual(isTransientAiError({ status: 429 }), true);
+    assert.strictEqual(isTransientAiError({ status: 500 }), true);
+    assert.strictEqual(isTransientAiError({ status: 504 }), true);
+    assert.strictEqual(isTransientAiError(new Error('Model is overloaded right now')), true);
+    assert.strictEqual(isTransientAiError(new Error('Service UNAVAILABLE')), true);
+    assert.strictEqual(isTransientAiError(new Error('Experiencing high demand')), true);
+    assert.strictEqual(isTransientAiError(new Error('quota: resource_exhausted')), true);
+
+    assert.strictEqual(isTransientAiError({ status: 401, message: 'Unauthorized' }), false);
+    assert.strictEqual(isTransientAiError({ status: 403, message: 'Permission denied' }), false);
+    assert.strictEqual(isTransientAiError({ status: 400, message: 'Invalid argument payload' }), false);
+    assert.strictEqual(isTransientAiError({ status: 404, message: 'NOT_FOUND' }), false);
+  });
+
+  it('বিকল্প মডেলের তালিকা সঠিক ক্রমে সাজায় এবং প্রাইমারি ও ডুপ্লিকেট বাদ দেয়', () => {
+    const chain = buildFallbackModelChain({
+      primaryModel: 'gemini-3.8-flash',
+      envFallbackModel: 'models/gemini-2.5-flash',
+      pickedModel: 'gemini-3.0-flash',
+    });
+    assert.deepStrictEqual(chain, [
+      'gemini-2.5-flash',
+      'gemini-3.0-flash',
+      'gemini-2.5-flash-lite',
+    ]);
+
+    const chainWithPrimaryDup = buildFallbackModelChain({
+      primaryModel: 'gemini-2.5-flash',
+      envFallbackModel: 'gemini-2.5-flash',
+      pickedModel: 'gemini-2.5-flash-lite',
+    });
+    assert.deepStrictEqual(chainWithPrimaryDup, ['gemini-2.5-flash-lite']);
+  });
+
+  it('প্রাথমিক মডেলে অস্থায়ী ত্রুটিতে ১.২s ও ৩s অপেক্ষা করে সর্বোচ্চ ২ বার রিট্রাই করে সফল হয়', async () => {
+    const sleepCalls: number[] = [];
+    const attempts: string[] = [];
+    let listCalled = false;
+
+    const res = await executeWithModelFallback({
+      endpoint: '/api/ai/medicine-info',
+      primaryModel: 'gemini-3.8-flash',
+      envFallbackModel: 'gemini-3.0-flash',
+      hasApiKey: true,
+      listAvailableModels: async () => {
+        listCalled = true;
+        return ['gemini-2.5-flash'];
+      },
+      sleep: async (ms) => {
+        sleepCalls.push(ms);
+      },
+      invoke: async (model) => {
+        attempts.push(model);
+        if (attempts.length === 1) throw Object.assign(new Error('503 overloaded'), { status: 503 });
+        if (attempts.length === 2) throw new Error('Experiencing high demand right now');
+        return 'ok-on-3rd-try';
+      },
+    });
+
+    assert.strictEqual(res.result, 'ok-on-3rd-try');
+    assert.strictEqual(res.modelUsed, 'gemini-3.8-flash');
+    assert.strictEqual(res.usedFallback, false);
+    assert.deepStrictEqual(attempts, ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.8-flash']);
+    assert.deepStrictEqual(sleepCalls, [1200, 3000]);
+    assert.strictEqual(listCalled, false);
+  });
+
+  it('প্রাথমিক মডেল ৩ বারই অস্থায়ী ত্রুটিতে ব্যর্থ হলে ENV -> picked -> 2.5-flash -> 2.5-flash-lite ক্রমে ১.৫s বিরতিসহ চেষ্টা করে', async () => {
+    const sleepCalls: number[] = [];
+    const attempts: string[] = [];
+
+    const res = await executeWithModelFallback({
+      endpoint: '/api/ai/prescription',
+      primaryModel: 'gemini-3.8-flash',
+      envFallbackModel: 'gemini-3.0-flash',
+      hasApiKey: true,
+      listAvailableModels: async () => ['gemini-2.6-flash', 'gemini-2.5-flash'],
+      sleep: async (ms) => {
+        sleepCalls.push(ms);
+      },
+      invoke: async (model) => {
+        attempts.push(model);
+        if (model === 'gemini-2.5-flash-lite' && attempts.filter((m) => m === model).length === 2) {
+          return 'lite-recovered';
+        }
+        throw Object.assign(new Error('Server overloaded'), { status: 503 });
+      },
+    });
+
+    assert.strictEqual(res.result, 'lite-recovered');
+    assert.strictEqual(res.modelUsed, 'gemini-2.5-flash-lite');
+    assert.strictEqual(res.usedFallback, true);
+    assert.deepStrictEqual(attempts, [
+      'gemini-3.8-flash',
+      'gemini-3.8-flash',
+      'gemini-3.8-flash',
+      'gemini-3.0-flash',
+      'gemini-3.0-flash',
+      'gemini-2.6-flash',
+      'gemini-2.6-flash',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash-lite',
+    ]);
+    assert.deepStrictEqual(sleepCalls, [1200, 3000, 1500, 1500, 1500, 1500]);
+  });
+
+  it('প্রাথমিক মডেল না পাওয়া গেলে (404) রিট্রাই না করে সরাসরি বিকল্প মডেলে যায়', async () => {
+    const sleepCalls: number[] = [];
+    const attempts: string[] = [];
+
+    const res = await executeWithModelFallback({
+      endpoint: '/api/ai/health',
+      primaryModel: 'gemini-3.8-flash',
+      hasApiKey: true,
+      listAvailableModels: async () => ['gemini-2.5-flash'],
+      sleep: async (ms) => {
+        sleepCalls.push(ms);
+      },
+      invoke: async (model) => {
+        attempts.push(model);
+        if (model === 'gemini-3.8-flash') {
+          throw Object.assign(new Error('models/gemini-3.8-flash is not found'), { status: 404 });
+        }
+        return 'fallback-ok';
+      },
+    });
+
+    assert.strictEqual(res.result, 'fallback-ok');
+    assert.strictEqual(res.modelUsed, 'gemini-2.5-flash');
+    assert.strictEqual(res.usedFallback, true);
+    assert.deepStrictEqual(attempts, ['gemini-3.8-flash', 'gemini-2.5-flash']);
+    assert.deepStrictEqual(sleepCalls, []);
+  });
+
+  it('401 / 403 / 400 (অস্থায়ী নয়) ত্রুটি সাথে সাথে ছুঁড়ে দেয় এবং রিট্রাই বা ফলব্যাক চালায় না', async () => {
+    for (const statusCode of [401, 403, 400]) {
+      const sleepCalls: number[] = [];
+      const attempts: string[] = [];
+      await assert.rejects(
+        () =>
+          executeWithModelFallback({
+            endpoint: '/api/ai/drug-interaction',
+            primaryModel: 'gemini-3.8-flash',
+            envFallbackModel: 'gemini-2.5-flash',
+            hasApiKey: true,
+            listAvailableModels: async () => ['gemini-2.5-flash'],
+            sleep: async (ms) => {
+              sleepCalls.push(ms);
+            },
+            invoke: async (model) => {
+              attempts.push(model);
+              throw Object.assign(new Error(`Error status ${statusCode}`), { status: statusCode });
+            },
+          }),
+        (err: any) => err.status === statusCode && err.attemptedModel === 'gemini-3.8-flash'
+      );
+      assert.deepStrictEqual(attempts, ['gemini-3.8-flash']);
+      assert.deepStrictEqual(sleepCalls, []);
+    }
+  });
+
+  it('সব চেষ্টা ব্যর্থ হলে সর্বশেষ ত্রুটি ছোঁড়ে যা classifyAiError-এ overloaded দেখায়', async () => {
+    let caughtError: any = null;
+    try {
+      await executeWithModelFallback({
+        endpoint: '/api/ai/scan-prescription',
+        primaryModel: 'gemini-3.8-flash',
+        hasApiKey: true,
+        listAvailableModels: async () => [],
+        sleep: async () => {},
+        invoke: async (model) => {
+          throw Object.assign(new Error(`Model ${model} overloaded`), { status: 503 });
+        },
+      });
+    } catch (err) {
+      caughtError = err;
+    }
+
+    assert.ok(caughtError);
+    assert.strictEqual(caughtError.attemptedModel, 'gemini-2.5-flash-lite');
+    const classified = classifyAiError(caughtError, 'Fallback error');
+    assert.strictEqual(classified.code, 'overloaded');
+    assert.strictEqual(classified.status, 503);
+  });
+});
+
 console.log('\n================================================================');
 console.log('  🎉 ALL NEW FEATURE TESTS PASSED SUCCESSFULLY!');
 console.log('================================================================\n');
+
 
 
 
