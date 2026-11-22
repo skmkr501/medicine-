@@ -121,6 +121,7 @@ export interface PatientProfile {
   allergies: string[];
   emergencyContact: string;
   avatarUrl?: string;
+  heightCm?: number;
   isArchived?: boolean;
   archivedAt?: string;
   updatedAtMs?: number;
@@ -335,6 +336,8 @@ export type NavigationPage =
   | 'settings'
   | 'library'
   | 'womens-health'
+  | 'expenses'
+  | 'bmi'
   | 'admin-import'
   | 'admin-dashboard'
   | 'admin-library';
@@ -661,4 +664,23 @@ export interface CycleLog {
 
 export type RealtimeSyncStatus = 'connected' | 'connecting' | 'disconnected';
 
+export type ExpenseCategory =
+  | 'ওষুধ'
+  | 'ডাক্তারের ফি'
+  | 'পরীক্ষা (টেস্ট)'
+  | 'হাসপাতাল'
+  | 'অন্যান্য';
 
+export interface Expense {
+  id: string;
+  patientId?: string;
+  expenseDate: string; // YYYY-MM-DD
+  category: ExpenseCategory;
+  amount: number;
+  title: string;
+  medicineId?: string;
+  notes?: string;
+  updatedAtMs?: number;
+  createdAt: string;
+  updatedAt: string;
+}

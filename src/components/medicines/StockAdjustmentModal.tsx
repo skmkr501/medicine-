@@ -3,6 +3,10 @@ import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
 import { calculateDailyConsumption, predictMedicineStock } from '../../utils/stockPredictor';
 import {
+  computePrefilledMedicineCost,
+  parseExpenseAmountInput,
+} from '../../utils/expenseUtils';
+import {
   X,
   Package,
   ArrowRight,
@@ -13,6 +17,7 @@ import {
   Sparkles,
   Plus,
   Minus,
+  Wallet,
 } from 'lucide-react';
 
 export const StockAdjustmentModal: React.FC = () => {
@@ -21,6 +26,7 @@ export const StockAdjustmentModal: React.FC = () => {
     closeStockAdjustmentModal,
     medicines,
     adjustMedicineStock,
+    addExpense,
   } = useMedicine();
 
   const medicine = useMemo(() => {
@@ -32,6 +38,10 @@ export const StockAdjustmentModal: React.FC = () => {
   const [reason, setReason] = useState<string>('নতুন ওষুধ ক্রয় / রিফিল');
   const [notes, setNotes] = useState<string>('');
   const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [addAsExpense, setAddAsExpense] = useState<boolean>(false);
+  const [expenseAmountInput, setExpenseAmountInput] = useState<string>('');
+  const [expenseAmountEdited, setExpenseAmountEdited] = useState<boolean>(false);
+  const [expenseError, setExpenseError] = useState<string>('');
 
   useEffect(() => {
     if (medicine) {
@@ -39,8 +49,26 @@ export const StockAdjustmentModal: React.FC = () => {
       setReason('নতুন ওষুধ ক্রয় / রিফিল');
       setNotes('');
       setShowHistory(false);
+      setAddAsExpense(false);
+      setExpenseAmountInput('');
+      setExpenseAmountEdited(false);
+      setExpenseError('');
     }
   }, [medicine]);
+
+  const stockDiff = medicine ? newStock - medicine.stock : 0;
+
+  useEffect(() => {
+    if (!medicine || stockDiff <= 0) {
+      setAddAsExpense(false);
+      setExpenseError('');
+      return;
+    }
+    if (!expenseAmountEdited) {
+      const prefill = computePrefilledMedicineCost(medicine.pricePerUnit, stockDiff);
+      setExpenseAmountInput(prefill !== null ? String(prefill) : '');
+    }
+  }, [medicine, stockDiff, expenseAmountEdited]);
 
   if (!stockAdjustmentModalMedId || !medicine) return null;
 
@@ -50,12 +78,36 @@ export const StockAdjustmentModal: React.FC = () => {
   const simulatedMed = { ...medicine, stock: Math.max(0, newStock) };
   const simulatedPrediction = predictMedicineStock(simulatedMed);
 
-  const stockDiff = newStock - medicine.stock;
-
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (newStock < 0) return;
+
+    let validatedExpenseAmount: number | null = null;
+    if (stockDiff > 0 && addAsExpense) {
+      const parsed = parseExpenseAmountInput(expenseAmountInput, { allowZero: false });
+      if (!parsed.valid || parsed.amount === null) {
+        setExpenseError(parsed.error || 'সঠিক খরচের পরিমাণ লিখুন');
+        return;
+      }
+      validatedExpenseAmount = parsed.amount;
+    }
+
     adjustMedicineStock(medicine.id, newStock, reason, notes.trim() || undefined);
+
+    if (stockDiff > 0 && addAsExpense && validatedExpenseAmount !== null) {
+      const d = new Date();
+      const todayIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      addExpense({
+        expenseDate: todayIso,
+        amount: validatedExpenseAmount,
+        category: 'ওষুধ',
+        patientId: medicine.assignedPatientId,
+        title: `${medicine.brandName} ক্রয় (${toBengaliNumber(stockDiff)} ${medicine.unit})`,
+        medicineId: medicine.id,
+        notes: notes.trim() || reason,
+      });
+    }
+
     closeStockAdjustmentModal();
   };
 
@@ -215,6 +267,67 @@ export const StockAdjustmentModal: React.FC = () => {
               className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-xs text-text focus:ring-2 focus:ring-primary focus:outline-hidden"
             />
           </div>
+
+          {/* Optional Expense Prompt when adding stock (opt-in only) */}
+          {stockDiff > 0 && (
+            <div className="p-3.5 rounded-2xl bg-primary-soft/60 border border-primary/25 space-y-2.5">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={addAsExpense}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setAddAsExpense(checked);
+                    setExpenseError('');
+                    if (checked && !expenseAmountEdited) {
+                      const prefill = computePrefilledMedicineCost(medicine.pricePerUnit, stockDiff);
+                      if (prefill !== null) setExpenseAmountInput(String(prefill));
+                    }
+                  }}
+                  className="w-4 h-4 rounded accent-primary cursor-pointer"
+                />
+                <span className="font-bold text-text flex items-center gap-1.5">
+                  <Wallet className="w-4 h-4 text-primary" />
+                  <span>খরচ হিসেবে যোগ করবে?</span>
+                </span>
+              </label>
+
+              {addAsExpense && (
+                <div className="space-y-1.5 pl-6">
+                  <label className="block text-[11px] font-semibold text-text">
+                    খরচের পরিমাণ (৳) *
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={expenseAmountInput}
+                    onChange={(e) => {
+                      setExpenseAmountEdited(true);
+                      setExpenseAmountInput(e.target.value);
+                      setExpenseError('');
+                    }}
+                    placeholder="যেমন: ১২০ বা 120"
+                    className="w-full bg-surface border border-border rounded-xl px-3 py-2 text-xs font-bold text-text tabular-nums focus:ring-2 focus:ring-primary focus:outline-hidden"
+                  />
+                  {medicine.pricePerUnit ? (
+                    <p className="text-[11px] text-text-muted tabular-nums">
+                      প্রতি একক মূল্য (৳{toBengaliNumber(medicine.pricePerUnit)}) × {toBengaliNumber(stockDiff)} {medicine.unit} থেকে পূরণকৃত — প্রয়োজনে বদলাতে পারবেন।
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-text-muted">
+                      ওষুধের একক মূল্য দেওয়া নেই — মোট খরচ নিজে লিখুন।
+                    </p>
+                  )}
+                  {expenseError && (
+                    <p className="text-[11px] text-danger-text font-semibold flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{expenseError}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Smart Predictor Dynamic Impact Preview */}
           <div className="p-3.5 bg-surface-2 rounded-2xl border border-border space-y-2">

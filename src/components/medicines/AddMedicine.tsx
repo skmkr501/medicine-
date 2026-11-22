@@ -3,6 +3,10 @@ import { useMedicine } from '../../context/MedicineContext';
 import { MedicineType, MealTiming, TimeSlot, DoseSchedule } from '../../types';
 import { commonMedicinePresets } from '../../data/mockData';
 import { toBengaliNumber, formatBengaliTime } from '../../utils/bengaliUtils';
+import {
+  computePrefilledMedicineCost,
+  parseExpenseAmountInput,
+} from '../../utils/expenseUtils';
 import { PrescriptionScannerModal } from './PrescriptionScannerModal';
 import { PrescriptionReviewView, InitialPrescriptionScanImage } from './PrescriptionReviewView';
 import { MedicineInfoModal } from '../ai/MedicineInfoModal';
@@ -64,6 +68,7 @@ export const AddMedicine: React.FC = () => {
     isAdmin,
     currentUser,
     openAuthModal,
+    addExpense,
   } = useMedicine();
 
   // Wizard Step (1 to 4)
@@ -106,6 +111,9 @@ export const AddMedicine: React.FC = () => {
   const [packageDescription, setPackageDescription] = useState<string | undefined>(undefined);
   const [pricePerUnit, setPricePerUnit] = useState<number | undefined>(undefined);
   const [genericBrandsTarget, setGenericBrandsTarget] = useState<string | null>(null);
+  const [addStockAsExpense, setAddStockAsExpense] = useState(false);
+  const [expenseAmountInput, setExpenseAmountInput] = useState('');
+  const [expenseAmountEdited, setExpenseAmountEdited] = useState(false);
 
   // Drug Interaction State
   const [isCheckingInteractions, setIsCheckingInteractions] = useState(false);
@@ -191,6 +199,12 @@ export const AddMedicine: React.FC = () => {
       `"${prefill.brandName || 'নির্বাচিত ওষুধ'}" লাইব্রেরি থেকে পূরণ করা হয়েছে — এখন যাচাই করুন।`
     );
   };
+
+  useEffect(() => {
+    if (expenseAmountEdited) return;
+    const prefillCost = computePrefilledMedicineCost(pricePerUnit, Number(stock) || 0);
+    setExpenseAmountInput(prefillCost !== null ? String(prefillCost) : '');
+  }, [pricePerUnit, stock, expenseAmountEdited]);
 
   useEffect(() => {
     loadDoctors();
@@ -328,7 +342,21 @@ export const AddMedicine: React.FC = () => {
       return;
     }
 
-    addMedicine({
+    let validatedExpenseAmount: number | null = null;
+    const numericStock = Number(stock) || 0;
+    if (numericStock > 0 && addStockAsExpense) {
+      const parsedExpense = parseExpenseAmountInput(expenseAmountInput, { allowZero: false });
+      if (!parsedExpense.valid || parsedExpense.amount === null) {
+        setFormError(parsedExpense.error || 'সঠিক খরচের পরিমাণ লিখুন');
+        return;
+      }
+      validatedExpenseAmount = parsedExpense.amount;
+    }
+
+    const d = new Date();
+    const localTodayIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const newMedicineId = addMedicine({
       brandName: brandName.trim(),
       genericName: genericName.trim() || 'সাধারণ ওষুধ',
       type,
@@ -336,10 +364,10 @@ export const AddMedicine: React.FC = () => {
       mealTiming,
       assignedPatientId,
       schedules,
-      stock: Number(stock) || 0,
+      stock: numericStock,
       minStockAlert: Number(minStockAlert) || 5,
       unit,
-      startDate: new Date().toISOString().split('T')[0],
+      startDate: localTodayIso,
       isChronic,
       durationDays: isChronic ? undefined : Number(durationDays) || 7,
       purpose: purpose.trim(),
@@ -352,6 +380,18 @@ export const AddMedicine: React.FC = () => {
       status: 'active',
       colorTag: 'teal',
     });
+
+    if (numericStock > 0 && addStockAsExpense && validatedExpenseAmount !== null) {
+      addExpense({
+        expenseDate: localTodayIso,
+        amount: validatedExpenseAmount,
+        category: 'ওষুধ',
+        patientId: assignedPatientId,
+        title: `${brandName.trim()} ক্রয় (${toBengaliNumber(numericStock)} ${unit})`,
+        medicineId: newMedicineId,
+        notes: 'নতুন ওষুধ কেনার সময় যোগ করা হয়েছে',
+      });
+    }
 
     setCurrentPage('medicines');
   };
@@ -718,6 +758,63 @@ export const AddMedicine: React.FC = () => {
                 </strong>
               </div>
             </div>
+
+            {/* Optional opt-in expense prompt when initial stock > 0 */}
+            {(Number(stock) || 0) > 0 && (
+              <div className="p-4 rounded-2xl bg-primary-soft/60 border border-primary/25 space-y-2.5">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={addStockAsExpense}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setAddStockAsExpense(checked);
+                      setFormError('');
+                      if (checked && !expenseAmountEdited) {
+                        const prefillCost = computePrefilledMedicineCost(
+                          pricePerUnit,
+                          Number(stock) || 0
+                        );
+                        if (prefillCost !== null) setExpenseAmountInput(String(prefillCost));
+                      }
+                    }}
+                    className="w-5 h-5 rounded accent-primary cursor-pointer"
+                  />
+                  <span className="text-base font-bold text-text">
+                    খরচ হিসেবে যোগ করবে? ({toBengaliNumber(Number(stock))} {unit} মজুত)
+                  </span>
+                </label>
+
+                {addStockAsExpense && (
+                  <div className="space-y-1.5 pl-7">
+                    <label className="block text-sm font-semibold text-text">
+                      খরচের পরিমাণ (৳) *
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={expenseAmountInput}
+                      onChange={(e) => {
+                        setExpenseAmountEdited(true);
+                        setExpenseAmountInput(e.target.value);
+                        setFormError('');
+                      }}
+                      placeholder="যেমন: ১৮০ বা 180"
+                      className="min-h-[44px] w-full sm:w-64 px-3.5 py-2 text-base font-bold bg-surface border border-border rounded-xl text-text tabular-nums focus:outline-hidden focus:ring-2 focus:ring-primary"
+                    />
+                    {pricePerUnit ? (
+                      <p className="text-xs text-text-muted tabular-nums">
+                        প্রতি একক মূল্য (৳{toBengaliNumber(pricePerUnit)}) × {toBengaliNumber(Number(stock))} {unit} থেকে পূরণকৃত — চাইলে বদলাতে পারেন।
+                      </p>
+                    ) : (
+                      <p className="text-xs text-text-muted">
+                        একক মূল্য দেওয়া নেই — মোট খরচ নিজে লিখুন।
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Big Semantic Green Save CTA matching step helper copy */}
             <button

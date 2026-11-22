@@ -12,6 +12,8 @@ import {
   DoseLog,
   DoseSchedule,
   EmergencyCardDoc,
+  Expense,
+  ExpenseCategory,
   FamilyAlertDoc,
   FeedbackEntry,
   GlobalMedicine,
@@ -100,9 +102,16 @@ export interface PatientRow {
   allergies: string[];
   emergency_contact: string;
   avatar_url: string | null;
+  height_cm: number | null;
   is_archived: boolean | null;
   archived_at: string | null;
   updated_at_ms: number | null;
+}
+
+function sanitizeHeightCm(val: unknown): number | null {
+  const num = asOptionalNumber(val);
+  if (num === undefined || num < 30 || num > 260) return null;
+  return Math.round(num * 10) / 10;
 }
 
 export function patientToRow(patient: PatientProfile): PatientRow {
@@ -117,6 +126,7 @@ export function patientToRow(patient: PatientProfile): PatientRow {
     allergies: Array.isArray(patient.allergies) ? patient.allergies : [],
     emergency_contact: patient.emergencyContact ?? '',
     avatar_url: asNullableString(patient.avatarUrl),
+    height_cm: sanitizeHeightCm(patient.heightCm),
     is_archived: patient.isArchived !== undefined ? Boolean(patient.isArchived) : null,
     archived_at: asNullableString(patient.archivedAt),
     updated_at_ms: asNullableNumber(patient.updatedAtMs),
@@ -137,6 +147,8 @@ export function patientFromRow(row: Partial<PatientRow> & { id: string }): Patie
   };
   const avatarUrl = asOptionalString(row.avatar_url);
   if (avatarUrl !== undefined) result.avatarUrl = avatarUrl;
+  const heightCm = sanitizeHeightCm(row.height_cm);
+  if (heightCm !== null) result.heightCm = heightCm;
   if (typeof row.is_archived === 'boolean') result.isArchived = row.is_archived;
   const archivedAt = asOptionalString(row.archived_at);
   if (archivedAt !== undefined) result.archivedAt = archivedAt;
@@ -1587,3 +1599,91 @@ export function cycleLogFromRow(row: Partial<CycleLogRow> & { id: string }): Cyc
 
   return log;
 }
+
+// ============================================================================
+// 21. expenses (omits user_id on insert/upsert; Postgres defaults auth.uid())
+// ============================================================================
+export interface ExpenseRow {
+  id: string;
+  user_id?: string;
+  patient_id: string | null;
+  expense_date: string;
+  category: ExpenseCategory;
+  amount: number;
+  title: string;
+  medicine_id: string | null;
+  notes: string | null;
+  updated_at_ms: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const VALID_EXPENSE_CATEGORIES: ReadonlySet<string> = new Set([
+  'ওষুধ',
+  'ডাক্তারের ফি',
+  'পরীক্ষা (টেস্ট)',
+  'হাসপাতাল',
+  'অন্যান্য',
+]);
+
+function normalizeExpenseCategory(val: unknown): ExpenseCategory {
+  if (typeof val === 'string' && VALID_EXPENSE_CATEGORIES.has(val)) {
+    return val as ExpenseCategory;
+  }
+  return 'অন্যান্য';
+}
+
+export function expenseToRow(expense: Expense): Omit<ExpenseRow, 'user_id'> {
+  const nowIso = new Date().toISOString();
+  const createdAt = normalizeTimestampToIso(expense.createdAt) ?? nowIso;
+  const updatedAt =
+    normalizeTimestampToIso(expense.updatedAt) ??
+    (typeof expense.updatedAtMs === 'number' && expense.updatedAtMs > 0
+      ? new Date(expense.updatedAtMs).toISOString()
+      : nowIso);
+  const rawAmt = asOptionalNumber(expense.amount) ?? 0;
+  const clampedAmt = Math.max(0, Math.min(100_000_000, Math.round(rawAmt * 100) / 100));
+
+  return {
+    id: expense.id,
+    patient_id: asNullableString(expense.patientId && expense.patientId.trim() ? expense.patientId.trim() : null),
+    expense_date: expense.expenseDate ?? new Date().toISOString().slice(0, 10),
+    category: normalizeExpenseCategory(expense.category),
+    amount: clampedAmt,
+    title: (expense.title ?? '').trim(),
+    medicine_id: asNullableString(expense.medicineId && expense.medicineId.trim() ? expense.medicineId.trim() : null),
+    notes: asNullableString(expense.notes && expense.notes.trim() ? expense.notes.trim() : null),
+    updated_at_ms: asNullableNumber(expense.updatedAtMs),
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
+export function expenseFromRow(row: Partial<ExpenseRow> & { id: string }): Expense {
+  const createdAt = row.created_at ?? new Date().toISOString();
+  const updatedAt = row.updated_at ?? createdAt;
+  const rawAmt = asOptionalNumber(row.amount) ?? 0;
+
+  const expense: Expense = {
+    id: String(row.id),
+    expenseDate: String(row.expense_date ?? createdAt.slice(0, 10)),
+    category: normalizeExpenseCategory(row.category),
+    amount: Math.max(0, Math.min(100_000_000, Math.round(rawAmt * 100) / 100)),
+    title: String(row.title ?? ''),
+    createdAt,
+    updatedAt,
+    updatedAtMs:
+      asOptionalNumber(row.updated_at_ms) ??
+      (isoToMillisSafe(updatedAt) || isoToMillisSafe(createdAt)),
+  };
+
+  const patientId = asOptionalString(row.patient_id);
+  if (patientId && patientId.trim()) expense.patientId = patientId.trim();
+  const medicineId = asOptionalString(row.medicine_id);
+  if (medicineId && medicineId.trim()) expense.medicineId = medicineId.trim();
+  const notes = asOptionalString(row.notes);
+  if (notes && notes.trim()) expense.notes = notes;
+
+  return expense;
+}
+

@@ -31,7 +31,9 @@ import { AppLogo } from './components/ui/AppLogo';
 import { DailyChecklist } from './components/checklist/DailyChecklist';
 import { AiAssistantPage } from './components/ai/AiAssistantPage';
 import { HealthRecordsPage } from './components/health/HealthRecordsPage';
+import { BmiPage } from './components/health/BmiPage';
 import { WomensHealthPage } from './components/health/WomensHealthPage';
+import { ExpensesPage } from './components/expenses/ExpensesPage';
 import { AppointmentsPage } from './components/appointments/AppointmentsPage';
 import { DataConflictModal } from './components/auth/DataConflictModal';
 import { ResetConfirmationModal } from './components/settings/ResetConfirmationModal';
@@ -131,6 +133,8 @@ const AppContent: React.FC = () => {
         {currentPage === 'weekly-pillbox' && <WeeklyPillboxView />}
         {currentPage === 'shopping-list' && <ShoppingListPage />}
         {currentPage === 'health-records' && <HealthRecordsPage />}
+        {currentPage === 'bmi' && <BmiPage />}
+        {currentPage === 'expenses' && <ExpensesPage />}
         {currentPage === 'womens-health' && <WomensHealthPage />}
         {currentPage === 'appointments' && <AppointmentsPage />}
         {currentPage === 'doctors' && <DoctorsPage />}

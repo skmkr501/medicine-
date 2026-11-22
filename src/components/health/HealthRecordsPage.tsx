@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
+import { buildBmiHistorySeries } from '../../utils/bmiCalculator';
+import { BmiCalculatorCard } from './BmiCalculatorCard';
 import { HealthRecord } from '../../types';
 import {
   Activity,
@@ -29,6 +31,7 @@ export const HealthRecordsPage: React.FC = () => {
     patients,
     setActivePatientId,
     openCreateProfileModal,
+    openEditProfileModal,
     settings,
     isLoadingHealthRecords,
     hasMoreOlderHealthRecords,
@@ -122,6 +125,16 @@ export const HealthRecordsPage: React.FC = () => {
   const weightChartData = useMemo(() => {
     return patientRecords.filter((r) => r.weight !== undefined);
   }, [patientRecords]);
+
+  const bmiHistorySeries = useMemo(
+    () => buildBmiHistorySeries(patientRecords, activePatient?.id, activePatient?.heightCm),
+    [patientRecords, activePatient?.id, activePatient?.heightCm]
+  );
+
+  const bmiByRecordId = useMemo(
+    () => new Map(bmiHistorySeries.map((pt) => [pt.id, pt.bmi])),
+    [bmiHistorySeries]
+  );
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -459,11 +472,34 @@ export const HealthRecordsPage: React.FC = () => {
 
           {chartType === 'weight' && (
             <div>
-              <div className="flex items-center justify-between text-xs text-text-muted mb-2">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-full bg-primary inline-block" />
-                  <span>{isEn ? 'Weight Progression (kg)' : 'শারীরিক ওজন ধারা (কেজি)'}</span>
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted mb-2">
+                <div className="flex flex-wrap items-center gap-4">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-full bg-primary inline-block" />
+                    <span>{isEn ? 'Weight Progression (kg)' : 'শারীরিক ওজন ধারা (কেজি)'}</span>
+                  </span>
+                  {activePatient?.heightCm && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-3 h-3 rounded-full bg-teal-600 dark:bg-teal-400 inline-block" />
+                      <span>
+                        BMI ধারা (উচ্চতা: {toBengaliNumber(activePatient.heightCm)} সেমি)
+                      </span>
+                    </span>
+                  )}
+                </div>
+                {activePatient?.heightCm ? (
+                  <span className="text-[11px] text-success-text bg-success-soft px-2 py-0.5 rounded border border-success/30">
+                    এশীয় স্বাভাবিক BMI: ১৮.৫–২২.৯
+                  </span>
+                ) : activePatient ? (
+                  <button
+                    type="button"
+                    onClick={() => openEditProfileModal(activePatient)}
+                    className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                  >
+                    + প্রোফাইলে উচ্চতা যোগ করলে BMI চার্ট দেখাবে
+                  </button>
+                ) : null}
               </div>
 
               {weightChartData.length === 0 ? (
@@ -474,6 +510,9 @@ export const HealthRecordsPage: React.FC = () => {
                 <div className="overflow-x-auto">
                   <div className="min-w-[500px] h-56 relative bg-surface-2 rounded-xl p-4 border border-border flex flex-col justify-between">
                     <svg className="w-full h-full overflow-visible" viewBox="0 0 500 160">
+                      <line x1="0" y1="20" x2="500" y2="20" stroke="#94a3b8" strokeDasharray="3,3" strokeOpacity="0.2" />
+                      <line x1="0" y1="80" x2="500" y2="80" stroke="#94a3b8" strokeDasharray="3,3" strokeOpacity="0.2" />
+                      <line x1="0" y1="140" x2="500" y2="140" stroke="#94a3b8" strokeDasharray="3,3" strokeOpacity="0.2" />
                       {weightChartData.map((d, i) => {
                         const x = weightChartData.length === 1 ? 250 : (i / (weightChartData.length - 1)) * 460 + 20;
                         const y = 140 - Math.min(125, Math.max(0, ((d.weight! - 40) / 60) * 110));
@@ -481,13 +520,43 @@ export const HealthRecordsPage: React.FC = () => {
                         const prevX = (i - 1) / (weightChartData.length - 1) * 460 + 20;
                         const prevY = prev ? 140 - Math.min(125, Math.max(0, ((prev.weight! - 40) / 60) * 110)) : 0;
 
+                        const bmiVal = bmiByRecordId.get(d.id);
+                        const prevBmiVal = prev ? bmiByRecordId.get(prev.id) : undefined;
+                        const yBmi =
+                          bmiVal !== undefined
+                            ? 140 - Math.min(125, Math.max(0, ((bmiVal - 14) / 22) * 110))
+                            : null;
+                        const prevYBmi =
+                          prevBmiVal !== undefined
+                            ? 140 - Math.min(125, Math.max(0, ((prevBmiVal - 14) / 22) * 110))
+                            : null;
+
                         return (
                           <g key={d.id}>
                             {i > 0 && <line x1={prevX} y1={prevY} x2={x} y2={y} stroke="#4f46e5" strokeWidth="2.5" />}
+                            {i > 0 && yBmi !== null && prevYBmi !== null && (
+                              <line
+                                x1={prevX}
+                                y1={prevYBmi}
+                                x2={x}
+                                y2={yBmi}
+                                stroke="#0d9488"
+                                strokeWidth="2"
+                                strokeDasharray="4,2"
+                              />
+                            )}
                             <circle cx={x} cy={y} r="5" fill="#6366f1" />
                             <text x={x} y={y - 8} textAnchor="middle" fontSize="10" fill="#6366f1" fontWeight="bold">
                               {toBengaliNumber(d.weight!)} কেজি
                             </text>
+                            {yBmi !== null && bmiVal !== undefined && (
+                              <>
+                                <circle cx={x} cy={yBmi} r="4" fill="#0d9488" />
+                                <text x={x} y={yBmi + 13} textAnchor="middle" fontSize="9.5" fill="#0d9488" fontWeight="bold">
+                                  BMI {toBengaliNumber(bmiVal.toFixed(1))}
+                                </text>
+                              </>
+                            )}
                             <text x={x} y="156" textAnchor="middle" fontSize="9" fill="#94a3b8">
                               {d.recordDate.slice(5)}
                             </text>
@@ -513,6 +582,9 @@ export const HealthRecordsPage: React.FC = () => {
           </p>
         </div>
       </section>
+
+      {/* Embedded BMI Calculator Section */}
+      <BmiCalculatorCard compact />
 
       {/* Historical Logs Table */}
       <section className="bg-surface border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">

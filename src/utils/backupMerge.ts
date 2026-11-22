@@ -2,6 +2,7 @@ import {
   DoctorAppointment,
   DoctorProfile,
   DoseLog,
+  Expense,
   HealthRecord,
   Medicine,
   PatientProfile,
@@ -17,6 +18,7 @@ export interface LocalBackupPayload {
   appointments?: DoctorAppointment[];
   doctors?: DoctorProfile[];
   phonebook?: PhonebookEntry[];
+  expenses?: Expense[];
   settings?: Partial<ReminderSettings>;
   exportDate?: string;
   appName?: string;
@@ -30,6 +32,7 @@ export interface BackupCurrentSnapshot {
   appointments: DoctorAppointment[];
   doctors: DoctorProfile[];
   phonebook?: PhonebookEntry[];
+  expenses?: Expense[];
   settings: ReminderSettings;
 }
 
@@ -41,6 +44,7 @@ export interface MergedBackupResult {
   appointments: DoctorAppointment[];
   doctors: DoctorProfile[];
   phonebook: PhonebookEntry[];
+  expenses: Expense[];
   settings: ReminderSettings;
   addedCount: number;
   updatedCount: number;
@@ -51,6 +55,7 @@ export interface MergedBackupResult {
   importedAppointmentsCount: number;
   importedDoctorsCount: number;
   importedPhonebookCount: number;
+  importedExpensesCount: number;
   hasSettingsImport: boolean;
 }
 
@@ -129,6 +134,7 @@ export function parseAndMergeLocalBackup(
     Array.isArray(obj.appointments) ||
     Array.isArray(obj.doctors) ||
     Array.isArray(obj.phonebook) ||
+    Array.isArray(obj.expenses) ||
     (obj.settings && typeof obj.settings === 'object');
 
   if (!hasAnyRecognizedField) {
@@ -163,6 +169,10 @@ export function parseAndMergeLocalBackup(
     current.phonebook || [],
     Array.isArray(obj.phonebook) ? obj.phonebook : []
   );
+  const expRes = mergeRecordsById<Expense>(
+    current.expenses || [],
+    Array.isArray(obj.expenses) ? obj.expenses : []
+  );
 
   const hasSettingsImport = Boolean(
     obj.settings && typeof obj.settings === 'object' && !Array.isArray(obj.settings)
@@ -178,7 +188,8 @@ export function parseAndMergeLocalBackup(
     hrRes.addedCount +
     aptRes.addedCount +
     docRes.addedCount +
-    phoneRes.addedCount;
+    phoneRes.addedCount +
+    expRes.addedCount;
 
   const updatedCount =
     patRes.updatedCount +
@@ -187,7 +198,8 @@ export function parseAndMergeLocalBackup(
     hrRes.updatedCount +
     aptRes.updatedCount +
     docRes.updatedCount +
-    phoneRes.updatedCount;
+    phoneRes.updatedCount +
+    expRes.updatedCount;
 
   return {
     patients: patRes.merged,
@@ -197,6 +209,7 @@ export function parseAndMergeLocalBackup(
     appointments: aptRes.merged,
     doctors: docRes.merged,
     phonebook: phoneRes.merged,
+    expenses: expRes.merged,
     settings: mergedSettings,
     addedCount,
     updatedCount,
@@ -207,6 +220,7 @@ export function parseAndMergeLocalBackup(
     importedAppointmentsCount: aptRes.validIncoming.length,
     importedDoctorsCount: docRes.validIncoming.length,
     importedPhonebookCount: phoneRes.validIncoming.length,
+    importedExpensesCount: expRes.validIncoming.length,
     hasSettingsImport,
   };
 }

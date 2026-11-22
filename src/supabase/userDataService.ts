@@ -9,6 +9,9 @@ import {
   doctorToRow,
   doseLogFromRow,
   doseLogToRow,
+  expenseFromRow,
+  ExpenseRow,
+  expenseToRow,
   healthRecordFromRow,
   healthRecordToRow,
   medicineFromRow,
@@ -26,6 +29,7 @@ import {
   DoctorAppointment,
   DoctorProfile,
   DoseLog,
+  Expense,
   HealthRecord,
   Medicine,
   PatientProfile,
@@ -49,6 +53,7 @@ export type CoreSupabaseTable =
   | 'doctors'
   | 'phonebook'
   | 'cycle_logs'
+  | 'expenses'
   | 'user_settings';
 
 export interface SupabaseTableQueryLike {
@@ -156,6 +161,22 @@ function formatSupabaseError(error: unknown, fallbackContext: string): Error {
   return new Error(String(error || fallbackContext));
 }
 
+export function isMissingSchemaObjectError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const anyErr = error as { code?: unknown; message?: unknown };
+  const code = String(anyErr.code || '').toUpperCase();
+  const msg = String(anyErr.message || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === '42703' ||
+    code === 'PGRST204' ||
+    code === 'PGRST205' ||
+    msg.includes('could not find the table') ||
+    msg.includes('could not find the') ||
+    msg.includes('does not exist')
+  );
+}
+
 export async function upsertRowsInBatches<TRow extends object>(
   table: CoreSupabaseTable,
   rows: TRow[],
@@ -172,21 +193,50 @@ export async function upsertRowsInBatches<TRow extends object>(
   const chunks = chunkArray(rows, options.chunkSize ?? SUPABASE_UPSERT_BATCH_SIZE);
 
   for (const chunk of chunks) {
-    await retryWithBackoff(
-      async () => {
-        const { error } = await client
-          .from(table)
-          .upsert(chunk as Array<object>, { onConflict: 'user_id,id' });
-        if (error) {
-          throw formatSupabaseError(error, `Supabase upsert failed on ${table}`);
+    try {
+      await retryWithBackoff(
+        async () => {
+          const { error } = await client
+            .from(table)
+            .upsert(chunk as Array<object>, { onConflict: 'user_id,id' });
+          if (error) {
+            throw formatSupabaseError(error, `Supabase upsert failed on ${table}`);
+          }
+        },
+        {
+          maxRetries: options.maxRetries,
+          baseDelayMs: options.baseDelayMs,
+          sleepFn: options.sleepFn,
         }
-      },
-      {
-        maxRetries: options.maxRetries,
-        baseDelayMs: options.baseDelayMs,
-        sleepFn: options.sleepFn,
+      );
+    } catch (err) {
+      // If patients.height_cm column is not yet added on remote DB, retry without height_cm
+      const msg = String((err as { message?: unknown })?.message || '').toLowerCase();
+      if (table === 'patients' && isMissingSchemaObjectError(err) && msg.includes('height_cm')) {
+        const strippedChunk = chunk.map((r) => {
+          const copy = { ...(r as Record<string, unknown>) };
+          delete copy.height_cm;
+          return copy;
+        });
+        await retryWithBackoff(
+          async () => {
+            const { error } = await client
+              .from(table)
+              .upsert(strippedChunk, { onConflict: 'user_id,id' });
+            if (error) {
+              throw formatSupabaseError(error, `Supabase upsert failed on ${table}`);
+            }
+          },
+          {
+            maxRetries: options.maxRetries,
+            baseDelayMs: options.baseDelayMs,
+            sleepFn: options.sleepFn,
+          }
+        );
+      } else {
+        throw err;
       }
-    );
+    }
   }
   return rows.length;
 }
@@ -590,7 +640,8 @@ export async function migrateLocalDataToSupabase(
   healthRecords?: HealthRecord[],
   appointments?: DoctorAppointment[],
   doctors?: DoctorProfile[],
-  phonebook?: PhonebookEntry[]
+  phonebook?: PhonebookEntry[],
+  expenses?: Expense[]
 ): Promise<{ medicinesCount: number; logsCount: number; patientsCount: number }> {
   if (!userId) {
     return { medicinesCount: 0, logsCount: 0, patientsCount: 0 };
@@ -618,6 +669,13 @@ export async function migrateLocalDataToSupabase(
   if (phonebook && phonebook.length > 0) {
     await upsertRowsInBatches('phonebook', phonebook.map(phonebookToRow));
   }
+  if (expenses && expenses.length > 0) {
+    try {
+      await upsertRowsInBatches('expenses', expenses.map(expenseToRow));
+    } catch (expErr) {
+      if (!isMissingSchemaObjectError(expErr)) throw expErr;
+    }
+  }
 
   return {
     medicinesCount: medicines.length,
@@ -638,6 +696,7 @@ export async function flushOutboxToSupabase(
     appointments: DoctorAppointment[];
     doctors?: DoctorProfile[];
     phonebook?: PhonebookEntry[];
+    expenses?: Expense[];
   }
 ): Promise<{ syncedOpsCount: number }> {
   if (!userId) return { syncedOpsCount: 0 };
@@ -710,6 +769,28 @@ export async function flushOutboxToSupabase(
     syncedOpsCount += await deleteRowsInBatches('phonebook', userId, outbox.deletes.phonebook);
   }
 
+  // Expenses
+  if (
+    (outbox.upserts.expenses && outbox.upserts.expenses.length > 0) ||
+    (outbox.deletes.expenses && outbox.deletes.expenses.length > 0)
+  ) {
+    try {
+      if (outbox.upserts.expenses && outbox.upserts.expenses.length > 0) {
+        const expMap = new Map((snapshot.expenses || []).map((e) => [e.id, e]));
+        const expUpserts = outbox.upserts.expenses
+          .map((id) => expMap.get(id))
+          .filter((item): item is Expense => Boolean(item))
+          .map(expenseToRow);
+        syncedOpsCount += await upsertRowsInBatches('expenses', expUpserts);
+      }
+      if (outbox.deletes.expenses && outbox.deletes.expenses.length > 0) {
+        syncedOpsCount += await deleteRowsInBatches('expenses', userId, outbox.deletes.expenses);
+      }
+    } catch (expErr) {
+      if (!isMissingSchemaObjectError(expErr)) throw expErr;
+    }
+  }
+
   // Settings
   if (outbox.settingsDirty) {
     await upsertRowsInBatches('user_settings', [
@@ -774,16 +855,24 @@ export async function clearCoreUserTablesFromSupabase(userId: string): Promise<v
     'doctors',
     'phonebook',
     'cycle_logs',
+    'expenses',
     'user_settings',
   ];
 
   for (const table of tables) {
-    await retryWithBackoff(async () => {
-      const { error } = await supabase.from(table).delete().eq('user_id', userId);
-      if (error) {
-        throw formatSupabaseError(error, `Failed to clear ${table}`);
+    try {
+      await retryWithBackoff(async () => {
+        const { error } = await supabase.from(table).delete().eq('user_id', userId);
+        if (error) {
+          throw formatSupabaseError(error, `Failed to clear ${table}`);
+        }
+      });
+    } catch (err) {
+      if (table === 'expenses' && isMissingSchemaObjectError(err)) {
+        continue;
       }
-    });
+      throw err;
+    }
   }
 }
 
@@ -961,3 +1050,53 @@ export async function deleteCycleLogFromSupabase(
   await deleteRowsInBatches('cycle_logs', userId, [logId]);
 }
 
+// ============================================================================
+// পরিবারের খরচ হিসাব (expenses) — শুধুমাত্র মালিকের ডেটা (RLS)
+// ============================================================================
+
+export async function fetchExpensesFromSupabase(userId: string): Promise<Expense[]> {
+  if (!userId) return [];
+  const { data, error } = await supabase
+    .from('expenses')
+    .select('*')
+    .eq('user_id', userId)
+    .order('expense_date', { ascending: false });
+
+  if (error) {
+    if (isMissingSchemaObjectError(error)) {
+      console.warn('Supabase expenses table missing yet:', error.message);
+      return [];
+    }
+    throw formatSupabaseError(error, 'খরচের হিসাব লোড করা যায়নি');
+  }
+
+  const rows = Array.isArray(data) ? (data as ExpenseRow[]) : [];
+  return rows.filter((r) => r && typeof r.id === 'string').map((r) => expenseFromRow(r));
+}
+
+export async function saveExpenseToSupabase(
+  userId: string,
+  expense: Expense
+): Promise<void> {
+  if (!userId || !expense?.id) return;
+  await upsertRowsInBatches('expenses', [expenseToRow(expense)]);
+}
+
+export async function saveExpensesBatchToSupabase(
+  userId: string,
+  expenses: Expense[]
+): Promise<number> {
+  if (!userId || !expenses || expenses.length === 0) return 0;
+  return upsertRowsInBatches(
+    'expenses',
+    expenses.map((e) => expenseToRow(e))
+  );
+}
+
+export async function deleteExpenseFromSupabase(
+  userId: string,
+  expenseId: string
+): Promise<void> {
+  if (!userId || !expenseId) return;
+  await deleteRowsInBatches('expenses', userId, [expenseId]);
+}

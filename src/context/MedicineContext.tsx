@@ -23,6 +23,7 @@ import {
   MedicalDocument,
   PhonebookEntry,
   RealtimeSyncStatus,
+  Expense,
 } from '../types';
 import {
   initialPatients,
@@ -80,6 +81,9 @@ import {
   fetchCycleLogsFromSupabase,
   saveCycleLogToSupabase,
   deleteCycleLogFromSupabase,
+  fetchExpensesFromSupabase,
+  saveExpenseToSupabase,
+  deleteExpenseFromSupabase,
   getSupabaseDataErrorMessageBn,
 } from '../supabase/userDataService';
 import {
@@ -510,6 +514,19 @@ interface MedicineContextType {
   deleteCycleLog: (logId: string) => Promise<void>;
   isCycleTrackerEnabledForPatient: (patientId?: string | null) => boolean;
   setCycleTrackerEnabledForPatient: (patientId: string, enabled: boolean) => void;
+
+  // পরিবারের খরচ হিসাব (Privacy-isolated owner data)
+  expenses: Expense[];
+  isLoadingExpenses: boolean;
+  loadExpenses: (forceRefresh?: boolean) => Promise<void>;
+  addExpense: (
+    input: Omit<Expense, 'id' | 'createdAt' | 'updatedAt' | 'updatedAtMs'>
+  ) => Expense;
+  updateExpense: (
+    id: string,
+    updates: Partial<Omit<Expense, 'id' | 'createdAt' | 'updatedAt' | 'updatedAtMs'>>
+  ) => void;
+  deleteExpense: (id: string) => void;
 }
 
 
@@ -528,6 +545,7 @@ const STORAGE_KEYS = {
   APPOINTMENTS: 'shasthobondhu_appointments_v2',
   PHONEBOOK: 'shasthobondhu_phonebook_v1',
   CYCLE_LOGS: 'shasthobondhu_cycle_logs_v1',
+  EXPENSES: 'shasthobondhu_expenses_v1',
 };
 
 const clearUserCloudData = async (userId: string): Promise<void> => {
@@ -791,6 +809,21 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const cycleLogsLoadedUidRef = useRef<string | null>(null);
   const [cyclePrefsVersion, setCyclePrefsVersion] = useState(0);
 
+  // পরিবারের খরচ হিসাব (Privacy-isolated owner data)
+  const [expenses, setExpenses] = useState<Expense[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.EXPENSES);
+      return saved ? (JSON.parse(saved) as Expense[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isLoadingExpenses, setIsLoadingExpenses] = useState(false);
+  const expensesInFlightRef = useRef(false);
+  const expensesLoadedUidRef = useRef<string | null>(null);
+  const expensesRef = useRef<Expense[]>(expenses);
+  expensesRef.current = expenses;
+
   // Prescriptions & Reports Vault (IndexedDB first, zero real-time listener)
   const [medicalDocuments, setMedicalDocuments] = useState<MedicalDocument[]>([]);
   const [isLoadingMedicalDocuments, setIsLoadingMedicalDocuments] = useState(false);
@@ -866,6 +899,14 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       console.warn('Storage sync error', e);
     }
   }, [cycleLogs]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+    } catch (e) {
+      console.warn('Storage sync error', e);
+    }
+  }, [expenses]);
 
   // Apply Dark Mode and Listen to System Preferences
   useEffect(() => {
@@ -947,6 +988,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       appointments?: DoctorAppointment[];
       doctors?: DoctorProfile[];
       phonebook?: PhonebookEntry[];
+      expenses?: Expense[];
     }
   ): DirtySyncPlan => {
     const outbox = loadCloudSyncOutbox(uid);
@@ -962,6 +1004,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         appointments: overrides?.appointments ?? appointmentsRef.current,
         doctors: overrides?.doctors ?? doctorsRef.current,
         phonebook: overrides?.phonebook ?? phonebookRef.current,
+        expenses: overrides?.expenses ?? expensesRef.current,
       },
       docQueue,
       lastSyncMs
@@ -1021,6 +1064,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     appointments,
     doctors,
     phonebook,
+    expenses,
     medicalDocuments,
   ]);
 
@@ -1104,6 +1148,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             appointments: appointmentsRef.current,
             doctors: doctorsRef.current,
             phonebook: phonebookRef.current,
+            expenses: expensesRef.current,
           })
             .then(() => {
               clearCloudSyncOutbox(uid);
@@ -1335,7 +1380,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             localSnapshot.healthRecords,
             localSnapshot.appointments,
             doctorsRef.current,
-            phonebookRef.current
+            phonebookRef.current,
+            expensesRef.current
           );
           if (cancelled) return;
           try {
@@ -1397,6 +1443,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           appointments: appointmentsRef.current,
           doctors: doctorsRef.current,
           phonebook: phonebookRef.current,
+          expenses: expensesRef.current,
         });
         clearCloudSyncOutbox(userId);
         refreshPendingSyncCount(userId);
@@ -1410,6 +1457,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         recentLogs,
         cloudDoctors,
         cloudPhonebook,
+        cloudExpenses,
       ] = await Promise.all([
         fetchUserCollectionFromCloud<Medicine>(userId, 'medicines'),
         fetchUserCollectionFromCloud<PatientProfile>(userId, 'patients'),
@@ -1418,6 +1466,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         fetchRecentDoseLogsFromCloud(userId, cutoff90Days),
         fetchUserDoctorsFromCloud(userId),
         fetchPhonebookFromSupabase(userId),
+        fetchExpensesFromSupabase(userId),
       ]);
 
       setMedicines(cloudMeds);
@@ -1456,6 +1505,10 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       setPhonebook(cloudPhonebook);
       markCollectionSynced(userId, 'phonebook', nowMs);
+
+      setExpenses(cloudExpenses);
+      expensesLoadedUidRef.current = userId;
+      markCollectionSynced(userId, 'expenses', nowMs);
 
       if (forceRefresh) {
         setLastSuccessfulSyncMs(userId, nowMs);
@@ -1496,6 +1549,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setPhonebook([]);
         setCycleLogs([]);
         cycleLogsLoadedUidRef.current = null;
+        setExpenses([]);
+        expensesLoadedUidRef.current = null;
         setMedicalDocuments([]);
         setPendingDocIds([]);
       }
@@ -1888,6 +1943,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
     setDoctors(sortDoctors(loadCachedDoctors(null)));
     setPhonebook([]);
+    setExpenses([]);
+    expensesLoadedUidRef.current = null;
     setMedicalDocuments([]);
     setPendingDocIds([]);
     setOlderDoseLogsLoaded(false);
@@ -1914,11 +1971,13 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       appointments,
       doctors,
       phonebook,
+      expenses,
     };
     const data = {
       ...source,
       doctors: 'doctors' in source ? source.doctors : doctors,
       phonebook: 'phonebook' in source ? source.phonebook : phonebook,
+      expenses: 'expenses' in source ? source.expenses : expenses,
       exportDate: new Date().toISOString(),
       appName: 'স্বাস্থ্যবন্ধু (Shasthobondhu)',
     };
@@ -1944,6 +2003,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         appointments: appointmentsRef.current,
         doctors: doctorsRef.current,
         phonebook: phonebookRef.current,
+        expenses: expensesRef.current,
         settings: settingsRef.current,
       });
 
@@ -1955,6 +2015,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setAppointments(merged.appointments);
       setDoctors(sortDoctors(merged.doctors));
       setPhonebook(merged.phonebook);
+      setExpenses(merged.expenses);
       saveCachedDoctors(cacheUid, sortDoctors(merged.doctors));
       if (merged.hasSettingsImport) {
         setSettings(merged.settings);
@@ -1975,6 +2036,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           merged.appointments.forEach((a) => queueUpsert(uid, 'appointments', a.id));
           merged.doctors.forEach((d) => queueUpsert(uid, 'doctors', d.id));
           merged.phonebook.forEach((pb) => queueUpsert(uid, 'phonebook', pb.id));
+          merged.expenses.forEach((ex) => queueUpsert(uid, 'expenses', ex.id));
           if (merged.hasSettingsImport) queueSettings(uid);
           setSyncStatus('offline');
         } else {
@@ -1990,7 +2052,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               merged.healthRecords,
               merged.appointments,
               merged.doctors,
-              merged.phonebook
+              merged.phonebook,
+              merged.expenses
             );
             setLastSuccessfulSyncMs(uid, Date.now());
             updateLiveSyncTime(false);
@@ -2002,6 +2065,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             merged.appointments.forEach((a) => queueUpsert(uid, 'appointments', a.id));
             merged.doctors.forEach((d) => queueUpsert(uid, 'doctors', d.id));
             merged.phonebook.forEach((pb) => queueUpsert(uid, 'phonebook', pb.id));
+            merged.expenses.forEach((ex) => queueUpsert(uid, 'expenses', ex.id));
             if (merged.hasSettingsImport) queueSettings(uid);
             setSyncStatus('failed');
             console.warn('importLocalBackup cloud sync deferred:', cloudErr);
@@ -2042,6 +2106,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const nextAppointments = Array.isArray(bundle.appointments) ? bundle.appointments : [];
       const nextDoctors = sortDoctors(Array.isArray(bundle.doctors) ? bundle.doctors : []);
       const nextPhonebook = Array.isArray(bundle.phonebook) ? bundle.phonebook : [];
+      const nextExpenses = Array.isArray(bundle.expenses) ? bundle.expenses : [];
       const nextSettings: ReminderSettings = bundle.settings
         ? { ...initialSettings, ...bundle.settings }
         : settingsRef.current;
@@ -2054,6 +2119,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setAppointments(nextAppointments);
       setDoctors(nextDoctors);
       setPhonebook(nextPhonebook);
+      setExpenses(nextExpenses);
       setSettings(nextSettings);
       saveCachedDoctors(cacheUid, nextDoctors);
       setActivePatientId(nextPatients[0]?.id || null);
@@ -2073,7 +2139,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             nextHealthRecords,
             nextAppointments,
             nextDoctors,
-            nextPhonebook
+            nextPhonebook,
+            nextExpenses
           );
           clearCloudSyncOutbox(uid);
           setLastSuccessfulSyncMs(uid, Date.now());
@@ -2124,7 +2191,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           source.healthRecords,
           source.appointments,
           doctorsRef.current,
-          phonebookRef.current
+          phonebookRef.current,
+          expensesRef.current
         );
         localStorage.setItem(migrationKey, 'true');
         setLastSuccessfulSyncMs(uid, Date.now());
@@ -2143,6 +2211,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setAppointments([]);
         setDoctors([]);
         setPhonebook([]);
+        setExpenses([]);
         refreshPendingSyncCount(uid);
         showToast('ফোনের স্থানীয় ডেটা বাদ দেওয়া হয়েছে, ক্লাউড থেকে লোড হচ্ছে...', 'info');
       }
@@ -2187,6 +2256,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           appointments: appointmentsRef.current,
           doctors: doctorsRef.current,
           phonebook: phonebookRef.current,
+          expenses: expensesRef.current,
         });
         syncedOpsCount += flushRes.syncedOpsCount;
         clearCloudSyncOutbox(uid);
@@ -2936,6 +3006,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setPhonebook([]);
     setCycleLogs([]);
     cycleLogsLoadedUidRef.current = null;
+    setExpenses([]);
+    expensesLoadedUidRef.current = null;
     setMedicalDocuments([]);
     setPendingDocIds([]);
 
@@ -2961,6 +3033,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       localStorage.removeItem(STORAGE_KEYS.APPOINTMENTS);
       localStorage.removeItem(STORAGE_KEYS.PHONEBOOK);
       localStorage.removeItem(STORAGE_KEYS.CYCLE_LOGS);
+      localStorage.removeItem(STORAGE_KEYS.EXPENSES);
     } catch (e) {
       console.warn('Storage clear notice', e);
     }
@@ -5311,6 +5384,187 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [activePatient?.id, cycleLogs, currentUser?.uid, cyclePrefsVersion]);
 
   // =========================================================================
+  // পরিবারের খরচ হিসাব (Privacy-isolated owner data)
+  // =========================================================================
+  const sortExpensesNewestFirst = (list: Expense[]): Expense[] =>
+    list.slice().sort((a, b) => {
+      const cmp = (b.expenseDate || '').localeCompare(a.expenseDate || '');
+      if (cmp !== 0) return cmp;
+      return (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
+    });
+
+  const loadExpenses = async (forceRefresh = false): Promise<void> => {
+    if (!currentUser || migrationReadyUid !== currentUser.uid) return;
+    const uid = currentUser.uid;
+    if (!forceRefresh && expensesLoadedUidRef.current === uid) return;
+    if (expensesInFlightRef.current || isDeviceOffline()) return;
+
+    expensesInFlightRef.current = true;
+    setIsLoadingExpenses(true);
+    try {
+      const rows = await fetchExpensesFromSupabase(uid);
+      setExpenses(sortExpensesNewestFirst(rows));
+      expensesLoadedUidRef.current = uid;
+    } catch (err) {
+      console.warn('loadExpenses notice:', err);
+    } finally {
+      expensesInFlightRef.current = false;
+      setIsLoadingExpenses(false);
+    }
+  };
+
+  const addExpense = (
+    input: Omit<Expense, 'id' | 'createdAt' | 'updatedAt' | 'updatedAtMs'>
+  ): Expense => {
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const newId = `exp-${nowMs}-${Math.random().toString(36).slice(2, 7)}`;
+    const newExpense: Expense = stripUndefined({
+      id: newId,
+      patientId: input.patientId || undefined,
+      expenseDate: input.expenseDate,
+      category: input.category,
+      amount: Math.round((Number(input.amount) || 0) * 100) / 100,
+      title: input.title.trim(),
+      medicineId: input.medicineId || undefined,
+      notes: input.notes?.trim() || undefined,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      updatedAtMs: nowMs,
+    });
+
+    recentRealtimeWritesRef.current.mark('expenses', newId, nowMs);
+    setExpenses((prev) => sortExpensesNewestFirst([newExpense, ...prev]));
+
+    if (currentUser) {
+      const uid = currentUser.uid;
+      const wasOffline = isDeviceOffline();
+      if (wasOffline) {
+        queueUpsert(uid, 'expenses', newId);
+        setSyncStatus('offline');
+        showToast('খরচ অফলাইনে সংরক্ষিত (ইন্টারনেট এলে সিঙ্ক হবে)', 'info');
+        return newExpense;
+      }
+      setSyncStatus('syncing');
+      saveExpenseToSupabase(uid, newExpense)
+        .then(() => {
+          unqueueUpsert(uid, 'expenses', newId);
+          updateLiveSyncTime(false);
+          showToast('খরচ সংরক্ষিত হয়েছে', 'success');
+        })
+        .catch((err) => {
+          queueUpsert(uid, 'expenses', newId);
+          setSyncStatus('failed');
+          showToast(
+            getSupabaseDataErrorMessageBn(err, 'ফোনে সংরক্ষিত হয়েছে; ক্লাউড সিঙ্ক ব্যর্থ'),
+            'alert'
+          );
+        });
+    } else {
+      showToast('খরচ সংরক্ষিত হয়েছে', 'success');
+    }
+
+    return newExpense;
+  };
+
+  const updateExpense = (
+    id: string,
+    updates: Partial<Omit<Expense, 'id' | 'createdAt' | 'updatedAt' | 'updatedAtMs'>>
+  ): void => {
+    const target = expensesRef.current.find((e) => e.id === id);
+    if (!target) return;
+
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const nextExpense: Expense = stripUndefined({
+      ...target,
+      ...updates,
+      id: target.id,
+      patientId: updates.patientId !== undefined ? updates.patientId || undefined : target.patientId,
+      title: updates.title !== undefined ? updates.title.trim() : target.title,
+      amount:
+        updates.amount !== undefined
+          ? Math.round((Number(updates.amount) || 0) * 100) / 100
+          : target.amount,
+      notes: updates.notes !== undefined ? updates.notes?.trim() || undefined : target.notes,
+      createdAt: target.createdAt || nowIso,
+      updatedAt: nowIso,
+      updatedAtMs: nowMs,
+    });
+
+    recentRealtimeWritesRef.current.mark('expenses', id, nowMs);
+    setExpenses((prev) =>
+      sortExpensesNewestFirst(prev.map((e) => (e.id === id ? nextExpense : e)))
+    );
+
+    if (currentUser) {
+      const uid = currentUser.uid;
+      const wasOffline = isDeviceOffline();
+      if (wasOffline) {
+        queueUpsert(uid, 'expenses', id);
+        setSyncStatus('offline');
+        showToast('খরচ অফলাইনে হালনাগাদ হয়েছে', 'info');
+        return;
+      }
+      setSyncStatus('syncing');
+      saveExpenseToSupabase(uid, nextExpense)
+        .then(() => {
+          unqueueUpsert(uid, 'expenses', id);
+          updateLiveSyncTime(false);
+          showToast('খরচের তথ্য হালনাগাদ হয়েছে', 'success');
+        })
+        .catch((err) => {
+          queueUpsert(uid, 'expenses', id);
+          setSyncStatus('failed');
+          showToast(
+            getSupabaseDataErrorMessageBn(err, 'ফোনে হালনাগাদ হয়েছে; ক্লাউড সিঙ্ক ব্যর্থ'),
+            'alert'
+          );
+        });
+    } else {
+      showToast('খরচের তথ্য হালনাগাদ হয়েছে', 'success');
+    }
+  };
+
+  const deleteExpense = (id: string): void => {
+    const target = expensesRef.current.find((e) => e.id === id);
+    if (!target) return;
+
+    recentRealtimeWritesRef.current.mark('expenses', id, Date.now());
+    setExpenses((prev) => prev.filter((e) => e.id !== id));
+
+    if (currentUser) {
+      const uid = currentUser.uid;
+      const wasOffline = isDeviceOffline();
+      if (wasOffline) {
+        unqueueUpsert(uid, 'expenses', id);
+        queueDelete(uid, 'expenses', id);
+        setSyncStatus('offline');
+        showToast('খরচ অফলাইনে মুছে ফেলা হয়েছে', 'info');
+        return;
+      }
+      setSyncStatus('syncing');
+      deleteExpenseFromSupabase(uid, id)
+        .then(() => {
+          unqueueUpsert(uid, 'expenses', id);
+          unqueueDelete(uid, 'expenses', id);
+          updateLiveSyncTime(false);
+          showToast('খরচ মুছে ফেলা হয়েছে', 'info');
+        })
+        .catch((err) => {
+          queueDelete(uid, 'expenses', id);
+          setSyncStatus('failed');
+          showToast(
+            getSupabaseDataErrorMessageBn(err, 'ফোনে মুছে ফেলা হয়েছে; ক্লাউড সিঙ্ক ব্যর্থ'),
+            'alert'
+          );
+        });
+    } else {
+      showToast('খরচ মুছে ফেলা হয়েছে', 'info');
+    }
+  };
+
+  // =========================================================================
   // Supabase Realtime Live Sync ('user-sync' + per-patient channels)
   // =========================================================================
   const activeCaregiverPatientUidsKey = React.useMemo(
@@ -5382,6 +5636,25 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               return;
             }
             setMedicines((prev) => mergeRealtimeRow(prev, change.row!).items);
+          }
+        },
+        onExpenseChange: (change) => {
+          if (change.eventType === 'DELETE' && change.oldId) {
+            if (recentRealtimeWritesRef.current.shouldIgnoreEcho('expenses', change.oldId)) return;
+            setExpenses((prev) => removeRealtimeRowById(prev, change.oldId).items);
+            return;
+          }
+          if (change.row) {
+            if (
+              recentRealtimeWritesRef.current.shouldIgnoreEcho(
+                'expenses',
+                change.row.id,
+                change.row.updatedAtMs
+              )
+            ) {
+              return;
+            }
+            setExpenses((prev) => sortExpensesNewestFirst(mergeRealtimeRow(prev, change.row!).items));
           }
         },
         onFamilyAlertChange: (change) => {
@@ -5625,6 +5898,12 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         deleteCycleLog,
         isCycleTrackerEnabledForPatient,
         setCycleTrackerEnabledForPatient,
+        expenses,
+        isLoadingExpenses,
+        loadExpenses,
+        addExpense,
+        updateExpense,
+        deleteExpense,
       }}
     >
       {children}

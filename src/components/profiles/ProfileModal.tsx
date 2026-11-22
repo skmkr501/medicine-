@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { PatientProfile } from '../../types';
+import { validateHeightCmInput } from '../../utils/bmiCalculator';
 import { X, User, ShieldAlert, Heart, Check, Trash2, Archive, RotateCcw } from 'lucide-react';
 
 interface ProfileModalProps {
@@ -24,6 +25,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [chronicConditions, setChronicConditions] = useState('');
   const [allergies, setAllergies] = useState('');
   const [emergencyContact, setEmergencyContact] = useState('');
+  const [heightCmInput, setHeightCmInput] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -37,6 +39,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       setChronicConditions(editingPatient.chronicConditions.join(', '));
       setAllergies(editingPatient.allergies.join(', '));
       setEmergencyContact(editingPatient.emergencyContact || '');
+      setHeightCmInput(
+        typeof editingPatient.heightCm === 'number' ? String(editingPatient.heightCm) : ''
+      );
       setAvatarUrl(editingPatient.avatarUrl || '');
     } else {
       setName('');
@@ -47,6 +52,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       setChronicConditions('');
       setAllergies('');
       setEmergencyContact('');
+      setHeightCmInput('');
       setAvatarUrl('');
     }
     setErrorMessage('');
@@ -65,6 +71,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       return;
     }
 
+    const heightCheck = validateHeightCmInput(heightCmInput);
+    if (!heightCheck.valid) {
+      setErrorMessage(heightCheck.error || 'সঠিক উচ্চতা লিখুন (৩০-২৬০ সেমি)');
+      return;
+    }
+
     const patientData = {
       name: name.trim(),
       relation: relation.trim(),
@@ -78,6 +90,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         ? allergies.split(',').map((s) => s.trim()).filter(Boolean)
         : [],
       emergencyContact: emergencyContact.trim(),
+      heightCm: heightCheck.heightCm,
       avatarUrl: avatarUrl.trim() || undefined,
     };
 
@@ -233,18 +246,34 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </div>
           </div>
 
-          {/* Row 3: Emergency Contact */}
-          <div>
-            <label className="block font-semibold text-text mb-1">
-              জরুরি যোগাযোগের নম্বর (Emergency Contact)
-            </label>
-            <input
-              type="text"
-              value={emergencyContact}
-              onChange={(e) => setEmergencyContact(e.target.value)}
-              placeholder="যেমন: +৮৮০ ১৭ ১২৩৪ ৫৬৭৮"
-              className="w-full px-3 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:ring-1 focus:ring-primary"
-            />
+          {/* Row 3: Height & Emergency Contact */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div>
+              <label className="block font-semibold text-text mb-1">
+                উচ্চতা (সেমি) (ঐচ্ছিক)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={heightCmInput}
+                onChange={(e) => setHeightCmInput(e.target.value)}
+                placeholder="যেমন: ১৬৫ (৩০–২৬০ সেমি)"
+                className="w-full px-3 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:ring-1 focus:ring-primary tabular-nums"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-text mb-1">
+                জরুরি যোগাযোগের নম্বর
+              </label>
+              <input
+                type="text"
+                value={emergencyContact}
+                onChange={(e) => setEmergencyContact(e.target.value)}
+                placeholder="যেমন: +৮৮০ ১৭ ১২৩৪ ৫৬৭৮"
+                className="w-full px-3 py-2 bg-surface-2 border border-border rounded-lg text-text focus:outline-hidden focus:ring-1 focus:ring-primary"
+              />
+            </div>
           </div>
 
           {/* Row 4: Chronic Conditions */}

@@ -16,6 +16,7 @@ export type CloudSyncCollectionKey =
   | 'healthRecords'
   | 'doctors'
   | 'phonebook'
+  | 'expenses'
   | 'documents';
 
 export type CloudSyncMetaMap = Partial<Record<CloudSyncCollectionKey, number>>;

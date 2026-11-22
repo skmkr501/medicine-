@@ -4,6 +4,7 @@ import {
   caregiverLinkFromRow,
   caregiverSuggestionFromRow,
   doseLogFromRow,
+  expenseFromRow,
   familyAlertFromRow,
   medicineFromRow,
 } from './mappers';
@@ -11,6 +12,7 @@ import {
   CaregiverLinkDoc,
   CaregiverSuggestionDoc,
   DoseLog,
+  Expense,
   FamilyAlertDoc,
   Medicine,
   RealtimeSyncStatus,
@@ -146,6 +148,7 @@ export interface UserRealtimeCallbacks {
   onFamilyAlertChange: (change: RealtimeRowChange<FamilyAlertDoc>) => void;
   onCaregiverSuggestionChange: (change: RealtimeRowChange<CaregiverSuggestionDoc>) => void;
   onCaregiverLinkChange: (change: RealtimeRowChange<CaregiverLinkDoc>) => void;
+  onExpenseChange?: (change: RealtimeRowChange<Expense>) => void;
   onResumeFromBackground: () => void;
 }
 
@@ -279,6 +282,15 @@ export function subscribeUserRealtimeSync(params: {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'caregiver_links', filter: `caregiver_uid=eq.${userId}` },
         (payload) => handlePayload(payload, caregiverLinkFromRow, callbacks.onCaregiverLinkChange)
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'expenses', filter: `user_id=eq.${userId}` },
+        (payload) => {
+          if (callbacks.onExpenseChange) {
+            handlePayload(payload, expenseFromRow, callbacks.onExpenseChange);
+          }
+        }
       );
 
     userChannel.subscribe((status) => {

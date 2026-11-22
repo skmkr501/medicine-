@@ -2,6 +2,7 @@ import {
   DoctorAppointment,
   DoctorProfile,
   DoseLog,
+  Expense,
   HealthRecord,
   Medicine,
   PatientProfile,
@@ -23,6 +24,7 @@ export interface PhoneTransferBundle {
   phonebook: PhonebookEntry[];
   healthRecords: HealthRecord[];
   appointments: DoctorAppointment[];
+  expenses?: Expense[];
   settings: ReminderSettings;
 }
 
@@ -102,6 +104,7 @@ export function buildPhoneTransferBundle(input: {
   phonebook: PhonebookEntry[];
   healthRecords: HealthRecord[];
   appointments: DoctorAppointment[];
+  expenses?: Expense[];
   settings: ReminderSettings;
 }): PhoneTransferBundle {
   return {
@@ -114,6 +117,7 @@ export function buildPhoneTransferBundle(input: {
     phonebook: input.phonebook,
     healthRecords: input.healthRecords,
     appointments: input.appointments,
+    ...(input.expenses ? { expenses: input.expenses } : {}),
     settings: input.settings,
   };
 }

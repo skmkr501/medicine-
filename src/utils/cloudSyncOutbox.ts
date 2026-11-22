@@ -5,7 +5,8 @@ export type OutboxCollectionKey =
   | 'healthRecords'
   | 'appointments'
   | 'doctors'
-  | 'phonebook';
+  | 'phonebook'
+  | 'expenses';
 
 export interface CloudSyncOutbox {
   upserts: Record<OutboxCollectionKey, string[]>;
@@ -31,6 +32,7 @@ export function createEmptyOutbox(): CloudSyncOutbox {
       appointments: [],
       doctors: [],
       phonebook: [],
+      expenses: [],
     },
     deletes: {
       medicines: [],
@@ -40,6 +42,7 @@ export function createEmptyOutbox(): CloudSyncOutbox {
       appointments: [],
       doctors: [],
       phonebook: [],
+      expenses: [],
     },
     settingsDirty: false,
   };
@@ -93,6 +96,7 @@ export function loadCloudSyncOutbox(
       'appointments',
       'doctors',
       'phonebook',
+      'expenses',
     ];
     for (const col of cols) {
       empty.upserts[col] = normalizeIds(parsed?.upserts?.[col]);
@@ -149,6 +153,7 @@ export function countPendingOutboxChanges(outbox: CloudSyncOutbox): number {
     'appointments',
     'doctors',
     'phonebook',
+    'expenses',
   ];
   for (const col of cols) {
     count += (outbox.upserts[col]?.length || 0) + (outbox.deletes[col]?.length || 0);
@@ -286,6 +291,7 @@ export interface SyncableSnapshotInput {
   appointments: Array<{ id: string; updatedAtMs?: number }>;
   doctors?: Array<{ id: string }>;
   phonebook?: Array<{ id: string; updatedAtMs?: number }>;
+  expenses?: Array<{ id: string; updatedAtMs?: number }>;
 }
 
 export interface DocSyncQueueLike {
@@ -306,6 +312,7 @@ export interface DirtySyncPlan {
     appointments: number;
     doctors: number;
     phonebook: number;
+    expenses: number;
     settings: number;
     documents: number;
   };
@@ -323,7 +330,7 @@ export function collectDirtySyncPlan(
   merged.settingsDirty = outbox.settingsDirty;
 
   const mergeCollection = (
-    key: 'medicines' | 'patients' | 'doseLogs' | 'healthRecords' | 'appointments' | 'phonebook',
+    key: 'medicines' | 'patients' | 'doseLogs' | 'healthRecords' | 'appointments' | 'phonebook' | 'expenses',
     records: Array<{ id: string; updatedAtMs?: number }>
   ): number => {
     const deleteSet = new Set(outbox.deletes[key]);
@@ -348,6 +355,7 @@ export function collectDirtySyncPlan(
   const hrCount = mergeCollection('healthRecords', snapshot.healthRecords);
   const aptCount = mergeCollection('appointments', snapshot.appointments);
   const phonebookCount = mergeCollection('phonebook', snapshot.phonebook || []);
+  const expenseCount = mergeCollection('expenses', snapshot.expenses || []);
 
   const doctorMap = new Set((snapshot.doctors || []).map((d) => d.id));
   const doctorDeletes = new Set(outbox.deletes.doctors);
@@ -373,6 +381,7 @@ export function collectDirtySyncPlan(
     aptCount +
     doctorCount +
     phonebookCount +
+    expenseCount +
     settingsCount +
     docOpsCount;
 
@@ -387,6 +396,7 @@ export function collectDirtySyncPlan(
   if (aptCount > 0) breakdownLabels.push(`অ্যাপয়েন্টমেন্ট (${toBn(aptCount)}টি)`);
   if (doctorCount > 0) breakdownLabels.push(`ডাক্তার (${toBn(doctorCount)}টি)`);
   if (phonebookCount > 0) breakdownLabels.push(`ফোনবুক (${toBn(phonebookCount)}টি)`);
+  if (expenseCount > 0) breakdownLabels.push(`খরচ (${toBn(expenseCount)}টি)`);
   if (settingsCount > 0) breakdownLabels.push('সেটিংস (১টি)');
   if (docOpsCount > 0) breakdownLabels.push(`প্রেসক্রিপশন ও রিপোর্ট (${toBn(docOpsCount)}টি)`);
 
@@ -401,6 +411,7 @@ export function collectDirtySyncPlan(
       appointments: aptCount,
       doctors: doctorCount,
       phonebook: phonebookCount,
+      expenses: expenseCount,
       settings: settingsCount,
       documents: docOpsCount,
     },

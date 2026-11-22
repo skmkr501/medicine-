@@ -27,7 +27,35 @@ import {
   medicalDocumentToRow,
   medicalDocumentFromRow,
   feedbackFromRow,
+  expenseToRow,
+  expenseFromRow,
 } from '../src/supabase/mappers';
+import {
+  EXPENSE_CATEGORIES,
+  MAX_EXPENSE_AMOUNT,
+  parseExpenseAmountInput,
+  formatCurrencyTk,
+  shiftMonthKey,
+  computeMonthlyExpenseAnalytics,
+  getBudgetAlertState,
+  computePrefilledMedicineCost,
+  buildExpensesCsvWithBom,
+  loadMonthlyExpenseBudget,
+  saveMonthlyExpenseBudget,
+} from '../src/utils/expenseUtils';
+import {
+  BMI_LIMITATION_NOTE,
+  BMI_MANDATORY_DISCLAIMER,
+  BMI_PEDIATRIC_MESSAGE,
+  validateHeightCmInput,
+  feetInchesToCm,
+  cmToFeetInches,
+  calculateBmi,
+  isPediatricAge,
+  classifyAsianAdultBmi,
+  calculateHealthyWeightRangeKg,
+  buildBmiHistorySeries,
+} from '../src/utils/bmiCalculator';
 import {
   chunkArray,
   retryWithBackoff,
@@ -5757,6 +5785,237 @@ describe('ধাপ ২০: AI মডেল রিট্রাই ও ক্র�
     const classified = classifyAiError(caughtError, 'Fallback error');
     assert.strictEqual(classified.code, 'overloaded');
     assert.strictEqual(classified.status, 503);
+  });
+});
+
+describe('ধাপ ২১: পরিবারের খরচ হিসাব ও BMI ক্যালকুলেটর', () => {
+  it('১) খরচ ম্যাপার (user_id বাদ), বাংলা অঙ্ক পার্সার, ৳ ফরম্যাট ও ১০ কোটি সীমা যাচাই করে', () => {
+    const exp: import('../src/types').Expense = {
+      id: 'exp-101',
+      patientId: 'p-1',
+      expenseDate: '2026-11-15',
+      category: 'ওষুধ',
+      amount: 1250,
+      title: 'নাপা ও সেকলো',
+      medicineId: 'm-1',
+      notes: 'ফার্মেসি বিল',
+      createdAt: '2026-11-15T10:00:00.000Z',
+      updatedAt: '2026-11-15T10:00:00.000Z',
+      updatedAtMs: 1763200800000,
+    };
+
+    const row = expenseToRow(exp);
+    assert.strictEqual('user_id' in row, false);
+    assert.strictEqual(row.id, 'exp-101');
+    assert.strictEqual(row.expense_date, '2026-11-15');
+    assert.strictEqual(row.amount, 1250);
+
+    const parsed = expenseFromRow({ ...row, user_id: 'u-1' });
+    assert.strictEqual(parsed.id, 'exp-101');
+    assert.strictEqual(parsed.category, 'ওষুধ');
+    assert.strictEqual(parsed.amount, 1250);
+    assert.strictEqual(parsed.medicineId, 'm-1');
+
+    // Bengali digits and boundaries (0..10 crore)
+    assert.deepStrictEqual(parseExpenseAmountInput('১২৫০.৫০'), { valid: true, amount: 1250.5 });
+    assert.deepStrictEqual(parseExpenseAmountInput('0', { allowZero: true }), { valid: true, amount: 0 });
+    assert.strictEqual(parseExpenseAmountInput('0', { allowZero: false }).valid, false);
+    assert.deepStrictEqual(parseExpenseAmountInput(String(MAX_EXPENSE_AMOUNT)), {
+      valid: true,
+      amount: 100_000_000,
+    });
+    assert.strictEqual(parseExpenseAmountInput(String(MAX_EXPENSE_AMOUNT + 1)).valid, false);
+    assert.strictEqual(parseExpenseAmountInput('-৫০').valid, false);
+    assert.strictEqual(parseExpenseAmountInput('abc').valid, false);
+
+    assert.strictEqual(formatCurrencyTk(1250, true), '৳১,২৫০');
+    assert.strictEqual(formatCurrencyTk(1250, false), '৳1,250');
+    assert.strictEqual(formatCurrencyTk(48.5, true), '৳৪৮.৫০');
+    assert.strictEqual(EXPENSE_CATEGORIES.length, 5);
+  });
+
+  it('২) মাসিক খরচ বিশ্লেষণ (ক্যাটাগরি, সদস্য, গত মাসের % তুলনা), বাজেট সতর্কতা, প্রি-ফিল দাম ও CSV BOM কাজ করে', () => {
+    const patients: import('../src/types').PatientProfile[] = [
+      {
+        id: 'p-ma',
+        name: 'আমিনা বেগম',
+        relation: 'মা',
+        age: 62,
+        gender: 'মহিলা',
+        bloodGroup: 'B+',
+        chronicConditions: [],
+        allergies: [],
+        emergencyContact: '',
+        heightCm: 155,
+      },
+      {
+        id: 'p-baba',
+        name: 'করিম সাহেব',
+        relation: 'বাবা',
+        age: 68,
+        gender: 'পুরুষ',
+        bloodGroup: 'O+',
+        chronicConditions: [],
+        allergies: [],
+        emergencyContact: '',
+      },
+    ];
+
+    const list: import('../src/types').Expense[] = [
+      {
+        id: 'e1',
+        patientId: 'p-ma',
+        expenseDate: '2026-11-05',
+        category: 'ওষুধ',
+        amount: 1200,
+        title: 'ইনসুলিন',
+        createdAt: '2026-11-05T10:00:00.000Z',
+        updatedAt: '2026-11-05T10:00:00.000Z',
+        updatedAtMs: 100,
+      },
+      {
+        id: 'e2',
+        patientId: 'p-baba',
+        expenseDate: '2026-11-10',
+        category: 'ডাক্তারের ফি',
+        amount: 800,
+        title: 'ডা. ভিজিট',
+        createdAt: '2026-11-10T10:00:00.000Z',
+        updatedAt: '2026-11-10T10:00:00.000Z',
+        updatedAtMs: 200,
+      },
+      {
+        id: 'e-prev',
+        patientId: 'p-ma',
+        expenseDate: '2026-10-12',
+        category: 'পরীক্ষা (টেস্ট)',
+        amount: 1000,
+        title: 'রক্ত পরীক্ষা',
+        createdAt: '2026-10-12T10:00:00.000Z',
+        updatedAt: '2026-10-12T10:00:00.000Z',
+        updatedAtMs: 50,
+      },
+    ];
+
+    assert.strictEqual(shiftMonthKey('2026-11', -1), '2026-10');
+    assert.strictEqual(shiftMonthKey('2026-12', 1), '2027-01');
+
+    const nov = computeMonthlyExpenseAnalytics(list, '2026-11', patients);
+    assert.strictEqual(nov.totalAmount, 2000);
+    assert.strictEqual(nov.previousMonthTotal, 1000);
+    assert.strictEqual(nov.changeDirection, 'up');
+    assert.strictEqual(nov.percentChange, 100);
+    assert.strictEqual(nov.transactionCount, 2);
+
+    const medCat = nov.categoryBreakdown.find((c) => c.category === 'ওষুধ')!;
+    assert.strictEqual(medCat.amount, 1200);
+    assert.strictEqual(medCat.sharePercent, 60);
+    assert.strictEqual(nov.memberBreakdown[0].patientId, 'p-ma');
+    assert.strictEqual(nov.memberBreakdown[0].amount, 1200);
+
+    // Budget alert thresholds (80% & 100%) + per-user storage
+    assert.strictEqual(getBudgetAlertState(1500, 2000).status, 'none');
+    assert.strictEqual(getBudgetAlertState(1600, 2000).status, 'warning_80');
+    assert.strictEqual(getBudgetAlertState(2000, 2000).status, 'exceeded_100');
+
+    const memStore = new Map<string, string>();
+    const fakeStorage = {
+      getItem: (k: string) => memStore.get(k) ?? null,
+      setItem: (k: string, v: string) => { memStore.set(k, v); },
+      removeItem: (k: string) => { memStore.delete(k); },
+    };
+    saveMonthlyExpenseBudget('u-1', 5000, fakeStorage);
+    assert.strictEqual(loadMonthlyExpenseBudget('u-1', fakeStorage), 5000);
+    assert.strictEqual(loadMonthlyExpenseBudget('u-2', fakeStorage), null);
+
+    // Stock add cost prefill & CSV BOM + formula neutralization
+    assert.strictEqual(computePrefilledMedicineCost(3.5, 20), 70);
+    assert.strictEqual(computePrefilledMedicineCost(undefined, 20), null);
+    const csv = buildExpensesCsvWithBom(
+      [{ ...list[0], notes: '=SUM(A1:A2)' }],
+      patients
+    );
+    assert.ok(csv.startsWith('\uFEFF'));
+    assert.ok(csv.includes("'=SUM(A1:A2)"));
+
+    // Privacy isolation: Shared reports and guest views must never expose expenses
+    const snap = buildSharedReportSnapshot({
+      ownerUid: 'u-1',
+      token: 'tok-exp-privacy-123456',
+      patient: patients[0],
+      medicines: [],
+      healthRecords: [],
+      appointments: [],
+      selection: DEFAULT_SHARED_REPORT_SECTIONS,
+      expiryHours: 24,
+    });
+    assert.strictEqual('expenses' in snap.sections, false);
+    const guest = buildGuestViewSnapshot(patients[0], [], new Date('2026-11-15T00:00:00.000Z'));
+    assert.strictEqual('expenses' in guest, false);
+  });
+
+  it('৩) BMI ক্যালকুলেটর: patients.height_cm ম্যাপার, ১ দশমিক BMI, এশীয় মানদণ্ড, শিশু সতর্কতা ও ইতিহাস ট্রেন্ড কাজ করে', () => {
+    const pRow = patientToRow({
+      id: 'p-h1',
+      name: 'রহিম',
+      relation: 'নিজ',
+      age: 32,
+      gender: 'পুরুষ',
+      bloodGroup: 'A+',
+      chronicConditions: [],
+      allergies: [],
+      emergencyContact: '',
+      heightCm: 170,
+    });
+    assert.strictEqual(pRow.height_cm, 170);
+    assert.strictEqual('user_id' in pRow, false);
+    assert.strictEqual(patientFromRow(pRow).heightCm, 170);
+
+    // Out-of-range height_cm clamped/rejected cleanly
+    assert.strictEqual(validateHeightCmInput('২৯').valid, false);
+    assert.strictEqual(validateHeightCmInput('২৬১').valid, false);
+    assert.deepStrictEqual(validateHeightCmInput('১৬৮.৫'), { valid: true, heightCm: 168.5 });
+
+    // Feet+inches conversion & 1 decimal rounding
+    const cm5ft6 = feetInchesToCm(5, 6); // 66 * 2.54 = 167.64 -> 167.6
+    assert.strictEqual(cm5ft6, 167.6);
+    assert.deepStrictEqual(cmToFeetInches(167.6), { feet: 5, inches: 6 });
+
+    // 65 kg, 170 cm -> 65 / (1.7^2) = 22.491 -> 22.5
+    const bmiNormal = calculateBmi(65, 170);
+    assert.strictEqual(bmiNormal, 22.5);
+    assert.strictEqual(classifyAsianAdultBmi(18.0).code, 'underweight');
+    assert.strictEqual(classifyAsianAdultBmi(18.0).labelBn, 'কম ওজন');
+    assert.strictEqual(classifyAsianAdultBmi(22.5).code, 'normal');
+    assert.strictEqual(classifyAsianAdultBmi(22.5).labelBn, 'স্বাভাবিক');
+    assert.strictEqual(classifyAsianAdultBmi(23.5).code, 'overweight_risk');
+    assert.strictEqual(classifyAsianAdultBmi(23.5).labelBn, 'বেশি ওজনের ঝুঁকি');
+    assert.strictEqual(classifyAsianAdultBmi(25.0).code, 'obese');
+    assert.strictEqual(classifyAsianAdultBmi(25.0).labelBn, 'স্থূলতা');
+
+    // Healthy weight range (18.5..22.9 at 170cm -> 53.5..66.2)
+    assert.deepStrictEqual(calculateHealthyWeightRangeKg(170), { minKg: 53.5, maxKg: 66.2 });
+
+    // Pediatric check & required messages
+    assert.strictEqual(isPediatricAge(17), true);
+    assert.strictEqual(isPediatricAge(18), false);
+    assert.strictEqual(
+      BMI_PEDIATRIC_MESSAGE,
+      'শিশুদের জন্য বয়স ও লিঙ্গভিত্তিক চার্ট দরকার, ডাক্তারের সাথে কথা বলুন'
+    );
+    assert.strictEqual(BMI_MANDATORY_DISCLAIMER, 'এটি সাধারণ তথ্য, ডাক্তারের পরামর্শের বিকল্প নয়।');
+    assert.ok(BMI_LIMITATION_NOTE.includes('গর্ভবতী'));
+
+    // BMI history series from HealthRecords
+    const records: HealthRecord[] = [
+      { id: 'hr-1', patientId: 'p-h1', recordDate: '2026-10-01', weight: 70, createdAt: '2026-10-01T00:00:00Z' },
+      { id: 'hr-2', patientId: 'p-h1', recordDate: '2026-11-01', weight: 65, createdAt: '2026-11-01T00:00:00Z' },
+      { id: 'hr-other', patientId: 'p-other', recordDate: '2026-11-01', weight: 80, createdAt: '2026-11-01T00:00:00Z' },
+    ];
+    const series = buildBmiHistorySeries(records, 'p-h1', 170);
+    assert.strictEqual(series.length, 2);
+    assert.strictEqual(series[0].bmi, 24.2);
+    assert.strictEqual(series[1].bmi, 22.5);
   });
 });
 

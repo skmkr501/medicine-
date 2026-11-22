@@ -27,6 +27,8 @@ import {
   Eye,
   Smartphone,
   Heart,
+  Wallet,
+  Calculator,
 } from 'lucide-react';
 
 export const MePage: React.FC = () => {
@@ -237,6 +239,22 @@ export const MePage: React.FC = () => {
             subtitle: 'রক্তচাপ, ডায়াবেটিস ও ওজনের হিসাব',
             icon: HeartPulse,
             iconColor: 'text-accent',
+            anchor: '',
+          },
+          {
+            id: 'expenses' as const,
+            title: 'পরিবারের খরচ হিসাব',
+            subtitle: 'ওষুধ, ডাক্তার, পরীক্ষা ও হাসপাতালের মাসিক খরচ',
+            icon: Wallet,
+            iconColor: 'text-primary',
+            anchor: '',
+          },
+          {
+            id: 'bmi' as const,
+            title: 'BMI ক্যালকুলেটর',
+            subtitle: 'ওজন ও উচ্চতা অনুযায়ী স্বাস্থ্যকর সীমা যাচাই',
+            icon: Calculator,
+            iconColor: 'text-primary',
             anchor: '',
           },
           ...(showWomensHealth
