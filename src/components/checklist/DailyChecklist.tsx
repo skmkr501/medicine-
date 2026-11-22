@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber, formatBengaliDate } from '../../utils/bengaliUtils';
-import { TimeSlot } from '../../types';
+import { MedicineIconTag, TimeSlot } from '../../types';
+import { MedicineBadgeIcon } from '../medicines/MedicineBadgeIcon';
 import {
   CheckCircle2,
   Clock,
@@ -54,6 +55,7 @@ export const DailyChecklist: React.FC = () => {
     stock: number;
     unit: string;
     colorTag: string;
+    iconTag?: MedicineIconTag;
     status: 'taken' | 'skipped' | 'missed' | 'pending';
     logId?: string;
   }
@@ -84,6 +86,7 @@ export const DailyChecklist: React.FC = () => {
           stock: med.stock,
           unit: med.unit,
           colorTag: med.colorTag,
+          iconTag: med.iconTag,
           status: log?.status || 'pending',
           logId: log?.id,
         });
@@ -301,6 +304,12 @@ export const DailyChecklist: React.FC = () => {
 
                   <div className="flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
+                      <MedicineBadgeIcon
+                        iconTag={item.iconTag}
+                        type={item.type}
+                        colorTag={item.colorTag}
+                        size="sm"
+                      />
                       <h3
                         className={`text-base font-bold ${
                           isTaken
@@ -321,7 +330,13 @@ export const DailyChecklist: React.FC = () => {
                     </div>
 
                     <div className="text-xs text-text-muted mt-1 flex items-center gap-3 flex-wrap">
-                      <span>{item.type}</span>
+                      <MedicineBadgeIcon
+                        iconTag={item.iconTag}
+                        type={item.type}
+                        colorTag={item.colorTag}
+                        size="xs"
+                        showLabel
+                      />
                       <span>·</span>
                       <span className="font-medium text-text">
                         মাত্রা: {item.dosage}

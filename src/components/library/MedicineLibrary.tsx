@@ -18,8 +18,13 @@ import {
   fetchLibraryFilterOptions,
   fetchLibraryMedicinesByIds,
   fetchSameGenericAlternativesFromSupabase,
+  logLibrarySearchMiss,
   searchLibraryMedicines,
 } from '../../supabase/libraryService';
+import {
+  LIBRARY_MISS_DEBOUNCE_MS,
+  SessionMissTracker,
+} from '../../utils/libraryMissTracker';
 import {
   Filter,
   Plus,
@@ -105,6 +110,7 @@ export const MedicineLibrary: React.FC = () => {
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const activeRequestIdRef = useRef(0);
+  const missTrackerRef = useRef(new SessionMissTracker());
 
   // Dynamic filter options fetched once from library_medicines
   const [uniqueForms, setUniqueForms] = useState<string[]>([]);
@@ -322,6 +328,25 @@ export const MedicineLibrary: React.FC = () => {
     favoriteIds,
     libraryMutationVersion,
   ]);
+
+  // Log missed library searches silently (logged-in users, 0 results, 2s pause, once per session/query)
+  useEffect(() => {
+    if (!currentUser) return;
+    if (!isSearchMode || isLoading || fetchError) return;
+    if (searchResults.length > 0) return;
+
+    const querySnapshot = trimmedQuery;
+    const timer = window.setTimeout(() => {
+      const normalized = missTrackerRef.current.shouldLog(querySnapshot);
+      if (normalized) {
+        void logLibrarySearchMiss(querySnapshot);
+      }
+    }, LIBRARY_MISS_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [currentUser, isSearchMode, isLoading, fetchError, searchResults.length, trimmedQuery]);
 
   // Apply secondary UI filters client-side when displaying RPC search results (<= 30 rows)
   const filteredSearchResults = useMemo(() => {

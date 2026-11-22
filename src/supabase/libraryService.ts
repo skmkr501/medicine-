@@ -11,6 +11,8 @@ import {
   libraryMedicineFromRow,
   LibraryMedicineRow,
   libraryMedicineToRow,
+  libraryMissFromRow,
+  LibraryMissRow,
 } from './mappers';
 import { retryWithBackoff } from './userDataService';
 import {
@@ -19,6 +21,7 @@ import {
   FeedbackEntry,
   GlobalMedicine,
   ImportBatch,
+  LibraryMiss,
   MealTiming,
   MedicineType,
 } from '../types';
@@ -1226,4 +1229,78 @@ export async function fetchLibraryBrandsByGeneric(
   brandsByGenericSessionCache.set(cacheKey, mapped);
   return mapped;
 }
+
+// ============================================================================
+// না পাওয়া ওষুধের তালিকা (library_misses + log_library_miss RPC)
+// ============================================================================
+
+export async function logLibrarySearchMiss(
+  query: string,
+  options: { client?: SearchLibraryRpcClient; isLoggedIn?: boolean } = {}
+): Promise<boolean> {
+  const cleanQuery = String(query || '').trim().replace(/\s+/g, ' ');
+  if (cleanQuery.length < 2 || cleanQuery.length > 80) return false;
+
+  const loggedIn =
+    options.isLoggedIn !== undefined ? options.isLoggedIn : Boolean(getCachedSupabaseUser());
+  if (!loggedIn) return false;
+
+  try {
+    const client: SearchLibraryRpcClient = options.client ?? supabase;
+    const { error } = await client.rpc('log_library_miss', { p_query: cleanQuery });
+    if (error) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchLibraryMissesForAdmin(
+  limitRows: number = 100
+): Promise<LibraryMiss[]> {
+  assertAdminAuth();
+  try {
+    const { data, error } = await supabase
+      .from('library_misses')
+      .select('*')
+      .order('hit_count', { ascending: false })
+      .order('last_seen', { ascending: false })
+      .limit(limitRows);
+
+    if (error) {
+      console.warn('fetchLibraryMissesForAdmin notice:', error.message);
+      return [];
+    }
+    const rows = Array.isArray(data) ? (data as LibraryMissRow[]) : [];
+    return rows.filter((r) => r && typeof r.id === 'string').map((r) => libraryMissFromRow(r));
+  } catch (err) {
+    console.warn('fetchLibraryMissesForAdmin deferred:', err);
+    return [];
+  }
+}
+
+export async function updateLibraryMissResolved(
+  missId: string,
+  resolved: boolean
+): Promise<void> {
+  assertAdminAuth();
+  if (!missId) return;
+  const { error } = await supabase
+    .from('library_misses')
+    .update({ resolved: Boolean(resolved) })
+    .eq('id', missId);
+  if (error) {
+    throw error;
+  }
+}
+
+export async function deleteLibraryMissFromSupabase(missId: string): Promise<void> {
+  assertAdminAuth();
+  if (!missId) return;
+  const { error } = await supabase.from('library_misses').delete().eq('id', missId);
+  if (error) {
+    throw error;
+  }
+}
+
 

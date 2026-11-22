@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { HealthRecord, DoctorAppointment, ReminderSettings, DoctorProfile, PhonebookEntry } from '../src/types';
+import { HealthRecord, DoctorAppointment, ReminderSettings, DoctorProfile, PhonebookEntry, Expense } from '../src/types';
 import {
   patientToRow,
   patientFromRow,
@@ -29,7 +29,53 @@ import {
   feedbackFromRow,
   expenseToRow,
   expenseFromRow,
+  announcementFromRow,
+  announcementToInsertRow,
+  libraryMissFromRow,
 } from '../src/supabase/mappers';
+import {
+  DEFAULT_HOME_LAYOUT,
+  normalizeHomeLayout,
+  moveHomeLayoutItem,
+  toggleHomeLayoutItem,
+} from '../src/utils/homeLayout';
+import {
+  getDefaultMedicineIconTag,
+  resolveMedicineColorStyle,
+  formatMedicineNotificationTitle,
+} from '../src/utils/medicineAppearance';
+import {
+  MEDICINE_PHOTO_MAX_SIDE,
+  computeScaledDimensions,
+} from '../src/utils/medicinePhotoCompressor';
+import {
+  buildMedicinePhotoStoragePath,
+  MEDICINE_PHOTO_SIGNED_URL_TTL_SECONDS,
+} from '../src/supabase/medicinePhotosService';
+import {
+  normalizePinDigits,
+  hashPinWithSalt,
+  enableAppLockWithPin,
+  verifyAppLockPin,
+  clearAppLockConfig,
+  loadAppLockConfig,
+  shouldLockAfterBackground,
+  APP_LOCK_INACTIVITY_MS,
+  SimpleStorage,
+} from '../src/utils/appLock';
+import {
+  getOrderedWeekdayLabels,
+  classifyDoseDayTone,
+  buildHealthCalendarGrid,
+  getHealthCalendarDayDetails,
+} from '../src/utils/healthCalendar';
+import {
+  normalizeMissedQuery,
+  SessionMissTracker,
+} from '../src/utils/libraryMissTracker';
+import {
+  isAnnouncementCurrentlyInWindow,
+} from '../src/supabase/announcementsService';
 import {
   EXPENSE_CATEGORIES,
   MAX_EXPENSE_AMOUNT,
@@ -6019,9 +6065,397 @@ describe('ধাপ ২১: পরিবারের খরচ হিসাব �
   });
 });
 
+describe('৭টি নতুন ফিচার (হোম কাস্টমাইজ, ছবি, আইকন/রঙ, ঘোষণা, না পাওয়া ওষুধ, অ্যাপ লক ও স্বাস্থ্য ক্যালেন্ডার)', () => {
+  it('১) হোম স্ক্রিন কাস্টমাইজ: normalizeHomeLayout, today_doses লক, ক্রম বদল ও settings ম্যাপার', () => {
+    const def = normalizeHomeLayout(null);
+    assert.strictEqual(def.length, DEFAULT_HOME_LAYOUT.length);
+    assert.strictEqual(def[0].id, 'today_doses');
+    assert.strictEqual(def[0].visible, true);
+
+    // Attempting to turn off or tamper with today_doses keeps it visible
+    const tampered = normalizeHomeLayout([
+      { id: 'today_doses', visible: false },
+      { id: 'quick_actions', visible: false },
+      { id: 'quick_actions', visible: true }, // duplicate ignored
+    ]);
+    assert.strictEqual(tampered.find((c) => c.id === 'today_doses')?.visible, true);
+    assert.strictEqual(tampered.find((c) => c.id === 'quick_actions')?.visible, false);
+    assert.strictEqual(tampered.length, DEFAULT_HOME_LAYOUT.length);
+
+    const toggledToday = toggleHomeLayoutItem(tampered, 'today_doses');
+    assert.strictEqual(toggledToday.find((c) => c.id === 'today_doses')?.visible, true);
+
+    const moved = moveHomeLayoutItem(def, 1, 'up');
+    assert.strictEqual(moved[0].id, def[1].id);
+    assert.strictEqual(moved[1].id, 'today_doses');
+
+    const row = settingsToRow({
+      soundEnabled: true,
+      selectedTone: 'soft-bell',
+      advanceMinutes: 10,
+      snoozeDurationMinutes: 5,
+      language: 'bn',
+      themeMode: 'light',
+      weekStartDay: 'saturday',
+      homeLayout: moved,
+    });
+    assert.ok(Array.isArray(row.home_layout));
+    assert.strictEqual((row.home_layout as any[])[0].id, def[1].id);
+    const parsed = settingsFromRow({ id: 'settings', home_layout: row.home_layout });
+    assert.strictEqual(parsed.homeLayout?.[0].id, def[1].id);
+  });
+
+  it('২) ওষুধের ছবি: ডাইমেনশন ছোট করা, স্টোরেজ পাথ, signed URL ও প্রাইভেসি গার্ড', () => {
+    assert.deepStrictEqual(computeScaledDimensions(4000, 2000, MEDICINE_PHOTO_MAX_SIDE), {
+      width: 1024,
+      height: 512,
+    });
+    assert.deepStrictEqual(computeScaledDimensions(1500, 3000, MEDICINE_PHOTO_MAX_SIDE), {
+      width: 512,
+      height: 1024,
+    });
+    assert.deepStrictEqual(computeScaledDimensions(640, 480, MEDICINE_PHOTO_MAX_SIDE), {
+      width: 640,
+      height: 480,
+    });
+
+    assert.strictEqual(MEDICINE_PHOTO_SIGNED_URL_TTL_SECONDS, 300);
+    assert.strictEqual(
+      buildMedicinePhotoStoragePath('user-123', 'med-456'),
+      'user-123/medicine-photos/med-456.jpg'
+    );
+
+    const med: Medicine = {
+      id: 'med-456',
+      brandName: 'Napa',
+      genericName: 'Paracetamol',
+      type: 'ট্যাবলেট',
+      strength: '500mg',
+      mealTiming: 'খাওয়ার পরে',
+      schedules: [{ id: 'sch-1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }],
+      stock: 10,
+      minStockAlert: 3,
+      unit: 'টি',
+      startDate: '2026-11-22',
+      isChronic: false,
+      status: 'active',
+      colorTag: 'teal',
+      iconTag: 'ট্যাবলেট',
+      photoPath: 'user-123/medicine-photos/med-456.jpg',
+    };
+    const row = medicineToRow(med);
+    assert.strictEqual(row.photo_path, 'user-123/medicine-photos/med-456.jpg');
+    assert.strictEqual(medicineFromRow(row).photoPath, 'user-123/medicine-photos/med-456.jpg');
+
+    // Privacy check: caregiverLinkFromRow should not fabricate medicine photos
+    const cg = caregiverLinkFromRow({
+      id: 'cg-1',
+      invite_code: 'INV12345',
+      patient_name: 'মা',
+      caregiver_name: 'ছেলে',
+      status: 'active',
+      allow_full_view: true,
+      allow_suggestions: true,
+      expires_at: '2026-12-01T00:00:00Z',
+      created_at: '2026-11-20T00:00:00Z',
+      updated_at: '2026-11-20T00:00:00Z',
+      shared_medicines: [
+        {
+          id: 'med-456',
+          brandName: 'Napa',
+          genericName: 'Paracetamol',
+          strength: '500mg',
+          type: 'ট্যাবলেট',
+          mealTiming: 'খাওয়ার পরে',
+          schedules: [{ id: 'sch-1', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }],
+          schedulesText: 'সকাল 08:00 AM',
+          stock: 10,
+          unit: 'টি',
+        },
+      ],
+    });
+    assert.strictEqual('photoPath' in (cg.sharedMedicines?.[0] || {}), false);
+  });
+
+  it('৩) রঙ ও আইকনে ওষুধ শনাক্তকরণ: icon_tag ও color_tag ম্যাপার এবং অটো-আইকন ও নোটিফিকেশন ফরম্যাট', () => {
+    assert.strictEqual(getDefaultMedicineIconTag('সিরাপ'), 'সিরাপ');
+    assert.strictEqual(getDefaultMedicineIconTag('ইনসুলিন/ইনজেকশন'), 'ইনজেকশন');
+    assert.strictEqual(getDefaultMedicineIconTag('চোখের ড্রপ'), 'ড্রপ');
+    assert.strictEqual(getDefaultMedicineIconTag('ইনহেলার'), 'ইনহেলার');
+    assert.strictEqual(getDefaultMedicineIconTag('মলম/জেল'), 'ক্রিম/মলম');
+
+    const badge = resolveMedicineColorStyle('rose');
+    assert.strictEqual(badge.id, 'rose');
+    assert.strictEqual(badge.labelBn, 'গোলাপি');
+
+    const title = formatMedicineNotificationTitle({
+      brandName: 'Napa Extend',
+      iconTag: 'ক্যাপসুল',
+      type: 'ক্যাপসুল',
+    });
+    assert.ok(title.includes('Napa Extend'));
+    assert.ok(title.includes('ক্যাপসুল'));
+
+    const medRow = medicineToRow({
+      id: 'm-icon-1',
+      brandName: 'Ventolin',
+      genericName: 'Salbutamol',
+      type: 'ইনহেলার',
+      strength: '100mcg',
+      mealTiming: 'খাওয়ার পরে',
+      schedules: [],
+      stock: 1,
+      minStockAlert: 1,
+      unit: 'টি',
+      startDate: '2026-11-22',
+      isChronic: true,
+      status: 'active',
+      colorTag: 'indigo',
+      iconTag: 'ইনহেলার',
+    });
+    assert.strictEqual(medRow.icon_tag, 'ইনহেলার');
+    assert.strictEqual(medRow.color_tag, 'indigo');
+    const roundtrip = medicineFromRow(medRow);
+    assert.strictEqual(roundtrip.iconTag, 'ইনহেলার');
+    assert.strictEqual(roundtrip.colorTag, 'indigo');
+  });
+
+  it('৪) ঘোষণা বার্তা: অ্যাক্টিভ উইন্ডো যাচাই এবং ম্যাপার দৈর্ঘ্য সীমা', () => {
+    const now = Date.parse('2026-11-22T12:00:00Z');
+    assert.strictEqual(
+      isAnnouncementCurrentlyInWindow(
+        { active: true, startsAt: '2026-11-22T00:00:00Z', endsAt: '2026-11-23T00:00:00Z' },
+        now
+      ),
+      true
+    );
+    assert.strictEqual(
+      isAnnouncementCurrentlyInWindow(
+        { active: false, startsAt: '2026-11-22T00:00:00Z', endsAt: '2026-11-23T00:00:00Z' },
+        now
+      ),
+      false
+    );
+    assert.strictEqual(
+      isAnnouncementCurrentlyInWindow(
+        { active: true, startsAt: '2026-11-23T00:00:00Z' },
+        now
+      ),
+      false
+    );
+    assert.strictEqual(
+      isAnnouncementCurrentlyInWindow(
+        { active: true, endsAt: '2026-11-21T00:00:00Z' },
+        now
+      ),
+      false
+    );
+
+    const insertRow = announcementToInsertRow({
+      title: 'ক'.repeat(150),
+      body: 'খ'.repeat(1100),
+      level: 'warning',
+    });
+    assert.strictEqual(insertRow.title.length, 120);
+    assert.strictEqual(insertRow.body.length, 1000);
+    assert.strictEqual(insertRow.level, 'warning');
+
+    const ann = announcementFromRow({
+      id: 'ann-1',
+      title: 'জরুরি বিজ্ঞপ্তি',
+      body: 'সিস্টেম আপডেট সম্পন্ন হয়েছে।',
+      level: 'success',
+      active: true,
+      created_at: '2026-11-22T10:00:00Z',
+    });
+    assert.strictEqual(ann.level, 'success');
+    assert.strictEqual(ann.title, 'জরুরি বিজ্ঞপ্তি');
+  });
+
+  it('৫) না পাওয়া ওষুধের তালিকা: কুইরি নর্মালাইজেশন, সেশন ডিডুপ্লিকেশন ও libraryMissFromRow', () => {
+    assert.strictEqual(normalizeMissedQuery('  a '), null); // < 2 chars rejected
+    assert.strictEqual(normalizeMissedQuery('x'.repeat(81)), null); // > 80 chars rejected
+    assert.strictEqual(normalizeMissedQuery('  Napa   Extra  '), 'napa extra');
+
+    const tracker = new SessionMissTracker();
+    assert.strictEqual(tracker.shouldLog('  Napa Extra '), 'napa extra');
+    assert.strictEqual(tracker.shouldLog('napa   extra'), null); // same normalized query in session
+    assert.strictEqual(tracker.shouldLog('Seclo 20'), 'seclo 20');
+    tracker.reset();
+    assert.strictEqual(tracker.shouldLog('Napa Extra'), 'napa extra');
+
+    const miss = libraryMissFromRow({
+      id: 'miss-1',
+      query_norm: 'newmed 500',
+      hit_count: 7,
+      last_seen: '2026-11-22T09:00:00Z',
+      resolved: false,
+    });
+    assert.strictEqual(miss.queryNorm, 'newmed 500');
+    assert.strictEqual(miss.hitCount, 7);
+    assert.strictEqual(miss.resolved, false);
+  });
+
+  it('৬) অ্যাপ লক: বাংলা সংখ্যা গ্রহণ, PBKDF2 হ্যাশ (নন-প্লেইনটেক্সট), ৫ বার ভুলে ক্রমবর্ধমান অপেক্ষা ও ব্যাকগ্রাউন্ড লক', async () => {
+    assert.strictEqual(normalizePinDigits('১২৩৪৫৬'), '123456');
+    assert.strictEqual(normalizePinDigits('১২a৩b৪'), '1234');
+
+    const memStoreMap = new Map<string, string>();
+    const memStorage: SimpleStorage = {
+      getItem: (k) => memStoreMap.get(k) ?? null,
+      setItem: (k, v) => {
+        memStoreMap.set(k, v);
+      },
+      removeItem: (k) => {
+        memStoreMap.delete(k);
+      },
+    };
+
+    const cfg = await enableAppLockWithPin('১২৩৪', { storage: memStorage });
+    assert.strictEqual(cfg.enabled, true);
+    assert.strictEqual(cfg.pinLength, 4);
+    assert.ok(!cfg.pinHashHex.includes('1234'));
+
+    const hash2 = await hashPinWithSalt('1234', 'aabbccddeeff00112233445566778899');
+    assert.notStrictEqual(hash2, cfg.pinHashHex);
+
+    // 5 wrong attempts trigger 30s lockout
+    let nowMs = 1_000_000;
+    for (let i = 1; i <= 4; i += 1) {
+      const attempt = await verifyAppLockPin('9999', { nowMs, storage: memStorage });
+      assert.strictEqual(attempt.ok, false);
+      assert.strictEqual(attempt.lockedSeconds, 0);
+      assert.strictEqual(attempt.failedAttempts, i);
+    }
+    const fifth = await verifyAppLockPin('9999', { nowMs, storage: memStorage });
+    assert.strictEqual(fifth.ok, false);
+    assert.strictEqual(fifth.lockedSeconds, 30);
+
+    // Correct PIN works after cooldown expires (and resets failure counter)
+    nowMs += 31_000;
+    const sixthFail = await verifyAppLockPin('9999', { nowMs, storage: memStorage });
+    assert.strictEqual(sixthFail.lockedSeconds, 60);
+
+    nowMs += 61_000;
+    const unlocked = await verifyAppLockPin('১২৩৪', { nowMs, storage: memStorage });
+    assert.strictEqual(unlocked.ok, true);
+    assert.strictEqual(unlocked.failedAttempts, 0);
+
+    // Background inactivity check (> 30s)
+    assert.strictEqual(shouldLockAfterBackground(100_000, 129_000, APP_LOCK_INACTIVITY_MS), false);
+    assert.strictEqual(shouldLockAfterBackground(100_000, 131_000, APP_LOCK_INACTIVITY_MS), true);
+
+    clearAppLockConfig(memStorage);
+    assert.strictEqual(loadAppLockConfig(memStorage), null);
+  });
+
+  it('৭) স্বাস্থ্য ক্যালেন্ডার: সপ্তাহের শুরুর দিন, ডোজ ডট রঙ, বিস্তারিত ফিল্টার ও নারীর স্বাস্থ্য সম্পূর্ণ বাদ', () => {
+    assert.strictEqual(getOrderedWeekdayLabels('saturday')[0], 'শনি');
+    assert.strictEqual(getOrderedWeekdayLabels('sunday')[0], 'রবি');
+    assert.strictEqual(getOrderedWeekdayLabels('monday')[0], 'সোম');
+
+    assert.strictEqual(classifyDoseDayTone({ taken: 3, skipped: 0, missed: 0 }), 'all_taken');
+    assert.strictEqual(classifyDoseDayTone({ taken: 2, skipped: 1, missed: 0 }), 'partial');
+    assert.strictEqual(classifyDoseDayTone({ taken: 0, skipped: 0, missed: 2 }), 'many_missed');
+
+    const doseLogs: DoseLog[] = [
+      {
+        id: 'dl-1',
+        medicineId: 'm1',
+        medicineName: 'Napa',
+        patientId: 'p1',
+        scheduledDate: '2026-11-10',
+        scheduledTime: '08:00',
+        timeSlot: 'সকাল',
+        dosage: '১টি',
+        status: 'taken',
+      },
+      {
+        id: 'dl-2',
+        medicineId: 'm2',
+        medicineName: 'Seclo',
+        patientId: 'p2',
+        scheduledDate: '2026-11-10',
+        scheduledTime: '20:00',
+        timeSlot: 'রাত',
+        dosage: '১টি',
+        status: 'missed',
+      },
+    ];
+    const appointments: DoctorAppointment[] = [
+      {
+        id: 'apt-1',
+        patientId: 'p1',
+        doctorName: 'ডা. করিম',
+        appointmentDate: '2026-11-10',
+        appointmentTime: '17:00',
+        location: 'ঢাকা মেডিকেল',
+        status: 'upcoming',
+        createdAt: '2026-11-01T00:00:00Z',
+      },
+    ];
+    const healthRecords: HealthRecord[] = [
+      {
+        id: 'hr-c1',
+        patientId: 'p1',
+        recordDate: '2026-11-10',
+        systolic: 120,
+        diastolic: 80,
+        createdAt: '2026-11-10T10:00:00Z',
+      },
+    ];
+    const expenses: Expense[] = [
+      {
+        id: 'exp-c1',
+        patientId: 'p1',
+        expenseDate: '2026-11-10',
+        category: 'ওষুধ',
+        amount: 350,
+        title: 'Napa',
+        createdAt: '2026-11-10T10:00:00Z',
+        updatedAt: '2026-11-10T10:00:00Z',
+      },
+    ];
+
+    const cells = buildHealthCalendarGrid({
+      year: 2026,
+      monthIndex0: 10, // November
+      weekStartDay: 'saturday',
+      todayIso: '2026-11-22',
+      patientId: 'p1',
+      doseLogs,
+      appointments,
+      healthRecords,
+      expenses,
+    });
+    const nov10 = cells.find((c) => c.dateIso === '2026-11-10');
+    assert.ok(nov10);
+    assert.strictEqual(nov10.doseTone, 'all_taken'); // filtered to p1 only
+    assert.strictEqual(nov10.appointmentsCount, 1);
+    assert.strictEqual(nov10.healthRecordsCount, 1);
+    assert.strictEqual(nov10.expensesCount, 1);
+    assert.strictEqual(nov10.totalExpenseAmount, 350);
+
+    const details = getHealthCalendarDayDetails({
+      dateIso: '2026-11-10',
+      patientId: 'p1',
+      doseLogs,
+      appointments,
+      healthRecords,
+      expenses,
+    });
+    assert.strictEqual(details.doseLogs.length, 1);
+    assert.strictEqual(details.appointments.length, 1);
+    assert.strictEqual(details.healthRecords.length, 1);
+    assert.strictEqual(details.expenses.length, 1);
+    assert.strictEqual('cycleLogs' in details, false);
+  });
+});
+
 console.log('\n================================================================');
 console.log('  🎉 ALL NEW FEATURE TESTS PASSED SUCCESSFULLY!');
 console.log('================================================================\n');
+
 
 
 

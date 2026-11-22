@@ -242,6 +242,14 @@ export const MePage: React.FC = () => {
             anchor: '',
           },
           {
+            id: 'calendar' as const,
+            title: 'স্বাস্থ্য ক্যালেন্ডার',
+            subtitle: 'এক নজরে মাসের ডোজ, অ্যাপয়েন্টমেন্ট, রেকর্ড ও খরচ',
+            icon: Calendar,
+            iconColor: 'text-primary',
+            anchor: '',
+          },
+          {
             id: 'expenses' as const,
             title: 'পরিবারের খরচ হিসাব',
             subtitle: 'ওষুধ, ডাক্তার, পরীক্ষা ও হাসপাতালের মাসিক খরচ',

@@ -210,12 +210,31 @@ export async function upsertRowsInBatches<TRow extends object>(
         }
       );
     } catch (err) {
-      // If patients.height_cm column is not yet added on remote DB, retry without height_cm
+      // Schema-fault-tolerant fallback if newly added optional columns do not yet exist on remote DB
       const msg = String((err as { message?: unknown })?.message || '').toLowerCase();
-      if (table === 'patients' && isMissingSchemaObjectError(err) && msg.includes('height_cm')) {
+      const missingCol = isMissingSchemaObjectError(err);
+      const stripCols: string[] = [];
+
+      if (missingCol && table === 'patients' && msg.includes('height_cm')) {
+        stripCols.push('height_cm');
+      }
+      if (missingCol && table === 'user_settings' && msg.includes('home_layout')) {
+        stripCols.push('home_layout');
+      }
+      if (missingCol && table === 'medicines') {
+        if (msg.includes('photo_path')) stripCols.push('photo_path');
+        if (msg.includes('icon_tag')) stripCols.push('icon_tag');
+        if (stripCols.length === 0 && (msg.includes('column') || msg.includes('schema cache'))) {
+          stripCols.push('photo_path', 'icon_tag');
+        }
+      }
+
+      if (stripCols.length > 0) {
         const strippedChunk = chunk.map((r) => {
           const copy = { ...(r as Record<string, unknown>) };
-          delete copy.height_cm;
+          for (const col of stripCols) {
+            delete copy[col];
+          }
           return copy;
         });
         await retryWithBackoff(
@@ -1100,3 +1119,157 @@ export async function deleteExpenseFromSupabase(
   if (!userId || !expenseId) return;
   await deleteRowsInBatches('expenses', userId, [expenseId]);
 }
+
+// ============================================================================
+// ক্যালেন্ডার মাসিক রেঞ্জ কোয়েরি (PAGE = 1000 প্যাজিনেশন, সেশন প্রতি একবার)
+// ============================================================================
+const CALENDAR_RANGE_PAGE = 1000;
+
+export async function fetchDoseLogsRangeFromSupabase(
+  userId: string,
+  startDateIso: string,
+  endDateIso: string
+): Promise<DoseLog[]> {
+  if (!userId || !startDateIso || !endDateIso) return [];
+  const collected: DoseLog[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('dose_logs')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('scheduled_date', startDateIso)
+      .lte('scheduled_date', endDateIso)
+      .order('scheduled_date', { ascending: false })
+      .range(offset, offset + CALENDAR_RANGE_PAGE - 1);
+
+    if (error) {
+      if (isMissingSchemaObjectError(error)) return [];
+      throw formatSupabaseError(error, 'ক্যালেন্ডারের ডোজ তথ্য আনা যায়নি');
+    }
+    const rows = Array.isArray(data) ? data : [];
+    for (const r of rows as Array<{ id?: unknown } & Record<string, unknown>>) {
+      if (r && typeof r.id === 'string') {
+        collected.push(doseLogFromRow(r as unknown as Parameters<typeof doseLogFromRow>[0]));
+      }
+    }
+    if (rows.length < CALENDAR_RANGE_PAGE) break;
+    offset += CALENDAR_RANGE_PAGE;
+  }
+
+  return collected;
+}
+
+export async function fetchAppointmentsRangeFromSupabase(
+  userId: string,
+  startDateIso: string,
+  endDateIso: string
+): Promise<DoctorAppointment[]> {
+  if (!userId || !startDateIso || !endDateIso) return [];
+  const collected: DoctorAppointment[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('appointments')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('appointment_date', startDateIso)
+      .lte('appointment_date', endDateIso)
+      .order('appointment_date', { ascending: false })
+      .range(offset, offset + CALENDAR_RANGE_PAGE - 1);
+
+    if (error) {
+      if (isMissingSchemaObjectError(error)) return [];
+      throw formatSupabaseError(error, 'ক্যালেন্ডারের অ্যাপয়েন্টমেন্ট আনা যায়নি');
+    }
+    const rows = Array.isArray(data) ? data : [];
+    for (const r of rows as Array<{ id?: unknown } & Record<string, unknown>>) {
+      if (r && typeof r.id === 'string') {
+        collected.push(
+          appointmentFromRow(r as unknown as Parameters<typeof appointmentFromRow>[0])
+        );
+      }
+    }
+    if (rows.length < CALENDAR_RANGE_PAGE) break;
+    offset += CALENDAR_RANGE_PAGE;
+  }
+
+  return collected;
+}
+
+export async function fetchHealthRecordsRangeFromSupabase(
+  userId: string,
+  startDateIso: string,
+  endDateIso: string
+): Promise<HealthRecord[]> {
+  if (!userId || !startDateIso || !endDateIso) return [];
+  const collected: HealthRecord[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('health_records')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('record_date', startDateIso)
+      .lte('record_date', endDateIso)
+      .order('record_date', { ascending: false })
+      .range(offset, offset + CALENDAR_RANGE_PAGE - 1);
+
+    if (error) {
+      if (isMissingSchemaObjectError(error)) return [];
+      throw formatSupabaseError(error, 'ক্যালেন্ডারের স্বাস্থ্য রেকর্ড আনা যায়নি');
+    }
+    const rows = Array.isArray(data) ? data : [];
+    for (const r of rows as Array<{ id?: unknown } & Record<string, unknown>>) {
+      if (r && typeof r.id === 'string') {
+        collected.push(
+          healthRecordFromRow(r as unknown as Parameters<typeof healthRecordFromRow>[0])
+        );
+      }
+    }
+    if (rows.length < CALENDAR_RANGE_PAGE) break;
+    offset += CALENDAR_RANGE_PAGE;
+  }
+
+  return collected;
+}
+
+export async function fetchExpensesRangeFromSupabase(
+  userId: string,
+  startDateIso: string,
+  endDateIso: string
+): Promise<Expense[]> {
+  if (!userId || !startDateIso || !endDateIso) return [];
+  const collected: Expense[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('*')
+      .eq('user_id', userId)
+      .gte('expense_date', startDateIso)
+      .lte('expense_date', endDateIso)
+      .order('expense_date', { ascending: false })
+      .range(offset, offset + CALENDAR_RANGE_PAGE - 1);
+
+    if (error) {
+      if (isMissingSchemaObjectError(error)) return [];
+      throw formatSupabaseError(error, 'ক্যালেন্ডারের খরচ আনা যায়নি');
+    }
+    const rows = Array.isArray(data) ? data : [];
+    for (const r of rows as ExpenseRow[]) {
+      if (r && typeof r.id === 'string') {
+        collected.push(expenseFromRow(r));
+      }
+    }
+    if (rows.length < CALENDAR_RANGE_PAGE) break;
+    offset += CALENDAR_RANGE_PAGE;
+  }
+
+  return collected;
+}
+

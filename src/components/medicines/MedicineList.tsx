@@ -3,6 +3,9 @@ import { useMedicine } from '../../context/MedicineContext';
 import { Medicine, MedicineType } from '../../types';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import { MedicineDetailModal } from './MedicineDetailModal';
+import { MedicineBadgeIcon } from './MedicineBadgeIcon';
+import { MedicinePhotoThumbnail } from './MedicinePhotoThumbnail';
+import { MedicinePhotoLightbox } from './MedicinePhotoLightbox';
 import { predictMedicineStock } from '../../utils/stockPredictor';
 import {
   Search,
@@ -35,11 +38,17 @@ export const MedicineList: React.FC = () => {
     setSelectedMedicineIdForDetail,
     selectedMedicineIdForDetail,
     openCreateProfileModal,
+    startEditMedicine,
   } = useMedicine();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'chronic' | 'lowStock'>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [lightboxState, setLightboxState] = useState<{
+    url: string;
+    title: string;
+    subtitle?: string;
+  } | null>(null);
 
   // Filter medicines for current active patient + search & status
   const filteredMedicines = useMemo(() => {
@@ -298,18 +307,44 @@ export const MedicineList: React.FC = () => {
                 <div>
                   
                   {/* Top Bar inside card */}
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div>
-                      <h3 className="text-base font-bold text-text leading-tight">
-                        {med.brandName}
-                      </h3>
-                      <p className="text-xs text-text-muted mt-0.5">
-                        {med.genericName}
-                      </p>
+                  <div className="flex items-start justify-between gap-2.5 mb-2">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <MedicineBadgeIcon
+                        iconTag={med.iconTag}
+                        type={med.type}
+                        colorTag={med.colorTag}
+                        size="md"
+                      />
+                      <div className="min-w-0">
+                        <h3 className="text-base font-bold text-text leading-tight truncate">
+                          {med.brandName}
+                        </h3>
+                        <p className="text-xs text-text-muted mt-0.5 truncate">
+                          {med.genericName}
+                        </p>
+                      </div>
                     </div>
-                    <span className="text-[11px] font-medium text-primary bg-primary-soft px-2 py-0.5 rounded shrink-0">
-                      {med.type}
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <MedicinePhotoThumbnail
+                        photoPath={med.photoPath}
+                        alt={med.brandName}
+                        size="sm"
+                        onOpenLightbox={(url) =>
+                          setLightboxState({
+                            url,
+                            title: med.brandName,
+                            subtitle: `${med.genericName} · ${med.strength}`,
+                          })
+                        }
+                      />
+                      <MedicineBadgeIcon
+                        iconTag={med.iconTag}
+                        type={med.type}
+                        colorTag={med.colorTag}
+                        size="xs"
+                        showLabel
+                      />
+                    </div>
                   </div>
 
                   {/* Metadata Row (Unboxed with separators) */}
@@ -431,14 +466,20 @@ export const MedicineList: React.FC = () => {
           medicine={activeDetailMedicine}
           onClose={() => setSelectedMedicineIdForDetail(null)}
           onEdit={(med) => {
-            // Edit navigates to AddMedicine with state
             setSelectedMedicineIdForDetail(null);
-            setCurrentPage('add-medicine');
+            startEditMedicine(med);
           }}
           onDelete={(id) => deleteMedicine(id)}
           onAdjustStock={(id, delta) => adjustStock(id, delta)}
         />
       )}
+
+      <MedicinePhotoLightbox
+        imageUrl={lightboxState?.url || null}
+        title={lightboxState?.title || ''}
+        subtitle={lightboxState?.subtitle}
+        onClose={() => setLightboxState(null)}
+      />
 
     </div>
   );

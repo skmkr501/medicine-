@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useMedicine } from '../../context/MedicineContext';
-import { MedicineType, MealTiming, TimeSlot, DoseSchedule } from '../../types';
+import { Medicine, MedicineIconTag, MedicineType, MealTiming, TimeSlot, DoseSchedule } from '../../types';
 import { commonMedicinePresets } from '../../data/mockData';
 import { toBengaliNumber, formatBengaliTime } from '../../utils/bengaliUtils';
 import {
@@ -11,8 +11,21 @@ import { PrescriptionScannerModal } from './PrescriptionScannerModal';
 import { PrescriptionReviewView, InitialPrescriptionScanImage } from './PrescriptionReviewView';
 import { MedicineInfoModal } from '../ai/MedicineInfoModal';
 import { GenericBrandsBottomSheet } from '../library/GenericBrandsBottomSheet';
+import { MedicineBadgeIcon } from './MedicineBadgeIcon';
 import type { AddMedicineLibraryPrefill } from '../../supabase/libraryService';
 import { mapGlobalMedicineToAddFormPrefill } from '../../supabase/libraryService';
+import {
+  getDefaultMedicineIconTag,
+  MEDICINE_COLOR_OPTIONS,
+  MEDICINE_ICON_OPTIONS,
+  resolveMedicineIconTag,
+} from '../../utils/medicineAppearance';
+import { compressMedicinePhotoFile } from '../../utils/medicinePhotoCompressor';
+import {
+  deleteMedicinePhotoFromStorage,
+  getMedicinePhotoSignedUrl,
+  uploadMedicinePhotoToStorage,
+} from '../../supabase/medicinePhotosService';
 import {
   PrescriptionScanResult,
   checkDrugInteractions,
@@ -43,6 +56,8 @@ import {
   Sunrise,
   Sunset,
   Stethoscope,
+  ImagePlus,
+  X,
 } from 'lucide-react';
 
 const DEFAULT_SLOT_TIMES: Record<TimeSlot, string> = {
@@ -57,6 +72,10 @@ const SLOT_ORDER: TimeSlot[] = ['সকাল', 'দুপুর', 'সন্ধ
 export const AddMedicine: React.FC = () => {
   const {
     addMedicine,
+    updateMedicine,
+    editingMedicine,
+    clearEditingMedicine,
+    showToast,
     medicines,
     patients,
     activePatientId,
@@ -114,6 +133,21 @@ export const AddMedicine: React.FC = () => {
   const [addStockAsExpense, setAddStockAsExpense] = useState(false);
   const [expenseAmountInput, setExpenseAmountInput] = useState('');
   const [expenseAmountEdited, setExpenseAmountEdited] = useState(false);
+
+  // Visual Identification (Icon & Color Tag) + Optional Medicine Photo
+  const [iconTag, setIconTag] = useState<MedicineIconTag>('ট্যাবলেট');
+  const [iconTagManuallyPicked, setIconTagManuallyPicked] = useState(false);
+  const [colorTag, setColorTag] = useState<Medicine['colorTag']>('teal');
+  const [existingPhotoPath, setExistingPhotoPath] = useState<string | undefined>(undefined);
+  const [existingPhotoSignedUrl, setExistingPhotoSignedUrl] = useState<string | null>(null);
+  const [pendingPhotoBlob, setPendingPhotoBlob] = useState<Blob | null>(null);
+  const [pendingPhotoPreviewUrl, setPendingPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoRemoved, setPhotoRemoved] = useState(false);
+  const [isCompressingPhoto, setIsCompressingPhoto] = useState(false);
+  const [isSavingMedicine, setIsSavingMedicine] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const cameraPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryPhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Drug Interaction State
   const [isCheckingInteractions, setIsCheckingInteractions] = useState(false);
@@ -201,6 +235,71 @@ export const AddMedicine: React.FC = () => {
   };
 
   useEffect(() => {
+    return () => {
+      if (pendingPhotoPreviewUrl) {
+        URL.revokeObjectURL(pendingPhotoPreviewUrl);
+      }
+    };
+  }, [pendingPhotoPreviewUrl]);
+
+  useEffect(() => {
+    if (!editingMedicine) return;
+    setBrandName(editingMedicine.brandName || '');
+    setGenericName(editingMedicine.genericName || '');
+    setType(editingMedicine.type || 'ট্যাবলেট');
+    setStrength(editingMedicine.strength || '');
+    setMealTiming(editingMedicine.mealTiming || 'খাওয়ার পরে');
+    setAssignedPatientId(editingMedicine.assignedPatientId);
+    setPurpose(editingMedicine.purpose || '');
+    setDoctorName(editingMedicine.doctorName || '');
+    setInstructions(editingMedicine.instructions || '');
+    setStock(editingMedicine.stock ?? 0);
+    setMinStockAlert(editingMedicine.minStockAlert ?? 5);
+    setUnit(editingMedicine.unit || 'টি');
+    setIsChronic(Boolean(editingMedicine.isChronic));
+    setDurationDays(editingMedicine.durationDays || 7);
+    setExpiryDate(editingMedicine.expiryDate || '');
+    setSchedules(
+      editingMedicine.schedules && editingMedicine.schedules.length > 0
+        ? editingMedicine.schedules
+        : [{ id: 'slot-morning', timeSlot: 'সকাল', time: '08:00 AM', dosage: '১টি' }]
+    );
+    setCatalogMedicineId(editingMedicine.catalogMedicineId);
+    setPackageDescription(editingMedicine.packageDescription);
+    setPricePerUnit(editingMedicine.pricePerUnit);
+    setIconTag(resolveMedicineIconTag(editingMedicine.iconTag, editingMedicine.type));
+    setIconTagManuallyPicked(Boolean(editingMedicine.iconTag));
+    setColorTag(editingMedicine.colorTag || 'teal');
+    setExistingPhotoPath(editingMedicine.photoPath);
+    setPhotoRemoved(false);
+    setPendingPhotoBlob(null);
+    setPendingPhotoPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setPhotoError(null);
+    setFormError('');
+
+    let active = true;
+    if (editingMedicine.photoPath) {
+      getMedicinePhotoSignedUrl(editingMedicine.photoPath).then((url) => {
+        if (active) setExistingPhotoSignedUrl(url);
+      });
+    } else {
+      setExistingPhotoSignedUrl(null);
+    }
+    return () => {
+      active = false;
+    };
+  }, [editingMedicine]);
+
+  useEffect(() => {
+    if (!iconTagManuallyPicked) {
+      setIconTag(getDefaultMedicineIconTag(type));
+    }
+  }, [type, iconTagManuallyPicked]);
+
+  useEffect(() => {
     if (expenseAmountEdited) return;
     const prefillCost = computePrefilledMedicineCost(pricePerUnit, Number(stock) || 0);
     setExpenseAmountInput(prefillCost !== null ? String(prefillCost) : '');
@@ -208,6 +307,7 @@ export const AddMedicine: React.FC = () => {
 
   useEffect(() => {
     loadDoctors();
+    if (editingMedicine) return;
     try {
       const libraryPrefillRaw = localStorage.getItem('shasthobondhu_pending_library_prefill');
       if (libraryPrefillRaw) {
@@ -321,16 +421,51 @@ export const AddMedicine: React.FC = () => {
     setStep((prev) => (prev < 4 ? ((prev + 1) as 1 | 2 | 3 | 4) : prev));
   };
 
+  const handleSelectMedicinePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setPhotoError(null);
+    setIsCompressingPhoto(true);
+    try {
+      const { blob } = await compressMedicinePhotoFile(file);
+      const nextUrl = URL.createObjectURL(blob);
+      setPendingPhotoBlob(blob);
+      setPendingPhotoPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return nextUrl;
+      });
+      setPhotoRemoved(false);
+    } catch (err: any) {
+      setPhotoError(err?.message || 'ছবি প্রসেস করা যায়নি। অনুগ্রহ করে অন্য ছবি বেছে নিন।');
+    } finally {
+      setIsCompressingPhoto(false);
+    }
+  };
+
+  const handleRemoveMedicinePhoto = () => {
+    setPendingPhotoBlob(null);
+    setPendingPhotoPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setExistingPhotoSignedUrl(null);
+    setPhotoRemoved(true);
+    setPhotoError(null);
+  };
+
   const handlePrevStep = () => {
     setFormError('');
     if (step === 1) {
+      clearEditingMedicine();
       setCurrentPage('medicines');
       return;
     }
     setStep((prev) => (prev > 1 ? ((prev - 1) as 1 | 2 | 3 | 4) : prev));
   };
 
-  const handleSaveMedicine = () => {
+  const handleSaveMedicine = async () => {
+    if (isSavingMedicine) return;
     if (!brandName.trim()) {
       setFormError('দয়া করে ওষুধের নাম লিখুন');
       setStep(1);
@@ -344,7 +479,7 @@ export const AddMedicine: React.FC = () => {
 
     let validatedExpenseAmount: number | null = null;
     const numericStock = Number(stock) || 0;
-    if (numericStock > 0 && addStockAsExpense) {
+    if (!editingMedicine && numericStock > 0 && addStockAsExpense) {
       const parsedExpense = parseExpenseAmountInput(expenseAmountInput, { allowZero: false });
       if (!parsedExpense.valid || parsedExpense.amount === null) {
         setFormError(parsedExpense.error || 'সঠিক খরচের পরিমাণ লিখুন');
@@ -356,44 +491,120 @@ export const AddMedicine: React.FC = () => {
     const d = new Date();
     const localTodayIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-    const newMedicineId = addMedicine({
-      brandName: brandName.trim(),
-      genericName: genericName.trim() || 'সাধারণ ওষুধ',
-      type,
-      strength: strength.trim() || 'নির্দিষ্ট মাত্রা',
-      mealTiming,
-      assignedPatientId,
-      schedules,
-      stock: numericStock,
-      minStockAlert: Number(minStockAlert) || 5,
-      unit,
-      startDate: localTodayIso,
-      isChronic,
-      durationDays: isChronic ? undefined : Number(durationDays) || 7,
-      purpose: purpose.trim(),
-      doctorName: doctorName.trim(),
-      instructions: instructions.trim(),
-      expiryDate: expiryDate.trim() || undefined,
-      ...(catalogMedicineId ? { catalogMedicineId } : {}),
-      ...(packageDescription ? { packageDescription } : {}),
-      ...(typeof pricePerUnit === 'number' ? { pricePerUnit } : {}),
-      status: 'active',
-      colorTag: 'teal',
-    });
+    setIsSavingMedicine(true);
+    try {
+      if (editingMedicine) {
+        let nextPhotoPath = photoRemoved ? undefined : existingPhotoPath;
+        if (pendingPhotoBlob) {
+          if (currentUser) {
+            try {
+              nextPhotoPath = await uploadMedicinePhotoToStorage(
+                currentUser.uid,
+                editingMedicine.id,
+                pendingPhotoBlob
+              );
+            } catch {
+              showToast('ছবি আপলোড করা যায়নি; ওষুধের অন্যান্য তথ্য সংরক্ষণ করা হয়েছে', 'alert');
+            }
+          } else {
+            showToast('ছবি ক্লাউডে সেভ করতে লগইন করুন', 'info');
+          }
+        } else if (photoRemoved && (editingMedicine.photoPath || currentUser)) {
+          await deleteMedicinePhotoFromStorage(
+            editingMedicine.photoPath,
+            currentUser ? { userId: currentUser.uid, medicineId: editingMedicine.id } : undefined
+          );
+          nextPhotoPath = undefined;
+        }
 
-    if (numericStock > 0 && addStockAsExpense && validatedExpenseAmount !== null) {
-      addExpense({
-        expenseDate: localTodayIso,
-        amount: validatedExpenseAmount,
-        category: 'ওষুধ',
-        patientId: assignedPatientId,
-        title: `${brandName.trim()} ক্রয় (${toBengaliNumber(numericStock)} ${unit})`,
-        medicineId: newMedicineId,
-        notes: 'নতুন ওষুধ কেনার সময় যোগ করা হয়েছে',
+        updateMedicine(editingMedicine.id, {
+          brandName: brandName.trim(),
+          genericName: genericName.trim() || 'সাধারণ ওষুধ',
+          type,
+          strength: strength.trim() || 'নির্দিষ্ট মাত্রা',
+          mealTiming,
+          assignedPatientId,
+          schedules,
+          stock: numericStock,
+          minStockAlert: Number(minStockAlert) || 5,
+          unit,
+          isChronic,
+          durationDays: isChronic ? undefined : Number(durationDays) || 7,
+          purpose: purpose.trim(),
+          doctorName: doctorName.trim(),
+          instructions: instructions.trim(),
+          expiryDate: expiryDate.trim() || undefined,
+          ...(catalogMedicineId ? { catalogMedicineId } : {}),
+          ...(packageDescription ? { packageDescription } : {}),
+          ...(typeof pricePerUnit === 'number' ? { pricePerUnit } : {}),
+          iconTag,
+          colorTag,
+          photoPath: nextPhotoPath,
+        });
+        clearEditingMedicine();
+        setCurrentPage('medicines');
+        return;
+      }
+
+      const newMedicineId = addMedicine({
+        brandName: brandName.trim(),
+        genericName: genericName.trim() || 'সাধারণ ওষুধ',
+        type,
+        strength: strength.trim() || 'নির্দিষ্ট মাত্রা',
+        mealTiming,
+        assignedPatientId,
+        schedules,
+        stock: numericStock,
+        minStockAlert: Number(minStockAlert) || 5,
+        unit,
+        startDate: localTodayIso,
+        isChronic,
+        durationDays: isChronic ? undefined : Number(durationDays) || 7,
+        purpose: purpose.trim(),
+        doctorName: doctorName.trim(),
+        instructions: instructions.trim(),
+        expiryDate: expiryDate.trim() || undefined,
+        ...(catalogMedicineId ? { catalogMedicineId } : {}),
+        ...(packageDescription ? { packageDescription } : {}),
+        ...(typeof pricePerUnit === 'number' ? { pricePerUnit } : {}),
+        status: 'active',
+        iconTag,
+        colorTag,
       });
-    }
 
-    setCurrentPage('medicines');
+      if (pendingPhotoBlob) {
+        if (currentUser) {
+          try {
+            const uploadedPath = await uploadMedicinePhotoToStorage(
+              currentUser.uid,
+              newMedicineId,
+              pendingPhotoBlob
+            );
+            updateMedicine(newMedicineId, { photoPath: uploadedPath });
+          } catch {
+            showToast('ওষুধ যোগ হয়েছে, কিন্তু ছবি আপলোড ব্যর্থ হয়েছে', 'alert');
+          }
+        } else {
+          showToast('ওষুধ যোগ হয়েছে; ছবি ক্লাউডে সেভ করতে লগইন করুন', 'info');
+        }
+      }
+
+      if (numericStock > 0 && addStockAsExpense && validatedExpenseAmount !== null) {
+        addExpense({
+          expenseDate: localTodayIso,
+          amount: validatedExpenseAmount,
+          category: 'ওষুধ',
+          patientId: assignedPatientId,
+          title: `${brandName.trim()} ক্রয় (${toBengaliNumber(numericStock)} ${unit})`,
+          medicineId: newMedicineId,
+          notes: 'নতুন ওষুধ কেনার সময় যোগ করা হয়েছে',
+        });
+      }
+
+      setCurrentPage('medicines');
+    } finally {
+      setIsSavingMedicine(false);
+    }
   };
 
   const mainSlotCards: {
@@ -549,24 +760,178 @@ export const AddMedicine: React.FC = () => {
             </button>
           </div>
 
-          {/* Common Presets */}
-          <div className="pt-2 border-t border-border space-y-2.5">
-            <span className="block text-sm font-bold text-text-muted">
-              বেশি ব্যবহৃত ওষুধ (এক ট্যাপে বেছে নিন):
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {commonMedicinePresets.map((preset, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => handleApplyPreset(preset)}
-                  className="min-h-[48px] px-4 py-2 text-sm font-semibold bg-surface-2 border border-border text-text rounded-xl hover:border-primary hover:bg-primary-soft transition-colors cursor-pointer"
-                >
-                  + {preset.brandName}
-                </button>
-              ))}
+          {/* Visual Identification (Icon + Color) & Optional Medicine Photo */}
+          <div className="pt-3 border-t border-border space-y-4">
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-bold text-text">
+                  ওষুধের আইকন ও রঙ (সহজে চেনার জন্য)
+                </span>
+                <MedicineBadgeIcon
+                  iconTag={iconTag}
+                  type={type}
+                  colorTag={colorTag}
+                  size="sm"
+                  showLabel
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {MEDICINE_ICON_OPTIONS.map((opt) => {
+                  const selected = iconTag === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        setIconTag(opt.id);
+                        setIconTagManuallyPicked(true);
+                      }}
+                      className={`min-h-[40px] px-2.5 py-1.5 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        selected
+                          ? 'bg-primary-soft border-primary text-primary'
+                          : 'bg-surface-2 border-border text-text hover:border-primary/50'
+                      }`}
+                    >
+                      <MedicineBadgeIcon iconTag={opt.id} colorTag={colorTag} size="xs" />
+                      <span>{opt.labelBn}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {MEDICINE_COLOR_OPTIONS.map((col) => {
+                  const selected = colorTag === col.id;
+                  return (
+                    <button
+                      key={col.id}
+                      type="button"
+                      onClick={() => setColorTag(col.id)}
+                      aria-label={`রঙ: ${col.labelBn}`}
+                      aria-pressed={selected}
+                      className={`min-h-[40px] px-2.5 py-1.5 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 transition-all cursor-pointer ${
+                        selected
+                          ? `${col.badgeClass} ring-2 ${col.ringClass}`
+                          : 'bg-surface-2 border-border text-text-muted hover:text-text'
+                      }`}
+                    >
+                      <span className={`w-3 h-3 rounded-full ${col.dotClass}`} />
+                      <span>{col.labelBn}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Optional Medicine Photo Upload */}
+            <div className="space-y-2.5 pt-2 border-t border-border">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-sm font-bold text-text">
+                  ওষুধের ছবি (ঐচ্ছিক — প্যাকেট বা পাতার ছবি)
+                </span>
+                {!currentUser && (
+                  <span className="text-[11px] font-semibold text-warning-text">
+                    ক্লাউডে সংরক্ষণের জন্য লগইন প্রয়োজন
+                  </span>
+                )}
+              </div>
+
+              <input
+                ref={cameraPhotoInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={handleSelectMedicinePhoto}
+              />
+              <input
+                ref={galleryPhotoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleSelectMedicinePhoto}
+              />
+
+              {(pendingPhotoPreviewUrl || (!photoRemoved && existingPhotoSignedUrl)) ? (
+                <div className="flex items-center gap-3 p-3 rounded-2xl bg-surface-2 border border-border">
+                  <img
+                    src={pendingPhotoPreviewUrl || existingPhotoSignedUrl || ''}
+                    alt={brandName || 'ওষুধের ছবি'}
+                    className="w-16 h-16 rounded-xl object-cover border border-border shrink-0"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-text truncate">
+                      {pendingPhotoBlob
+                        ? `নতুন ছবি সংযুক্ত (${Math.max(1, Math.round(pendingPhotoBlob.size / 1024))} KB)`
+                        : 'সংরক্ষিত ওষুধের ছবি'}
+                    </p>
+                    <p className="text-[11px] text-text-muted mt-0.5">
+                      শুধুমাত্র আপনার অ্যাকাউন্টের জন্য ব্যক্তিগতভাবে সংরক্ষিত
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveMedicinePhoto}
+                    className="min-h-[40px] px-3 py-1.5 rounded-xl bg-danger-soft text-danger-text text-xs font-bold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>ছবি সরান</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={isCompressingPhoto}
+                    onClick={() => cameraPhotoInputRef.current?.click()}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl bg-surface-2 border border-border hover:border-primary text-text text-sm font-bold inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isCompressingPhoto ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                    ) : (
+                      <Camera className="w-4 h-4 text-primary" />
+                    )}
+                    <span>ছবি তুলুন (ক্যামেরা)</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isCompressingPhoto}
+                    onClick={() => galleryPhotoInputRef.current?.click()}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl bg-surface-2 border border-border hover:border-primary text-text text-sm font-bold inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    <ImagePlus className="w-4 h-4 text-primary" />
+                    <span>গ্যালারি থেকে ছবি যোগ করুন</span>
+                  </button>
+                </div>
+              )}
+
+              {photoError && (
+                <p className="text-xs font-bold text-danger-text">{photoError}</p>
+              )}
             </div>
           </div>
+
+          {/* Common Presets */}
+          {!editingMedicine && (
+            <div className="pt-2 border-t border-border space-y-2.5">
+              <span className="block text-sm font-bold text-text-muted">
+                বেশি ব্যবহৃত ওষুধ (এক ট্যাপে বেছে নিন):
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {commonMedicinePresets.map((preset, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleApplyPreset(preset)}
+                    className="min-h-[48px] px-4 py-2 text-sm font-semibold bg-surface-2 border border-border text-text rounded-xl hover:border-primary hover:bg-primary-soft transition-colors cursor-pointer"
+                  >
+                    + {preset.brandName}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button
             type="button"
@@ -760,7 +1125,7 @@ export const AddMedicine: React.FC = () => {
             </div>
 
             {/* Optional opt-in expense prompt when initial stock > 0 */}
-            {(Number(stock) || 0) > 0 && (
+            {!editingMedicine && (Number(stock) || 0) > 0 && (
               <div className="p-4 rounded-2xl bg-primary-soft/60 border border-primary/25 space-y-2.5">
                 <label className="flex items-center gap-2.5 cursor-pointer select-none">
                   <input
@@ -819,11 +1184,22 @@ export const AddMedicine: React.FC = () => {
             {/* Big Semantic Green Save CTA matching step helper copy */}
             <button
               type="button"
-              onClick={handleSaveMedicine}
-              className="min-h-[60px] w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-[#15803D] hover:bg-[#166534] active:bg-[#14532D] text-white font-bold text-xl rounded-2xl shadow-md transition-colors cursor-pointer"
+              disabled={isSavingMedicine}
+              onClick={() => void handleSaveMedicine()}
+              className="min-h-[60px] w-full flex items-center justify-center gap-2.5 px-6 py-4 bg-[#15803D] hover:bg-[#166534] active:bg-[#14532D] text-white font-bold text-xl rounded-2xl shadow-md transition-colors cursor-pointer disabled:opacity-60"
             >
-              <Check className="w-6 h-6" />
-              <span>ওষুধ সংরক্ষণ করুন</span>
+              {isSavingMedicine ? (
+                <Loader2 className="w-6 h-6 animate-spin" />
+              ) : (
+                <Check className="w-6 h-6" />
+              )}
+              <span>
+                {isSavingMedicine
+                  ? 'সংরক্ষণ হচ্ছে...'
+                  : editingMedicine
+                  ? 'পরিবর্তন সংরক্ষণ করুন'
+                  : 'ওষুধ সংরক্ষণ করুন'}
+              </span>
             </button>
           </div>
 

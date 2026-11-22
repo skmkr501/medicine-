@@ -12,6 +12,7 @@ import { useMedicine } from '../../context/MedicineContext';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
 import { buildProfileTimeSummary } from '../../utils/dailyScheduleSummary';
 import { MedicineSlipModal } from './MedicineSlipModal';
+import { MedicineBadgeIcon } from '../medicines/MedicineBadgeIcon';
 
 interface TimeGroupedMedicinesSectionProps {
   todayStr: string;
@@ -31,6 +32,12 @@ export const TimeGroupedMedicinesSection: React.FC<TimeGroupedMedicinesSectionPr
 
   const [expandedBuckets, setExpandedBuckets] = useState<Record<string, boolean>>({});
   const [isSlipModalOpen, setIsSlipModalOpen] = useState(false);
+
+  const medicineById = useMemo(() => {
+    const map = new Map<string, (typeof medicines)[number]>();
+    medicines.forEach((m) => map.set(m.id, m));
+    return map;
+  }, [medicines]);
 
   const summary = useMemo(
     () =>
@@ -142,28 +149,37 @@ export const TimeGroupedMedicinesSection: React.FC<TimeGroupedMedicinesSectionPr
 
                   {/* Medicine Lines */}
                   <ul className="divide-y divide-border/70">
-                    {visibleItems.map((item) => (
-                      <li
-                        key={item.key}
-                        className="py-2 first:pt-0 last:pb-0 flex items-center justify-between gap-3 text-base sm:text-lg"
-                      >
-                        <div className="min-w-0 flex items-center gap-2">
-                          {item.isTaken && (
-                            <CheckCircle2
-                              className="w-4 h-4 text-success-text shrink-0"
-                              aria-label="খাওয়া হয়েছে"
-                            />
-                          )}
-                          <span
-                            className={`font-bold truncate ${
-                              item.isTaken
-                                ? 'text-text-muted line-through'
-                                : 'text-text'
-                            }`}
-                          >
-                            {item.brandName}
-                          </span>
-                        </div>
+                    {visibleItems.map((item) => {
+                      const med = medicineById.get(item.medicineId);
+                      return (
+                        <li
+                          key={item.key}
+                          className="py-2 first:pt-0 last:pb-0 flex items-center justify-between gap-3 text-base sm:text-lg"
+                        >
+                          <div className="min-w-0 flex items-center gap-2">
+                            {item.isTaken ? (
+                              <CheckCircle2
+                                className="w-4 h-4 text-success-text shrink-0"
+                                aria-label="খাওয়া হয়েছে"
+                              />
+                            ) : (
+                              <MedicineBadgeIcon
+                                iconTag={med?.iconTag}
+                                type={med?.type}
+                                colorTag={med?.colorTag}
+                                size="xs"
+                              />
+                            )}
+                            <span
+                              className={`font-bold truncate ${
+                                item.isTaken
+                                  ? 'text-text-muted line-through'
+                                  : 'text-text'
+                              }`}
+                            >
+                              {item.brandName}
+                            </span>
+                          </div>
 
                         <div className="shrink-0 flex items-center gap-1.5 text-sm sm:text-base text-text-muted font-semibold">
                           <span>{item.dosage}</span>
@@ -179,7 +195,8 @@ export const TimeGroupedMedicinesSection: React.FC<TimeGroupedMedicinesSectionPr
                           )}
                         </div>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 </div>
 
@@ -229,19 +246,30 @@ export const TimeGroupedMedicinesSection: React.FC<TimeGroupedMedicinesSectionPr
                   </div>
 
                   <ul className="divide-y divide-border/70">
-                    {visibleAsNeeded.map((item) => (
-                      <li
-                        key={item.medicineId}
-                        className="py-2 first:pt-0 last:pb-0 flex items-center justify-between gap-3 text-base sm:text-lg"
-                      >
-                        <span className="font-bold text-text truncate">
-                          {item.brandName}
-                        </span>
-                        <span className="shrink-0 text-sm sm:text-base font-semibold text-text-muted">
-                          {item.dosageHint}
-                        </span>
-                      </li>
-                    ))}
+                    {visibleAsNeeded.map((item) => {
+                      const med = medicineById.get(item.medicineId);
+                      return (
+                        <li
+                          key={item.medicineId}
+                          className="py-2 first:pt-0 last:pb-0 flex items-center justify-between gap-3 text-base sm:text-lg"
+                        >
+                          <div className="min-w-0 flex items-center gap-2">
+                            <MedicineBadgeIcon
+                              iconTag={med?.iconTag}
+                              type={med?.type}
+                              colorTag={med?.colorTag}
+                              size="xs"
+                            />
+                            <span className="font-bold text-text truncate">
+                              {item.brandName}
+                            </span>
+                          </div>
+                          <span className="shrink-0 text-sm sm:text-base font-semibold text-text-muted">
+                            {item.dosageHint}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
 

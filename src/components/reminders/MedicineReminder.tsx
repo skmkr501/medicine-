@@ -16,6 +16,7 @@ import {
   Package,
 } from 'lucide-react';
 import { predictMedicineStock } from '../../utils/stockPredictor';
+import { MedicineBadgeIcon } from '../medicines/MedicineBadgeIcon';
 
 export const MedicineReminder: React.FC = () => {
   const {
@@ -180,15 +181,23 @@ export const MedicineReminder: React.FC = () => {
                   key={med.id}
                   className="p-2.5 bg-surface rounded-lg border border-warning/30 flex items-center justify-between gap-2 text-xs"
                 >
-                  <div className="min-w-0">
-                    <span className="font-bold text-text truncate block">
-                      {med.brandName}
-                    </span>
-                    <span className="text-[10px] text-warning-text font-medium block">
-                      {pred.status === 'out_of_stock'
-                        ? 'মজুত শেষ (০ টি)'
-                        : `আর ${toBengaliNumber(pred.daysRemaining ?? 0)} দিন বাকি`}
-                    </span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <MedicineBadgeIcon
+                      iconTag={med.iconTag}
+                      type={med.type}
+                      colorTag={med.colorTag}
+                      size="sm"
+                    />
+                    <div className="min-w-0">
+                      <span className="font-bold text-text truncate block">
+                        {med.brandName}
+                      </span>
+                      <span className="text-[10px] text-warning-text font-medium block">
+                        {pred.status === 'out_of_stock'
+                          ? 'মজুত শেষ (০ টি)'
+                          : `আর ${toBengaliNumber(pred.daysRemaining ?? 0)} দিন বাকি`}
+                      </span>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -330,12 +339,19 @@ export const MedicineReminder: React.FC = () => {
                       </div>
 
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <MedicineBadgeIcon
+                            iconTag={item.medicine.iconTag}
+                            type={item.medicine.type}
+                            colorTag={item.medicine.colorTag}
+                            size="xs"
+                            showLabel
+                          />
                           <h3 className="font-bold text-text text-base">
                             {item.medicine.brandName}
                           </h3>
                           <span className="text-xs text-text-muted">
-                            · {item.medicine.type} ({item.medicine.strength})
+                            ({item.medicine.strength})
                           </span>
                         </div>
 

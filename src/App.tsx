@@ -55,6 +55,13 @@ import { extractGuestViewTokenFromPath } from './utils/guestViews';
 import { PhoneTransferPage } from './components/transfer/PhoneTransferPage';
 import { parseTransferInput } from './utils/phoneTransfer';
 import { PhonebookPage } from './components/phonebook/PhonebookPage';
+import { HealthCalendarPage } from './components/calendar/HealthCalendarPage';
+import { AppLockScreen } from './components/auth/AppLockScreen';
+import {
+  APP_LOCK_INACTIVITY_MS,
+  loadAppLockConfig,
+  shouldLockAfterBackground,
+} from './utils/appLock';
 
 const AppContent: React.FC = () => {
   const {
@@ -74,12 +81,43 @@ const AppContent: React.FC = () => {
     closeResetConfirmationModal,
     confirmResetAllData,
     currentUser,
+    signOutUser,
   } = useMedicine();
 
   const [showOnboarding, setShowOnboarding] = React.useState<boolean>(() =>
     shouldShowOnboarding()
   );
   const [initialTransferInput, setInitialTransferInput] = React.useState<string | null>(null);
+  const [isAppLocked, setIsAppLocked] = React.useState<boolean>(() =>
+    Boolean(loadAppLockConfig()?.enabled)
+  );
+  const backgroundedAtRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined') return;
+      if (document.visibilityState === 'hidden') {
+        backgroundedAtRef.current = Date.now();
+        return;
+      }
+      if (document.visibilityState === 'visible') {
+        const cfg = loadAppLockConfig();
+        if (
+          cfg?.enabled &&
+          shouldLockAfterBackground(
+            backgroundedAtRef.current,
+            Date.now(),
+            APP_LOCK_INACTIVITY_MS
+          )
+        ) {
+          setIsAppLocked(true);
+        }
+        backgroundedAtRef.current = null;
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
   React.useEffect(() => {
     const handleHashTransfer = () => {
@@ -118,6 +156,17 @@ const AppContent: React.FC = () => {
     setShowOnboarding(false);
   };
 
+  const lockConfig = isAppLocked ? loadAppLockConfig() : null;
+  if (isAppLocked && lockConfig?.enabled) {
+    return (
+      <AppLockScreen
+        config={lockConfig}
+        onUnlock={() => setIsAppLocked(false)}
+        onSignOutReset={signOutUser}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-bg text-text transition-colors print-root-white print:bg-white print:text-black print:min-h-0">
       
@@ -139,6 +188,7 @@ const AppContent: React.FC = () => {
         {currentPage === 'appointments' && <AppointmentsPage />}
         {currentPage === 'doctors' && <DoctorsPage />}
         {currentPage === 'phonebook' && <PhonebookPage />}
+        {currentPage === 'calendar' && <HealthCalendarPage />}
         {currentPage === 'add-medicine' && <AddMedicine />}
         {currentPage === 'ai-assistant' && <AiAssistantPage />}
         {currentPage === 'reminders' && <MedicineReminder />}

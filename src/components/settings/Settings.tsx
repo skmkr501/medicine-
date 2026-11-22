@@ -41,6 +41,11 @@ import {
   CalendarDays,
   Eye,
   QrCode,
+  ArrowUp,
+  ArrowDown,
+  LayoutGrid,
+  Lock,
+  Fingerprint,
 } from 'lucide-react';
 import {
   isNativeRemindersAvailable,
@@ -63,6 +68,26 @@ import { CaregiverSettingsSection } from '../caregiver/CaregiverSettingsSection'
 import { MySharedLinksSection } from '../reports/MySharedLinksSection';
 import { MAX_USER_DOCUMENT_PAGES } from '../../utils/medicalDocuments';
 import { FeedbackCard } from './FeedbackCard';
+import {
+  DEFAULT_HOME_LAYOUT,
+  getHomeLayoutCardMeta,
+  moveHomeLayoutItem,
+  normalizeHomeLayout,
+  toggleHomeLayoutItem,
+} from '../../utils/homeLayout';
+import {
+  AppLockConfig,
+  clearAppLockConfig,
+  enableAppLockWithPin,
+  getRemainingLockoutSeconds,
+  isPlatformBiometricAvailable,
+  loadAppLockConfig,
+  normalizePinDigits,
+  registerPlatformBiometricCredential,
+  saveAppLockConfig,
+  validatePinFormat,
+  verifyAppLockPin,
+} from '../../utils/appLock';
 
 export const Settings: React.FC = () => {
   const {
@@ -117,6 +142,148 @@ export const Settings: React.FC = () => {
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isPreviewPlayingRef = useRef(false);
   isPreviewPlayingRef.current = isPreviewPlaying;
+
+  // App Lock state (device-local PIN + optional WebAuthn)
+  const [appLockConfig, setAppLockConfig] = useState<AppLockConfig | null>(() => loadAppLockConfig());
+  const [biometricSupported, setBiometricSupported] = useState(false);
+  const [appLockFlow, setAppLockFlow] = useState<'idle' | 'setup' | 'change' | 'disable'>('idle');
+  const [currentPinInput, setCurrentPinInput] = useState('');
+  const [newPinInput, setNewPinInput] = useState('');
+  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [appLockError, setAppLockError] = useState<string | null>(null);
+  const [isUpdatingAppLock, setIsUpdatingAppLock] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    isPlatformBiometricAvailable().then((supported) => {
+      if (active) setBiometricSupported(supported);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const normalizedHomeLayout = normalizeHomeLayout(settings.homeLayout);
+
+  const resetAppLockForm = () => {
+    setAppLockFlow('idle');
+    setCurrentPinInput('');
+    setNewPinInput('');
+    setConfirmPinInput('');
+    setAppLockError(null);
+  };
+
+  const handleSaveNewPin = async () => {
+    setAppLockError(null);
+    if (appLockFlow === 'change') {
+      const cooldown = getRemainingLockoutSeconds(appLockConfig);
+      if (cooldown > 0) {
+        setAppLockError(`${toBengaliNumber(cooldown)} সেকেন্ড অপেক্ষা করে আবার চেষ্টা করুন`);
+        return;
+      }
+      const checkCur = await verifyAppLockPin(currentPinInput);
+      setAppLockConfig(checkCur.updatedConfig);
+      if (!checkCur.ok) {
+        setAppLockError(
+          checkCur.lockedSeconds > 0
+            ? `অনেকবার ভুল পিন দেওয়া হয়েছে। ${toBengaliNumber(checkCur.lockedSeconds)} সেকেন্ড পরে চেষ্টা করুন`
+            : 'বর্তমান পিন সঠিক নয়'
+        );
+        return;
+      }
+    }
+
+    const pinCheck = validatePinFormat(newPinInput);
+    if (!pinCheck.valid) {
+      setAppLockError(pinCheck.errorBn || 'পিন ৪-৬ সংখ্যার হতে হবে');
+      return;
+    }
+    const confirmNorm = normalizePinDigits(confirmPinInput);
+    if (pinCheck.normalized !== confirmNorm) {
+      setAppLockError('দুইবার লেখা পিন মেলেনি');
+      return;
+    }
+
+    setIsUpdatingAppLock(true);
+    try {
+      const updated = await enableAppLockWithPin(pinCheck.normalized, {
+        webAuthnEnabled: appLockConfig?.webAuthnEnabled,
+        webAuthnCredentialIdB64: appLockConfig?.webAuthnCredentialIdB64,
+      });
+      setAppLockConfig(updated);
+      resetAppLockForm();
+      showToast('অ্যাপ লক পিন সংরক্ষিত হয়েছে', 'success');
+    } catch (err: any) {
+      setAppLockError(err?.message || 'পিন সংরক্ষণ করা যায়নি');
+    } finally {
+      setIsUpdatingAppLock(false);
+    }
+  };
+
+  const handleDisableAppLock = async () => {
+    setAppLockError(null);
+    const cooldown = getRemainingLockoutSeconds(appLockConfig);
+    if (cooldown > 0) {
+      setAppLockError(`${toBengaliNumber(cooldown)} সেকেন্ড অপেক্ষা করে আবার চেষ্টা করুন`);
+      return;
+    }
+    setIsUpdatingAppLock(true);
+    try {
+      const checkCur = await verifyAppLockPin(currentPinInput);
+      setAppLockConfig(checkCur.updatedConfig);
+      if (!checkCur.ok) {
+        setAppLockError(
+          checkCur.lockedSeconds > 0
+            ? `অনেকবার ভুল পিন দেওয়া হয়েছে। ${toBengaliNumber(checkCur.lockedSeconds)} সেকেন্ড পরে চেষ্টা করুন`
+            : 'সঠিক বর্তমান পিন লিখুন'
+        );
+        return;
+      }
+      clearAppLockConfig();
+      setAppLockConfig(null);
+      resetAppLockForm();
+      showToast('অ্যাপ লক বন্ধ করা হয়েছে', 'info');
+    } finally {
+      setIsUpdatingAppLock(false);
+    }
+  };
+
+  const handleToggleBiometric = async () => {
+    if (!appLockConfig || !biometricSupported) return;
+    setAppLockError(null);
+    if (appLockConfig.webAuthnEnabled) {
+      const updated: AppLockConfig = {
+        ...appLockConfig,
+        webAuthnEnabled: false,
+        webAuthnCredentialIdB64: undefined,
+        updatedAtMs: Date.now(),
+      };
+      saveAppLockConfig(updated);
+      setAppLockConfig(updated);
+      showToast('বায়োমেট্রিক আনলক বন্ধ করা হয়েছে', 'info');
+      return;
+    }
+
+    setIsUpdatingAppLock(true);
+    try {
+      const credId = await registerPlatformBiometricCredential();
+      if (!credId) {
+        setAppLockError('এই ডিভাইসে বায়োমেট্রিক নিবন্ধন সম্পন্ন হয়নি');
+        return;
+      }
+      const updated: AppLockConfig = {
+        ...appLockConfig,
+        webAuthnEnabled: true,
+        webAuthnCredentialIdB64: credId,
+        updatedAtMs: Date.now(),
+      };
+      saveAppLockConfig(updated);
+      setAppLockConfig(updated);
+      showToast('বায়োমেট্রিক আনলক চালু হয়েছে', 'success');
+    } finally {
+      setIsUpdatingAppLock(false);
+    }
+  };
 
   const isBn = settings.language !== 'en';
   const [emergencyName, setEmergencyName] = useState(settings.emergencyContactName || '');
@@ -1236,6 +1403,304 @@ export const Settings: React.FC = () => {
           )}
 
         </div>
+      </section>
+
+      {/* Home Screen Customization Section ("হোম স্ক্রিন সাজান") */}
+      <section
+        id="home-layout-section"
+        className="bg-surface border border-border rounded-xl p-5 sm:p-6 shadow-xs space-y-4"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border">
+          <div>
+            <h2 className="text-base font-bold text-text flex items-center gap-2">
+              <LayoutGrid className="w-4 h-4 text-primary" />
+              <span>হোম স্ক্রিন সাজান</span>
+            </h2>
+            <p className="text-xs text-text-muted mt-0.5">
+              হোম পাতার কার্ডগুলোর ক্রম বদলান বা অপ্রয়োজনীয় কার্ড বন্ধ রাখুন
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => updateSettings({ homeLayout: DEFAULT_HOME_LAYOUT })}
+            className="min-h-[40px] px-3 py-1.5 rounded-lg bg-surface-2 hover:bg-border/60 border border-border text-xs font-bold text-text inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>ডিফল্টে ফেরান</span>
+          </button>
+        </div>
+
+        <div className="space-y-2.5">
+          {normalizedHomeLayout.map((item, idx) => {
+            const meta = getHomeLayoutCardMeta(item.id);
+            const isLocked = Boolean(meta.locked);
+            return (
+              <div
+                key={item.id}
+                className="p-3.5 rounded-xl bg-surface-2 border border-border flex items-center justify-between gap-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-text">{meta.titleBn}</span>
+                    {isLocked && (
+                      <span className="px-2 py-0.5 rounded-md bg-primary-soft text-primary text-[11px] font-bold">
+                        সবসময় চালু
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-text-muted mt-0.5">{meta.descriptionBn}</p>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    disabled={idx === 0}
+                    aria-label={`${meta.titleBn} উপরে নিন`}
+                    onClick={() =>
+                      updateSettings({
+                        homeLayout: moveHomeLayoutItem(normalizedHomeLayout, idx, 'up'),
+                      })
+                    }
+                    className="w-10 h-10 rounded-lg bg-surface border border-border flex items-center justify-center text-text hover:border-primary disabled:opacity-35 cursor-pointer"
+                  >
+                    <ArrowUp className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={idx === normalizedHomeLayout.length - 1}
+                    aria-label={`${meta.titleBn} নিচে নিন`}
+                    onClick={() =>
+                      updateSettings({
+                        homeLayout: moveHomeLayoutItem(normalizedHomeLayout, idx, 'down'),
+                      })
+                    }
+                    className="w-10 h-10 rounded-lg bg-surface border border-border flex items-center justify-center text-text hover:border-primary disabled:opacity-35 cursor-pointer"
+                  >
+                    <ArrowDown className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isLocked ? true : item.visible}
+                    aria-label={`${meta.titleBn} ${item.visible ? 'বন্ধ করুন' : 'চালু করুন'}`}
+                    disabled={isLocked}
+                    onClick={() =>
+                      updateSettings({
+                        homeLayout: toggleHomeLayoutItem(normalizedHomeLayout, item.id),
+                      })
+                    }
+                    className={`w-12 h-7 rounded-full p-1 transition-colors flex items-center cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                      isLocked || item.visible ? 'bg-primary justify-end' : 'bg-slate-300 dark:bg-slate-700 justify-start'
+                    }`}
+                  >
+                    <span className="w-5 h-5 rounded-full bg-white shadow-xs block" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Local App Lock Section ("অ্যাপ লক") */}
+      <section className="bg-surface border border-border rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border">
+          <div>
+            <h2 className="text-base font-bold text-text flex items-center gap-2">
+              <Lock className="w-4 h-4 text-primary" />
+              <span>অ্যাপ লক</span>
+            </h2>
+            <p className="text-xs text-text-muted mt-0.5">
+              অ্যাপ খোলার সময় বা ৩০ সেকেন্ডের বেশি বাইরে থাকলে ৪–৬ সংখ্যার পিন চাইবে
+            </p>
+          </div>
+          <span
+            className={`text-xs font-bold px-2.5 py-1 rounded-md border ${
+              appLockConfig?.enabled
+                ? 'bg-success-soft text-success-text border-success/30'
+                : 'bg-surface-2 text-text-muted border-border'
+            }`}
+          >
+            {appLockConfig?.enabled ? 'চালু আছে' : 'বন্ধ আছে'}
+          </span>
+        </div>
+
+        <div className="p-3 rounded-xl bg-surface-2 border border-border text-xs text-text-muted">
+          এটি লোকাল ডিভাইসের সুবিধা, সার্ভার নিরাপত্তা নয়। পিন কেবল আপনার ফোনেই হ্যাশ করে সংরক্ষিত থাকে।
+        </div>
+
+        {appLockFlow === 'idle' ? (
+          <div className="space-y-3">
+            {!appLockConfig?.enabled ? (
+              <button
+                type="button"
+                onClick={() => {
+                  resetAppLockForm();
+                  setAppLockFlow('setup');
+                }}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-on-primary text-sm font-bold inline-flex items-center gap-2 cursor-pointer"
+              >
+                <Lock className="w-4 h-4" />
+                <span>অ্যাপ লক পিন সেট করুন</span>
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetAppLockForm();
+                      setAppLockFlow('change');
+                    }}
+                    className="min-h-[44px] px-4 py-2 rounded-xl bg-surface-2 border border-border hover:border-primary text-text text-xs font-bold cursor-pointer"
+                  >
+                    পিন পরিবর্তন করুন
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetAppLockForm();
+                      setAppLockFlow('disable');
+                    }}
+                    className="min-h-[44px] px-4 py-2 rounded-xl bg-danger-soft border border-danger/30 text-danger-text text-xs font-bold cursor-pointer"
+                  >
+                    অ্যাপ লক বন্ধ করুন
+                  </button>
+                </div>
+
+                {biometricSupported && (
+                  <div className="p-3.5 rounded-xl bg-surface-2 border border-border flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <Fingerprint className="w-5 h-5 text-primary shrink-0" />
+                      <div>
+                        <p className="text-sm font-bold text-text">বায়োমেট্রিক আনলক</p>
+                        <p className="text-xs text-text-muted">
+                          ডিভাইসের আঙুলের ছাপ বা ফেস লক ব্যবহার করুন
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isUpdatingAppLock}
+                      onClick={() => void handleToggleBiometric()}
+                      className={`min-h-[40px] px-3.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                        appLockConfig.webAuthnEnabled
+                          ? 'bg-success-soft text-success-text border border-success/30'
+                          : 'bg-primary text-on-primary'
+                      }`}
+                    >
+                      {appLockConfig.webAuthnEnabled ? 'চালু' : 'চালু করুন'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="p-4 rounded-xl bg-surface-2 border border-border space-y-3">
+            <h3 className="text-sm font-bold text-text">
+              {appLockFlow === 'setup'
+                ? 'নতুন পিন সেট করুন (৪–৬ সংখ্যা)'
+                : appLockFlow === 'change'
+                ? 'অ্যাপ লক পিন পরিবর্তন'
+                : 'অ্যাপ লক বন্ধ করতে বর্তমান পিন দিন'}
+            </h3>
+
+            {(appLockFlow === 'change' || appLockFlow === 'disable') && (
+              <div>
+                <label className="block text-xs font-bold text-text-muted mb-1">
+                  বর্তমান পিন
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={currentPinInput}
+                  onChange={(e) => {
+                    setAppLockError(null);
+                    setCurrentPinInput(normalizePinDigits(e.target.value).slice(0, 6));
+                  }}
+                  placeholder="বর্তমান পিন"
+                  className="min-h-[44px] w-full sm:w-64 px-3.5 py-2 rounded-xl bg-surface border border-border text-text font-bold tracking-widest"
+                />
+              </div>
+            )}
+
+            {(appLockFlow === 'setup' || appLockFlow === 'change') && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-text-muted mb-1">
+                    নতুন পিন (৪–৬ সংখ্যা)
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={newPinInput}
+                    onChange={(e) => {
+                      setAppLockError(null);
+                      setNewPinInput(normalizePinDigits(e.target.value).slice(0, 6));
+                    }}
+                    placeholder="যেমন: ১২৩৪"
+                    className="min-h-[44px] w-full px-3.5 py-2 rounded-xl bg-surface border border-border text-text font-bold tracking-widest"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-text-muted mb-1">
+                    আবার লিখুন (নিশ্চিত করুন)
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={confirmPinInput}
+                    onChange={(e) => {
+                      setAppLockError(null);
+                      setConfirmPinInput(normalizePinDigits(e.target.value).slice(0, 6));
+                    }}
+                    placeholder="একই পিন আবার লিখুন"
+                    className="min-h-[44px] w-full px-3.5 py-2 rounded-xl bg-surface border border-border text-text font-bold tracking-widest"
+                  />
+                </div>
+              </div>
+            )}
+
+            {appLockError && (
+              <p className="text-xs font-bold text-danger-text">{appLockError}</p>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {appLockFlow === 'disable' ? (
+                <button
+                  type="button"
+                  disabled={isUpdatingAppLock}
+                  onClick={() => void handleDisableAppLock()}
+                  className="min-h-[44px] px-4 py-2 rounded-xl bg-danger text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  অ্যাপ লক বন্ধ করুন
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isUpdatingAppLock}
+                  onClick={() => void handleSaveNewPin()}
+                  className="min-h-[44px] px-4 py-2 rounded-xl bg-primary text-on-primary text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  পিন সংরক্ষণ করুন
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={isUpdatingAppLock}
+                onClick={resetAppLockForm}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-surface border border-border text-text text-xs font-bold cursor-pointer"
+              >
+                বাতিল
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Caregiver Mode Section ("পরিবারের যত্নকারী") */}

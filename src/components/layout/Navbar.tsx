@@ -49,7 +49,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activePage, onNavigate }) => {
     { id: 'medicines', label: isBn ? 'ওষুধ' : 'Medicines', matchPages: ['medicines', 'weekly-pillbox', 'add-medicine', 'library', 'shopping-list'] },
     { id: 'doctors', label: isBn ? 'ডাক্তার' : 'Doctors', matchPages: ['doctors', 'appointments'] },
     { id: 'ai-assistant', label: 'AI সহায়ক', matchPages: ['ai-assistant'] },
-    { id: 'me', label: isBn ? 'আমি' : 'Me', matchPages: ['me', 'settings', 'health-records', 'bmi', 'expenses', 'history', 'share-report', 'emergency-qr', 'guest-views', 'phone-transfer', 'phonebook', 'womens-health'] },
+    { id: 'me', label: isBn ? 'আমি' : 'Me', matchPages: ['me', 'settings', 'health-records', 'bmi', 'expenses', 'calendar', 'history', 'share-report', 'emergency-qr', 'guest-views', 'phone-transfer', 'phonebook', 'womens-health'] },
     ...(isAdmin
       ? [{ id: 'admin-import' as NavigationPage, label: isBn ? 'অ্যাডমিন' : 'Admin', matchPages: ['admin-import', 'admin-dashboard', 'admin-library'] as NavigationPage[] }]
       : []),

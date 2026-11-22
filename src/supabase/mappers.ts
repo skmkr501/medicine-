@@ -1,5 +1,7 @@
 import {
   AdminActivity,
+  Announcement,
+  AnnouncementLevel,
   CaregiverFullMedicineItem,
   CaregiverLinkDoc,
   CaregiverSuggestedMedicinePayload,
@@ -20,10 +22,13 @@ import {
   GuestViewDoc,
   GuestViewSnapshot,
   HealthRecord,
+  HomeLayoutItem,
   ImportBatch,
+  LibraryMiss,
   MedicalDocument,
   MedicalDocumentPageMeta,
   Medicine,
+  MedicineIconTag,
   PatientProfile,
   PhonebookEntry,
   ReminderSettings,
@@ -33,6 +38,8 @@ import {
   TimeSlot,
   WeekStartDay,
 } from '../types';
+import { normalizeHomeLayout } from '../utils/homeLayout';
+import { isValidMedicineIconTag } from '../utils/medicineAppearance';
 
 export const USER_SETTINGS_ROW_ID = 'preferences';
 
@@ -180,6 +187,8 @@ export interface MedicineRow {
   assigned_patient_id: string | null;
   status: Medicine['status'];
   color_tag: Medicine['colorTag'];
+  icon_tag: MedicineIconTag | null;
+  photo_path: string | null;
   stock_adjustments: StockAdjustment[] | null;
   last_stock_updated: string | null;
   expiry_date: string | null;
@@ -210,6 +219,8 @@ export function medicineToRow(med: Medicine): MedicineRow {
     assigned_patient_id: asNullableString(med.assignedPatientId),
     status: med.status || 'active',
     color_tag: med.colorTag || 'teal',
+    icon_tag: med.iconTag && isValidMedicineIconTag(med.iconTag) ? med.iconTag : null,
+    photo_path: med.photoPath && med.photoPath.trim() ? med.photoPath.trim() : null,
     stock_adjustments: Array.isArray(med.stockAdjustments) ? med.stockAdjustments : null,
     last_stock_updated: asNullableString(med.lastStockUpdated),
     expiry_date: asNullableString(med.expiryDate),
@@ -238,6 +249,13 @@ export function medicineFromRow(row: Partial<MedicineRow> & { id: string }): Med
     colorTag: (row.color_tag as Medicine['colorTag']) || 'teal',
   };
 
+  if (isValidMedicineIconTag(row.icon_tag)) {
+    result.iconTag = row.icon_tag;
+  }
+  const photoPath = asOptionalString(row.photo_path);
+  if (photoPath && photoPath.trim()) {
+    result.photoPath = photoPath.trim();
+  }
   const durationDays = asOptionalNumber(row.duration_days);
   if (durationDays !== undefined) result.durationDays = durationDays;
   const doctorName = asOptionalString(row.doctor_name);
@@ -602,6 +620,7 @@ export interface UserSettingsRow {
   patient_self_phone: string | null;
   week_start_day: WeekStartDay | null;
   show_emergency_doctor_on_card: boolean | null;
+  home_layout: HomeLayoutItem[] | null;
 }
 
 export function settingsToRow(
@@ -635,6 +654,10 @@ export function settingsToRow(
     show_emergency_doctor_on_card:
       settings.showEmergencyDoctorOnCard !== undefined
         ? Boolean(settings.showEmergencyDoctorOnCard)
+        : null,
+    home_layout:
+      Array.isArray(settings.homeLayout) && settings.homeLayout.length > 0
+        ? normalizeHomeLayout(settings.homeLayout)
         : null,
   };
 }
@@ -678,6 +701,9 @@ export function settingsFromRow(row: Partial<UserSettingsRow>): ReminderSettings
   }
   if (typeof row.show_emergency_doctor_on_card === 'boolean') {
     result.showEmergencyDoctorOnCard = row.show_emergency_doctor_on_card;
+  }
+  if (Array.isArray(row.home_layout) && row.home_layout.length > 0) {
+    result.homeLayout = normalizeHomeLayout(row.home_layout);
   }
 
   return result;
@@ -1686,4 +1712,90 @@ export function expenseFromRow(row: Partial<ExpenseRow> & { id: string }): Expen
 
   return expense;
 }
+
+// ============================================================================
+// 22. announcements
+// ============================================================================
+export interface AnnouncementRow {
+  id: string;
+  title: string;
+  body: string;
+  level: AnnouncementLevel;
+  active: boolean;
+  starts_at: string | null;
+  ends_at: string | null;
+  created_by?: string | null;
+  created_at: string;
+}
+
+function normalizeAnnouncementLevel(val: unknown): AnnouncementLevel {
+  if (val === 'warning' || val === 'success') return val;
+  return 'info';
+}
+
+export function announcementFromRow(
+  row: Partial<AnnouncementRow> & { id: string }
+): Announcement {
+  const res: Announcement = {
+    id: String(row.id),
+    title: String(row.title ?? '').trim(),
+    body: String(row.body ?? '').trim(),
+    level: normalizeAnnouncementLevel(row.level),
+    active: row.active !== false,
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+  const startsAt = asOptionalString(row.starts_at);
+  if (startsAt && startsAt.trim()) res.startsAt = startsAt;
+  const endsAt = asOptionalString(row.ends_at);
+  if (endsAt && endsAt.trim()) res.endsAt = endsAt;
+  const createdBy = asOptionalString(row.created_by);
+  if (createdBy && createdBy.trim()) res.createdBy = createdBy;
+  return res;
+}
+
+export function announcementToInsertRow(input: {
+  title: string;
+  body: string;
+  level: AnnouncementLevel;
+  active?: boolean;
+  startsAt?: string | null;
+  endsAt?: string | null;
+}): Omit<AnnouncementRow, 'id' | 'created_at' | 'created_by'> {
+  return {
+    title: input.title.trim().slice(0, 120),
+    body: input.body.trim().slice(0, 1000),
+    level: normalizeAnnouncementLevel(input.level),
+    active: input.active !== false,
+    starts_at: input.startsAt && input.startsAt.trim() ? normalizeTimestampToIso(input.startsAt) : null,
+    ends_at: input.endsAt && input.endsAt.trim() ? normalizeTimestampToIso(input.endsAt) : null,
+  };
+}
+
+// ============================================================================
+// 23. library_misses
+// ============================================================================
+export interface LibraryMissRow {
+  id: string;
+  query_norm: string;
+  hit_count: number;
+  last_seen: string;
+  resolved: boolean;
+  created_at?: string;
+}
+
+export function libraryMissFromRow(
+  row: Partial<LibraryMissRow> & { id: string }
+): LibraryMiss {
+  const miss: LibraryMiss = {
+    id: String(row.id),
+    queryNorm: String(row.query_norm ?? ''),
+    hitCount: asOptionalNumber(row.hit_count) ?? 1,
+    lastSeen: String(row.last_seen ?? row.created_at ?? new Date().toISOString()),
+    resolved: Boolean(row.resolved),
+  };
+  const createdAt = asOptionalString(row.created_at);
+  if (createdAt) miss.createdAt = createdAt;
+  return miss;
+}
+
 

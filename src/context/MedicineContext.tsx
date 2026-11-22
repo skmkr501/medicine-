@@ -24,6 +24,8 @@ import {
   PhonebookEntry,
   RealtimeSyncStatus,
   Expense,
+  Announcement,
+  LibraryMiss,
 } from '../types';
 import {
   initialPatients,
@@ -110,8 +112,19 @@ import {
   fetchUnpublishedDraftsFromSupabase,
   mapGlobalMedicineToAddFormPrefill,
   recordAdminActivity,
+  updateLibraryMissResolved,
   upsertLibraryMedicinesInBatches,
 } from '../supabase/libraryService';
+import {
+  clearMedicinePhotoSignedUrlCache,
+  deleteMedicinePhotoFromStorage,
+} from '../supabase/medicinePhotosService';
+import {
+  fetchActiveAnnouncementsFromSupabase,
+  loadDismissedAnnouncementIds,
+  markAnnouncementDismissedLocally,
+} from '../supabase/announcementsService';
+import { formatMedicineNotificationTitle } from '../utils/medicineAppearance';
 import {
   mergeRealtimeRow,
   RecentWriteTracker,
@@ -284,6 +297,9 @@ interface MedicineContextType {
   addMultipleMedicines: (medicinesList: Array<Omit<Medicine, 'id'>>) => Promise<string[]>;
   updateMedicine: (id: string, updates: Partial<Medicine>) => void;
   deleteMedicine: (id: string) => void;
+  editingMedicine: Medicine | null;
+  startEditMedicine: (med: Medicine) => void;
+  clearEditingMedicine: () => void;
   adjustStock: (id: string, delta: number) => void;
   assignMedicineToPatient: (medicineId: string, patientId?: string) => void;
 
@@ -424,7 +440,9 @@ interface MedicineContextType {
   bulkDeleteGlobalMedicinesAction: (medicineIds: string[]) => Promise<boolean>;
   isManualAddModalOpen: boolean;
   editingGlobalMedicine: GlobalMedicine | null;
+  missedQueryPrefill: { missId: string; brandName: string } | null;
   openManualAddModal: () => void;
+  openManualAddFromMiss: (miss: LibraryMiss) => void;
   openEditGlobalMedicineModal: (med: GlobalMedicine) => void;
   closeManualAddModal: () => void;
   addSingleGlobalMedicineAction: (
@@ -527,6 +545,10 @@ interface MedicineContextType {
     updates: Partial<Omit<Expense, 'id' | 'createdAt' | 'updatedAt' | 'updatedAtMs'>>
   ) => void;
   deleteExpense: (id: string) => void;
+
+  // ঘোষণা বার্তা (Announcements banner)
+  activeAnnouncement: Announcement | null;
+  dismissActiveAnnouncement: (id: string) => void;
 }
 
 
@@ -667,6 +689,22 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [currentPage, setCurrentPage] = useState<NavigationPage>('dashboard');
   const [selectedMedicineIdForDetail, setSelectedMedicineIdForDetail] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
+
+  const startEditMedicine = (med: Medicine) => {
+    setEditingMedicine(med);
+    setCurrentPage('add-medicine');
+  };
+
+  const clearEditingMedicine = () => {
+    setEditingMedicine(null);
+  };
+
+  useEffect(() => {
+    if (currentPage !== 'add-medicine' && editingMedicine) {
+      setEditingMedicine(null);
+    }
+  }, [currentPage, editingMedicine]);
 
   // Profile modal state
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
@@ -675,17 +713,36 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Admin Manual Medicine Add/Edit Modal state
   const [isManualAddModalOpen, setIsManualAddModalOpen] = useState(false);
   const [editingGlobalMedicine, setEditingGlobalMedicine] = useState<GlobalMedicine | null>(null);
+  const [missedQueryPrefill, setMissedQueryPrefill] = useState<{
+    missId: string;
+    brandName: string;
+  } | null>(null);
   const openManualAddModal = () => {
     setEditingGlobalMedicine(null);
+    setMissedQueryPrefill(null);
+    setIsManualAddModalOpen(true);
+  };
+  const openManualAddFromMiss = (miss: LibraryMiss) => {
+    setEditingGlobalMedicine(null);
+    setMissedQueryPrefill({ missId: miss.id, brandName: miss.queryNorm });
     setIsManualAddModalOpen(true);
   };
   const openEditGlobalMedicineModal = (med: GlobalMedicine) => {
+    setMissedQueryPrefill(null);
     setEditingGlobalMedicine(med);
     setIsManualAddModalOpen(true);
   };
   const closeManualAddModal = () => {
     setIsManualAddModalOpen(false);
     setEditingGlobalMedicine(null);
+    setMissedQueryPrefill(null);
+  };
+
+  // Active announcement banner state
+  const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null);
+  const dismissActiveAnnouncement = (id: string) => {
+    markAnnouncementDismissedLocally(id);
+    setActiveAnnouncement((prev) => (prev && prev.id === id ? null : prev));
   };
 
   // Stock Adjustment Modal state
@@ -1935,6 +1992,7 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       clearDocSyncQueue(prevUid);
     }
     clearDocumentSignedUrlCache();
+    clearMedicinePhotoSignedUrlCache();
     clearLibrarySearchSessionCache();
     try {
       localStorage.removeItem('shasthobondhu_last_cloud_uid');
@@ -2351,8 +2409,12 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
       if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
         try {
+          const matchedMed = medicines.find((m) => m.id === highest.medicineId);
+          const formattedTitle = matchedMed
+            ? formatMedicineNotificationTitle(matchedMed)
+            : highest.brandName;
           new Notification('স্বাস্থ্যবন্ধু স্টক অ্যালার্ট', {
-            body: `${highest.brandName}: ${highest.adviceBn}`,
+            body: `${formattedTitle}: ${highest.adviceBn}`,
             icon: '/favicon.ico',
           });
         } catch (e) {
@@ -2361,6 +2423,23 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     }
   }, [stockPredictions]);
+
+  useEffect(() => {
+    let active = true;
+    fetchActiveAnnouncementsFromSupabase()
+      .then((list) => {
+        if (!active) return;
+        const dismissed = loadDismissedAnnouncementIds();
+        const firstVisible = list.find((a) => !dismissed.has(a.id)) || null;
+        setActiveAnnouncement(firstVisible);
+      })
+      .catch(() => {
+        // Ignore non-critical announcement fetch failure
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.uid]);
 
   const markDose = (
     medicineId: string,
@@ -2621,6 +2700,13 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const med = medicines.find((m) => m.id === id);
     recentRealtimeWritesRef.current.mark('medicines', id, Date.now());
     setMedicines((prev) => prev.filter((m) => m.id !== id));
+
+    if (med?.photoPath || currentUser) {
+      void deleteMedicinePhotoFromStorage(
+        med?.photoPath,
+        currentUser ? { userId: currentUser.uid, medicineId: id } : undefined
+      );
+    }
 
     if (currentUser) {
       const uid = currentUser.uid;
@@ -4203,6 +4289,12 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await upsertLibraryMedicinesInBatches([cleanMedicine]);
       notifyLibraryCatalogChanged();
 
+      if (missedQueryPrefill?.missId) {
+        const missIdToResolve = missedQueryPrefill.missId;
+        setMissedQueryPrefill(null);
+        void updateLibraryMissResolved(missIdToResolve, true).catch(() => {});
+      }
+
       recordAdminActivity({
         type: isPublished ? 'publish' : 'import',
         title: isPublished ? 'ম্যানুয়াল ওষুধ অন্তর্ভুক্তি ও সার্বজনীন প্রকাশ' : 'ম্যানুয়াল ওষুধ খসড়া তৈরি',
@@ -5752,6 +5844,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         addMultipleMedicines,
         updateMedicine,
         deleteMedicine,
+        editingMedicine,
+        startEditMedicine,
+        clearEditingMedicine,
         adjustStock,
         assignMedicineToPatient,
         addPatient,
@@ -5814,7 +5909,9 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         bulkDeleteGlobalMedicinesAction,
         isManualAddModalOpen,
         editingGlobalMedicine,
+        missedQueryPrefill,
         openManualAddModal,
+        openManualAddFromMiss,
         openEditGlobalMedicineModal,
         closeManualAddModal,
         addSingleGlobalMedicineAction,
@@ -5904,6 +6001,8 @@ export const MedicineProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         addExpense,
         updateExpense,
         deleteExpense,
+        activeAnnouncement,
+        dismissActiveAnnouncement,
       }}
     >
       {children}

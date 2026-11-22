@@ -3,13 +3,29 @@ import { useMedicine } from '../../context/MedicineContext';
 import {
   APP_VERSION,
   deleteFeedbackFromSupabase,
+  deleteLibraryMissFromSupabase,
   fetchAdminActivities,
   fetchAdminOverviewStatsFromSupabase,
   fetchFeedbackFromSupabase,
   fetchImportBatches,
+  fetchLibraryMissesForAdmin,
+  updateLibraryMissResolved,
 } from '../../supabase/libraryService';
+import {
+  createAnnouncementInSupabase,
+  deleteAnnouncementInSupabase,
+  fetchAllAnnouncementsForAdmin,
+  toggleAnnouncementActiveInSupabase,
+} from '../../supabase/announcementsService';
 import { getSupabaseDataErrorMessageBn } from '../../supabase/userDataService';
-import { AdminActivity, AdminOverviewStats, FeedbackEntry } from '../../types';
+import {
+  AdminActivity,
+  AdminOverviewStats,
+  Announcement,
+  AnnouncementLevel,
+  FeedbackEntry,
+  LibraryMiss,
+} from '../../types';
 import { checkAiHealth, AiHealthResponse } from '../../services/aiService';
 import { AdminImportView } from './AdminImportView';
 import { toBengaliNumber } from '../../utils/bengaliUtils';
@@ -38,6 +54,10 @@ import {
   KeyRound,
   XCircle,
   MessageSquare,
+  Megaphone,
+  SearchX,
+  PauseCircle,
+  PlayCircle,
 } from 'lucide-react';
 
 export const AdminDashboard: React.FC = () => {
@@ -51,11 +71,12 @@ export const AdminDashboard: React.FC = () => {
     setCurrentPage,
     openAuthModal,
     openManualAddModal,
+    openManualAddFromMiss,
     showToast,
   } = useMedicine();
 
-  // Sub-tab Navigation: 'overview' | 'import'
-  const [activeTab, setActiveTab] = useState<'overview' | 'import'>('overview');
+  // Sub-tab Navigation: 'overview' | 'announcements' | 'misses' | 'import'
+  const [activeTab, setActiveTab] = useState<'overview' | 'announcements' | 'misses' | 'import'>('overview');
 
   // Real Dashboard Stats from Supabase admin_overview_stats RPC
   const [stats, setStats] = useState<AdminOverviewStats | null>(null);
@@ -66,6 +87,22 @@ export const AdminDashboard: React.FC = () => {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<string>('');
+
+  // Admin Announcements State ("ঘোষণা")
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [loadingAnnouncements, setLoadingAnnouncements] = useState(false);
+  const [annTitle, setAnnTitle] = useState('');
+  const [annBody, setAnnBody] = useState('');
+  const [annLevel, setAnnLevel] = useState<AnnouncementLevel>('info');
+  const [annStartsAt, setAnnStartsAt] = useState('');
+  const [annEndsAt, setAnnEndsAt] = useState('');
+  const [creatingAnnouncement, setCreatingAnnouncement] = useState(false);
+  const [busyAnnouncementId, setBusyAnnouncementId] = useState<string | null>(null);
+
+  // Admin Library Misses State ("না পাওয়া ওষুধ")
+  const [libraryMisses, setLibraryMisses] = useState<LibraryMiss[]>([]);
+  const [loadingMisses, setLoadingMisses] = useState(false);
+  const [busyMissId, setBusyMissId] = useState<string | null>(null);
 
   // Admin AI Health Diagnostic State
   const [aiHealth, setAiHealth] = useState<AiHealthResponse | null>(null);
@@ -133,11 +170,141 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const loadAnnouncementsAdmin = async () => {
+    if (!isAdmin) return;
+    setLoadingAnnouncements(true);
+    try {
+      const items = await fetchAllAnnouncementsForAdmin();
+      setAnnouncements(items);
+    } catch (err: any) {
+      showToast(getSupabaseDataErrorMessageBn(err), 'alert');
+    } finally {
+      setLoadingAnnouncements(false);
+    }
+  };
+
+  const loadLibraryMissesAdmin = async () => {
+    if (!isAdmin) return;
+    setLoadingMisses(true);
+    try {
+      const items = await fetchLibraryMissesForAdmin(100);
+      setLibraryMisses(items);
+    } catch (err: any) {
+      showToast(getSupabaseDataErrorMessageBn(err), 'alert');
+    } finally {
+      setLoadingMisses(false);
+    }
+  };
+
   useEffect(() => {
     if (isAdmin) {
       void loadDashboardData();
+      if (activeTab === 'announcements') {
+        void loadAnnouncementsAdmin();
+      } else if (activeTab === 'misses') {
+        void loadLibraryMissesAdmin();
+      }
     }
-  }, [isAdmin, libraryMutationVersion]);
+  }, [isAdmin, libraryMutationVersion, activeTab]);
+
+  const handleCreateAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (creatingAnnouncement) return;
+    const cleanTitle = annTitle.trim();
+    const cleanBody = annBody.trim();
+    if (!cleanTitle || !cleanBody) {
+      showToast('শিরোনাম ও মূল বার্তা লিখুন।', 'alert');
+      return;
+    }
+    if (cleanTitle.length > 120 || cleanBody.length > 1000) {
+      showToast('শিরোনাম সর্বোচ্চ ১২০ অক্ষর এবং মূল বার্তা ১০০০ অক্ষরের মধ্যে রাখুন।', 'alert');
+      return;
+    }
+    setCreatingAnnouncement(true);
+    try {
+      const created = await createAnnouncementInSupabase({
+        title: cleanTitle,
+        body: cleanBody,
+        level: annLevel,
+        active: true,
+        startsAt: annStartsAt ? new Date(annStartsAt).toISOString() : null,
+        endsAt: annEndsAt ? new Date(annEndsAt).toISOString() : null,
+      });
+      setAnnouncements((prev) => [created, ...prev]);
+      setAnnTitle('');
+      setAnnBody('');
+      setAnnLevel('info');
+      setAnnStartsAt('');
+      setAnnEndsAt('');
+      showToast('নতুন ঘোষণা প্রকাশিত হয়েছে।', 'success');
+    } catch (err: any) {
+      showToast(getSupabaseDataErrorMessageBn(err), 'alert');
+    } finally {
+      setCreatingAnnouncement(false);
+    }
+  };
+
+  const handleToggleAnnouncementActive = async (ann: Announcement) => {
+    if (busyAnnouncementId) return;
+    setBusyAnnouncementId(ann.id);
+    try {
+      const nextActive = !ann.active;
+      await toggleAnnouncementActiveInSupabase(ann.id, nextActive);
+      setAnnouncements((prev) =>
+        prev.map((item) => (item.id === ann.id ? { ...item, active: nextActive } : item))
+      );
+      showToast(nextActive ? 'ঘোষণাটি চালু করা হয়েছে।' : 'ঘোষণাটি সাময়িক বন্ধ করা হয়েছে।', 'success');
+    } catch (err: any) {
+      showToast(getSupabaseDataErrorMessageBn(err), 'alert');
+    } finally {
+      setBusyAnnouncementId(null);
+    }
+  };
+
+  const handleDeleteAnnouncement = async (id: string) => {
+    if (busyAnnouncementId) return;
+    setBusyAnnouncementId(id);
+    try {
+      await deleteAnnouncementInSupabase(id);
+      setAnnouncements((prev) => prev.filter((item) => item.id !== id));
+      showToast('ঘোষণাটি মুছে ফেলা হয়েছে।', 'success');
+    } catch (err: any) {
+      showToast(getSupabaseDataErrorMessageBn(err), 'alert');
+    } finally {
+      setBusyAnnouncementId(null);
+    }
+  };
+
+  const handleToggleMissResolved = async (miss: LibraryMiss) => {
+    if (busyMissId) return;
+    setBusyMissId(miss.id);
+    try {
+      const nextResolved = !miss.resolved;
+      await updateLibraryMissResolved(miss.id, nextResolved);
+      setLibraryMisses((prev) =>
+        prev.map((item) => (item.id === miss.id ? { ...item, resolved: nextResolved } : item))
+      );
+      showToast(nextResolved ? 'সমাধান হয়েছে হিসেবে চিহ্নিত।' : 'অপেক্ষমাণ হিসেবে চিহ্নিত।', 'success');
+    } catch (err: any) {
+      showToast(getSupabaseDataErrorMessageBn(err), 'alert');
+    } finally {
+      setBusyMissId(null);
+    }
+  };
+
+  const handleDeleteMiss = async (id: string) => {
+    if (busyMissId) return;
+    setBusyMissId(id);
+    try {
+      await deleteLibraryMissFromSupabase(id);
+      setLibraryMisses((prev) => prev.filter((item) => item.id !== id));
+      showToast('রেকর্ডটি মুছে ফেলা হয়েছে।', 'success');
+    } catch (err: any) {
+      showToast(getSupabaseDataErrorMessageBn(err), 'alert');
+    } finally {
+      setBusyMissId(null);
+    }
+  };
 
   const handleDeleteFeedback = async (feedbackId: string) => {
     if (deletingFeedbackId) return;
@@ -204,29 +371,364 @@ export const AdminDashboard: React.FC = () => {
     );
   }
 
+  const adminSubTabs = (
+    <div className="flex flex-wrap items-center gap-2 bg-surface border border-border rounded-2xl p-1.5 shadow-2xs">
+      {[
+        { id: 'overview' as const, label: 'ওভারভিউ', icon: ShieldCheck },
+        { id: 'announcements' as const, label: 'ঘোষণা', icon: Megaphone },
+        { id: 'misses' as const, label: 'না পাওয়া ওষুধ', icon: SearchX },
+        { id: 'import' as const, label: 'ওষুধ ইমপোর্ট', icon: UploadCloud },
+      ].map((tab) => {
+        const Icon = tab.icon;
+        const isActive = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            className={`min-h-[42px] px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${
+              isActive
+                ? 'bg-primary text-on-primary shadow-xs'
+                : 'text-text-muted hover:text-text hover:bg-surface-2'
+            }`}
+          >
+            <Icon className="w-4 h-4 shrink-0" />
+            <span>{tab.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
   // If user selected the Import tab, render AdminImportView
   if (activeTab === 'import') {
     return (
       <div className="space-y-4">
-        {/* Sub-navigation bar */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
-          <div className="flex items-center justify-between border-b border-border pb-3">
-            <button
-              type="button"
-              onClick={() => setActiveTab('overview')}
-              className="flex items-center gap-2 text-xs font-semibold text-primary hover:underline cursor-pointer"
-            >
-              <span>← মূল ওভারভিউ ড্যাশবোর্ডে ফিরে যান</span>
-            </button>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="font-bold text-text-muted">বর্তমান মোড:</span>
-              <span className="px-2.5 py-1 rounded-lg bg-primary-soft text-primary font-bold">
-                ওষুধ ইমপোর্ট প্যানেল
-              </span>
-            </div>
-          </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-3">
+          {adminSubTabs}
         </div>
         <AdminImportView />
+      </div>
+    );
+  }
+
+  // If user selected the Announcements tab ("ঘোষণা")
+  if (activeTab === 'announcements') {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {adminSubTabs}
+
+        <section className="bg-surface rounded-3xl p-6 border border-border shadow-xs space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-primary-soft text-primary">
+                <Megaphone className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-extrabold text-text">ঘোষণা ব্যবস্থাপনা</h2>
+                <p className="text-xs text-text-muted">
+                  ব্যবহারকারীদের হোম স্ক্রিনে শুধু প্লেইন-টেক্সট ঘোষণা দেখান (কোনো HTML কোড নয়)
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={loadingAnnouncements}
+              onClick={() => void loadAnnouncementsAdmin()}
+              className="min-h-[42px] px-4 py-2 rounded-xl bg-surface-2 hover:bg-border text-text text-xs font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingAnnouncements ? 'animate-spin' : ''}`} />
+              <span>রিফ্রেশ</span>
+            </button>
+          </div>
+
+          <form onSubmit={handleCreateAnnouncement} className="space-y-4 bg-surface-2 rounded-2xl p-4 sm:p-5 border border-border">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-bold text-text mb-1">
+                  শিরোনাম (সর্বোচ্চ ১২০ অক্ষর)
+                </label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  required
+                  value={annTitle}
+                  onChange={(e) => setAnnTitle(e.target.value)}
+                  placeholder="যেমন: নতুন স্বাস্থ্য ক্যালেন্ডার চালু হয়েছে"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-border text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-text mb-1">ধরন (Level)</label>
+                <select
+                  value={annLevel}
+                  onChange={(e) => setAnnLevel(e.target.value as AnnouncementLevel)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-border text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-primary"
+                >
+                  <option value="info">সাধারণ তথ্য (Info)</option>
+                  <option value="warning">সতর্কতা (Warning)</option>
+                  <option value="success">সুখবর / আপডেট (Success)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-text mb-1">
+                মূল বার্তা (সর্বোচ্চ ১০০০ অক্ষর)
+              </label>
+              <textarea
+                rows={3}
+                maxLength={1000}
+                required
+                value={annBody}
+                onChange={(e) => setAnnBody(e.target.value)}
+                placeholder="ব্যবহারকারীদের জন্য স্পষ্ট বাংলায় ঘোষণাটি লিখুন..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-surface border border-border text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-primary resize-y"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-text mb-1">
+                  শুরুর সময় (ঐচ্ছিক)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={annStartsAt}
+                  onChange={(e) => setAnnStartsAt(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-surface border border-border text-xs text-text focus:outline-hidden focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-text mb-1">
+                  শেষের সময় (ঐচ্ছিক)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={annEndsAt}
+                  onChange={(e) => setAnnEndsAt(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-surface border border-border text-xs text-text focus:outline-hidden focus:ring-2 focus:ring-primary"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={creatingAnnouncement}
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-on-primary text-xs font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{creatingAnnouncement ? 'প্রকাশ হচ্ছে...' : 'ঘোষণা প্রকাশ করুন'}</span>
+              </button>
+            </div>
+          </form>
+
+          {loadingAnnouncements ? (
+            <div className="space-y-3">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-20 bg-surface-2 rounded-2xl animate-pulse" />
+              ))}
+            </div>
+          ) : announcements.length === 0 ? (
+            <div className="p-8 text-center rounded-2xl bg-surface-2 text-xs text-text-muted">
+              কোনো ঘোষণা তৈরি করা হয়নি।
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {announcements.map((ann) => (
+                <div
+                  key={ann.id}
+                  className="p-4 rounded-2xl bg-surface-2 border border-border flex flex-col sm:flex-row sm:items-start justify-between gap-4"
+                >
+                  <div className="space-y-1.5 min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-sm text-text">{ann.title}</span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          ann.level === 'warning'
+                            ? 'bg-warning-soft text-warning-text border-warning/30'
+                            : ann.level === 'success'
+                            ? 'bg-success-soft text-success-text border-success/30'
+                            : 'bg-primary-soft text-primary border-primary/30'
+                        }`}
+                      >
+                        {ann.level === 'warning' ? 'সতর্কতা' : ann.level === 'success' ? 'সুখবর' : 'তথ্য'}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          ann.active
+                            ? 'bg-success-soft text-success-text'
+                            : 'bg-surface text-text-muted border border-border'
+                        }`}
+                      >
+                        {ann.active ? 'সক্রিয়' : 'বন্ধ'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-text-muted whitespace-pre-wrap break-words">
+                      {ann.body}
+                    </p>
+                    {(ann.startsAt || ann.endsAt) && (
+                      <p className="text-[11px] text-text-muted">
+                        সময়সীমা:{' '}
+                        {ann.startsAt ? new Date(ann.startsAt).toLocaleString('bn-BD') : 'এখনই'} —{' '}
+                        {ann.endsAt ? new Date(ann.endsAt).toLocaleString('bn-BD') : 'চলমান'}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={busyAnnouncementId === ann.id}
+                      onClick={() => void handleToggleAnnouncementActive(ann)}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-surface border border-border hover:border-primary text-xs font-bold text-text flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {ann.active ? (
+                        <>
+                          <PauseCircle className="w-3.5 h-3.5 text-warning-text" />
+                          <span>বন্ধ রাখুন</span>
+                        </>
+                      ) : (
+                        <>
+                          <PlayCircle className="w-3.5 h-3.5 text-success-text" />
+                          <span>চালু করুন</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={busyAnnouncementId === ann.id}
+                      onClick={() => void handleDeleteAnnouncement(ann.id)}
+                      className="min-h-[38px] p-2 rounded-xl bg-danger-soft text-danger-text border border-danger/25 hover:opacity-90 cursor-pointer disabled:opacity-50"
+                      title="ঘোষণা মুছুন"
+                      aria-label="ঘোষণা মুছুন"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  // If user selected the Library Misses tab ("না পাওয়া ওষুধ")
+  if (activeTab === 'misses') {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {adminSubTabs}
+
+        <section className="bg-surface rounded-3xl p-6 border border-border shadow-xs space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-warning-soft text-warning-text">
+                <SearchX className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-extrabold text-text">না পাওয়া ওষুধের তালিকা</h2>
+                <p className="text-xs text-text-muted">
+                  ব্যবহারকারীরা লাইব্রেরিতে খুঁজে পাননি এমন ওষুধের নাম ও খোঁজার সংখ্যা (ব্যক্তিগত তথ্যবিহীন)
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={loadingMisses}
+              onClick={() => void loadLibraryMissesAdmin()}
+              className="min-h-[42px] px-4 py-2 rounded-xl bg-surface-2 hover:bg-border text-text text-xs font-bold flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingMisses ? 'animate-spin' : ''}`} />
+              <span>রিফ্রেশ</span>
+            </button>
+          </div>
+
+          {loadingMisses ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-16 bg-surface-2 rounded-2xl animate-pulse" />
+              ))}
+            </div>
+          ) : libraryMisses.length === 0 ? (
+            <div className="p-8 text-center rounded-2xl bg-surface-2 text-xs text-text-muted">
+              এখনো কোনো না পাওয়া ওষুধের তালিকা জমা হয়নি।
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {libraryMisses.map((miss) => (
+                <div
+                  key={miss.id}
+                  className="p-4 rounded-2xl bg-surface-2 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-extrabold text-text break-all">
+                        {miss.queryNorm}
+                      </span>
+                      <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-primary-soft text-primary">
+                        {toBengaliNumber(miss.hitCount)} বার খোঁজা হয়েছে
+                      </span>
+                      <span
+                        className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                          miss.resolved
+                            ? 'bg-success-soft text-success-text'
+                            : 'bg-warning-soft text-warning-text'
+                        }`}
+                      >
+                        {miss.resolved ? 'সমাধান হয়েছে' : 'অপেক্ষমাণ'}
+                      </span>
+                    </div>
+                    {miss.lastSeen && (
+                      <p className="text-[11px] text-text-muted">
+                        সর্বশেষ খোঁজা হয়েছে: {new Date(miss.lastSeen).toLocaleString('bn-BD')}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => openManualAddFromMiss(miss)}
+                      className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-primary hover:bg-primary-hover text-on-primary text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>লাইব্রেরিতে যোগ করুন</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={busyMissId === miss.id}
+                      onClick={() => void handleToggleMissResolved(miss)}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-surface border border-border hover:border-primary text-xs font-bold text-text flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-success-text" />
+                      <span>{miss.resolved ? 'অপেক্ষমাণ করুন' : 'সমাধান চিহ্নিত করুন'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={busyMissId === miss.id}
+                      onClick={() => void handleDeleteMiss(miss.id)}
+                      className="min-h-[38px] p-2 rounded-xl bg-danger-soft text-danger-text border border-danger/25 hover:opacity-90 cursor-pointer disabled:opacity-50"
+                      title="রেকর্ড মুছুন"
+                      aria-label="রেকর্ড মুছুন"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     );
   }
@@ -235,6 +737,7 @@ export const AdminDashboard: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {adminSubTabs}
       {/* 1. Header Banner & Identity */}
       <div className="bg-gradient-to-r from-[#312E81] via-[#3730A3] to-[#1E1B4B] rounded-3xl p-6 sm:p-8 text-white shadow-lg relative overflow-hidden">
         <div className="absolute right-0 top-0 -mt-8 -mr-8 w-64 h-64 rounded-full bg-indigo-400/15 blur-2xl pointer-events-none" />

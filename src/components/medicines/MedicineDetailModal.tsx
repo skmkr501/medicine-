@@ -5,6 +5,9 @@ import { useMedicine } from '../../context/MedicineContext';
 import { predictMedicineStock } from '../../utils/stockPredictor';
 import { findMatchingCatalogMedicine } from '../../utils/shoppingListCalculator';
 import { buildMedicineDetailSpeechText, useBengaliSpeech } from '../../utils/speechUtils';
+import { MedicineBadgeIcon } from './MedicineBadgeIcon';
+import { MedicinePhotoThumbnail } from './MedicinePhotoThumbnail';
+import { MedicinePhotoLightbox } from './MedicinePhotoLightbox';
 import {
   fetchLibraryMedicineById,
   searchLibraryMedicines,
@@ -44,9 +47,11 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
   const { patients, assignMedicineToPatient, openStockAdjustmentModal } = useMedicine();
   const { hasBengaliVoice, isSpeaking, voiceSettings, speak, stop } = useBengaliSpeech();
   const [catalogCandidates, setCatalogCandidates] = useState<GlobalMedicine[]>([]);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   useEffect(() => {
     stop();
+    setLightboxUrl(null);
   }, [medicine?.id, stop]);
 
   useEffect(() => {
@@ -128,9 +133,12 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
 
         {/* Header */}
         <div className="flex items-start gap-3.5 mb-4 pr-8">
-          <div className="w-12 h-12 rounded-xl bg-primary-soft text-primary flex items-center justify-center shrink-0">
-            <Pill className="w-6 h-6" />
-          </div>
+          <MedicineBadgeIcon
+            iconTag={medicine.iconTag}
+            type={medicine.type}
+            colorTag={medicine.colorTag}
+            size="lg"
+          />
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h2 className="text-xl font-bold text-text">
@@ -159,14 +167,26 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
             <p className="text-xs text-text-muted mt-0.5">
               {medicine.genericName}
             </p>
-            <div className="flex items-center gap-2 text-xs text-text-muted mt-1">
-              <span>{medicine.type}</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted mt-1.5">
+              <MedicineBadgeIcon
+                iconTag={medicine.iconTag}
+                type={medicine.type}
+                colorTag={medicine.colorTag}
+                size="xs"
+                showLabel
+              />
               <span>·</span>
               <span className="font-semibold text-text">{medicine.strength}</span>
               <span>·</span>
               <span className="text-primary font-medium">{medicine.mealTiming}</span>
             </div>
           </div>
+          <MedicinePhotoThumbnail
+            photoPath={medicine.photoPath}
+            alt={medicine.brandName}
+            size="lg"
+            onOpenLightbox={(url) => setLightboxUrl(url)}
+          />
         </div>
 
         {/* Content Details */}
@@ -388,6 +408,13 @@ export const MedicineDetailModal: React.FC<MedicineDetailModalProps> = ({
         </div>
 
       </div>
+
+      <MedicinePhotoLightbox
+        imageUrl={lightboxUrl}
+        title={medicine.brandName}
+        subtitle={`${medicine.genericName} · ${medicine.strength}`}
+        onClose={() => setLightboxUrl(null)}
+      />
     </div>
   );
 };

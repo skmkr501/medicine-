@@ -91,6 +91,7 @@ export const AdminManualMedicineModal: React.FC = () => {
   const {
     isManualAddModalOpen,
     editingGlobalMedicine,
+    missedQueryPrefill,
     closeManualAddModal,
     addSingleGlobalMedicineAction,
     updateSingleGlobalMedicineAction,
@@ -138,9 +139,12 @@ export const AdminManualMedicineModal: React.FC = () => {
     } else {
       setShowCustomForm(false);
       setCustomFormInput('');
-      setForm(INITIAL_FORM);
+      setForm({
+        ...INITIAL_FORM,
+        brandName: missedQueryPrefill?.brandName || '',
+      });
     }
-  }, [isManualAddModalOpen, editingGlobalMedicine]);
+  }, [isManualAddModalOpen, editingGlobalMedicine, missedQueryPrefill]);
 
   if (!isManualAddModalOpen) return null;
 

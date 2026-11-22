@@ -7,6 +7,17 @@ export type MedicineType =
   | 'ইনহেলার'
   | 'মলম/জেল';
 
+export type MedicineIconTag =
+  | 'ট্যাবলেট'
+  | 'ক্যাপসুল'
+  | 'সিরাপ'
+  | 'ইনজেকশন'
+  | 'ড্রপ'
+  | 'ইনহেলার'
+  | 'ক্রিম/মলম'
+  | 'সাপোজিটরি'
+  | 'স্যাশে';
+
 export type MealTiming =
   | 'খাওয়ার আগে'
   | 'খাওয়ার পরে'
@@ -85,6 +96,8 @@ export interface Medicine {
   assignedPatientId?: string; // Optional: medicines may exist independently and be assigned later
   status: 'active' | 'paused' | 'completed';
   colorTag: 'teal' | 'emerald' | 'cyan' | 'blue' | 'indigo' | 'rose' | 'amber';
+  iconTag?: MedicineIconTag;
+  photoPath?: string;
   stockAdjustments?: StockAdjustment[];
   lastStockUpdated?: string;
   expiryDate?: string; // Optional ISO YYYY-MM-DD packet expiry date
@@ -158,6 +171,20 @@ export interface DoctorAppointment {
 
 export type WeekStartDay = 'saturday' | 'sunday' | 'monday';
 
+export type HomeLayoutCardId =
+  | 'today_doses'
+  | 'caregiver_family'
+  | 'patient_progress'
+  | 'quick_actions'
+  | 'stock_summary'
+  | 'adherence_analytics'
+  | 'emergency_card';
+
+export interface HomeLayoutItem {
+  id: HomeLayoutCardId;
+  visible: boolean;
+}
+
 export interface ReminderSettings {
   soundEnabled: boolean;
   selectedTone: 'soft-bell' | 'chime' | 'gentle-pulse' | 'digital-beep';
@@ -174,6 +201,7 @@ export interface ReminderSettings {
   patientSelfPhone?: string;
   weekStartDay?: WeekStartDay;
   showEmergencyDoctorOnCard?: boolean;
+  homeLayout?: HomeLayoutItem[];
 }
 
 export interface CaregiverTodayDoseSummary {
@@ -219,6 +247,7 @@ export interface CaregiverLinkDoc {
   status: 'pending' | 'active';
   allowFullView: boolean;
   allowSuggestions?: boolean;
+  allowMedicinePhotos?: boolean;
   createdAt: string;
   serverCreatedAt?: unknown;
   expiresAt?: string;
@@ -337,6 +366,7 @@ export type NavigationPage =
   | 'library'
   | 'womens-health'
   | 'expenses'
+  | 'calendar'
   | 'bmi'
   | 'admin-import'
   | 'admin-dashboard'
@@ -683,4 +713,27 @@ export interface Expense {
   updatedAtMs?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type AnnouncementLevel = 'info' | 'warning' | 'success';
+
+export interface Announcement {
+  id: string;
+  title: string;
+  body: string;
+  level: AnnouncementLevel;
+  active: boolean;
+  startsAt?: string;
+  endsAt?: string;
+  createdBy?: string;
+  createdAt: string;
+}
+
+export interface LibraryMiss {
+  id: string;
+  queryNorm: string;
+  hitCount: number;
+  lastSeen: string;
+  resolved: boolean;
+  createdAt?: string;
 }
